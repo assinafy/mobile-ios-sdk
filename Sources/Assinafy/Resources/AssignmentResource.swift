@@ -1,0 +1,154 @@
+import Foundation
+
+/// Manages signing assignments that link documents to signers.
+///
+/// Access this resource through ``AssinafyClient/assignments``.
+///
+/// ## Example
+/// ```swift
+/// let assignment = try await client.assignments.create(
+///     documentId: "doc_id",
+///     payload: .withSignerIds(["signer_id"])
+/// )
+/// ```
+@objcMembers
+public final class AssignmentResource: BaseResource {
+
+    // MARK: - Swift async API
+
+    /// Creates a signing assignment for a document.
+    ///
+    /// - Parameters:
+    ///   - documentId: The document to assign.
+    ///   - payload: Signing method, signers, message, and optional expiry.
+    /// - Returns: The created ``Assignment``.
+    public func create(
+        documentId: String,
+        payload: CreateAssignmentPayload
+    ) async throws -> Assignment {
+        let did = try requireId(documentId, name: "Document ID")
+        let body = try buildAssignmentBody(payload)
+        let request = try APIRequest.post("/documents/\(did)/assignments", body: body)
+        return try await call("Failed to create assignment", request: request)
+    }
+
+    /// Estimates the cost of an assignment before creating it.
+    ///
+    /// Useful for displaying price breakdowns before confirming with the user.
+    ///
+    /// - Parameters:
+    ///   - documentId: The document to estimate for.
+    ///   - payload: The proposed assignment configuration.
+    /// - Returns: A ``CostEstimate`` containing the price breakdown.
+    public func estimateCost(
+        documentId: String,
+        payload: CreateAssignmentPayload
+    ) async throws -> CostEstimate {
+        let did = try requireId(documentId, name: "Document ID")
+        let body = try buildAssignmentBody(payload, allowWithoutId: true)
+        let request = try APIRequest.post("/documents/\(did)/assignments/estimate-cost", body: body)
+        return try await callCostEstimate("Failed to estimate assignment cost", request: request)
+    }
+
+    /// Resets the expiration date on an existing assignment.
+    ///
+    /// - Parameters:
+    ///   - documentId: The document ID.
+    ///   - assignmentId: The assignment ID to reset.
+    ///   - expiresAt: New expiration date, or `nil` to remove the expiration.
+    /// - Returns: The updated ``Assignment``.
+    public func resetExpiration(
+        documentId: String,
+        assignmentId: String,
+        expiresAt: String? = nil
+    ) async throws -> Assignment {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let request = try APIRequest.put(
+            "/documents/\(did)/assignments/\(aid)/reset-expiration",
+            body: ResetExpirationPayload(expiresAt: expiresAt)
+        )
+        return try await call("Failed to reset assignment expiration", request: request)
+    }
+
+    /// Resends a signing notification to one pending signer.
+    ///
+    /// - Parameters:
+    ///   - documentId: The document ID.
+    ///   - assignmentId: The assignment ID.
+    ///   - signerId: The signer who should receive the new notification.
+    /// - Returns: A ``ResendNotificationResponse`` confirming delivery.
+    public func resendNotification(
+        documentId: String,
+        assignmentId: String,
+        signerId: String
+    ) async throws -> ResendNotificationResponse {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let sid = try requireId(signerId, name: "Signer ID")
+        let request = APIRequest.put(
+            "/documents/\(did)/assignments/\(aid)/signers/\(sid)/resend"
+        )
+        return try await call("Failed to resend notification", request: request)
+    }
+
+    /// Estimates the cost of resending a notification to one signer.
+    ///
+    /// - Parameters:
+    ///   - documentId: The document ID.
+    ///   - assignmentId: The assignment ID.
+    ///   - signerId: The signer who would receive the notification.
+    /// - Returns: A ``CostEstimate`` with the resend cost breakdown.
+    public func estimateResendCost(
+        documentId: String,
+        assignmentId: String,
+        signerId: String
+    ) async throws -> CostEstimate {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let sid = try requireId(signerId, name: "Signer ID")
+        let request = APIRequest.post(
+            "/documents/\(did)/assignments/\(aid)/signers/\(sid)/estimate-resend-cost"
+        )
+        return try await callCostEstimate("Failed to estimate resend cost", request: request)
+    }
+
+    // MARK: - Objective-C / completion-handler API
+
+    /// Creates an assignment and delivers the result on the **main queue**.
+    @objc(createAssignmentForDocument:signerIds:completion:)
+    public func create(
+        documentId: String,
+        signerIds: [String],
+        completion: @escaping (Assignment?, Error?) -> Void
+    ) {
+        let payload = CreateAssignmentPayload.withSignerIds(signerIds)
+        withCompletion({ try await self.create(documentId: documentId, payload: payload) }, completion: completion)
+    }
+
+    /// Resends a notification and delivers the result on the **main queue**.
+    @objc(resendNotificationForDocument:assignmentId:signerId:completion:)
+    public func resendNotification(
+        documentId: String,
+        assignmentId: String,
+        signerId: String,
+        completion: @escaping (ResendNotificationResponse?, Error?) -> Void
+    ) {
+        withCompletion({
+            try await self.resendNotification(documentId: documentId, assignmentId: assignmentId, signerId: signerId)
+        }, completion: completion)
+    }
+}
+
+private struct ResetExpirationPayload: Encodable {
+    let expiresAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case expiresAt = "expires_at"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(expiresAt, forKey: .expiresAt)
+    }
+}

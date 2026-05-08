@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    name: Test
+    strategy:
+      matrix:
+        platform: [macos-latest, ubuntu-latest]
+        swift-version: ["5.9", "5.10", "6.0"]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swiftlang/setup-swift@v2
+        with:
+          swift-version: ${{ matrix.swift-version }}
+
+      - name: Build
+        run: swift build
+
+      - name: Run tests
+        run: swift test

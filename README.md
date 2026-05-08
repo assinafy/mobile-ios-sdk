@@ -18,7 +18,7 @@ Add the package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/assinafy/assinafy-sdk-ios.git", from: "1.1.0")
+    .package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.1.0")
 ]
 ```
 

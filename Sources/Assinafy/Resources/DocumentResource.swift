@@ -101,20 +101,23 @@ public final class DocumentResource: BaseResource {
         let deadline = Date().addingTimeInterval(options.maxWaitSeconds)
         let interval = UInt64(options.pollIntervalSeconds * 1_000_000_000)
         while true {
-            let doc = try await get(documentId: did)
-            if doc.status == .metadataReady {
-                let resp: DocumentUploadResponse = try await call(
-                    "Failed to fetch document response",
-                    request: .get("/documents/\(did)")
-                )
-                return resp
-            }
-            if doc.status == .failed {
-                throw AssinafySDKError("Document processing failed")
+            let doc: DocumentUploadResponse = try await call(
+                "Failed to fetch document",
+                request: .get("/documents/\(did)")
+            )
+            switch doc.status {
+            case .metadataReady, .pendingSignature, .certificating, .certificated:
+                return doc
+            case .failed:
+                throw AssinafySDKError("Document processing failed",
+                                       context: ["documentId": did, "status": doc.statusString])
+            default:
+                break
             }
             guard Date() < deadline else {
                 throw AssinafySDKError(
-                    "Document did not become ready within \(Int(options.maxWaitSeconds))s"
+                    "Document did not become ready within \(Int(options.maxWaitSeconds))s",
+                    context: ["documentId": did, "status": doc.statusString]
                 )
             }
             try await Task.sleep(nanoseconds: interval)
@@ -281,6 +284,44 @@ public final class DocumentResource: BaseResource {
         let pending = total - signed
         let pct     = total > 0 ? (Double(signed) / Double(total)) * 100.0 : 0
         return SigningProgress(signed: signed, total: total, pending: pending, percentage: pct)
+    }
+
+    /// Lists every supported document status and whether documents in that
+    /// status can be deleted.
+    ///
+    /// Mirrors `GET /documents/statuses`. Useful when you need to render UI
+    /// controls (e.g. "delete" buttons) that depend on the deletability rule
+    /// for the document's current state.
+    public func listStatuses() async throws -> [DocumentStatusInfo] {
+        let result: PaginatedResult<DocumentStatusInfo> = try await callList(
+            "Failed to list document statuses",
+            request: .get("/documents/statuses")
+        )
+        return result.data
+    }
+
+    /// Fetches the unauthenticated public summary of a document.
+    ///
+    /// Mirrors `GET /public/documents/{id}`. Safe to call before the signer
+    /// has verified their access code.
+    public func getPublicInfo(documentId: String) async throws -> PublicDocumentInfo {
+        let did = try requireId(documentId, name: "Document ID")
+        return try await call("Failed to fetch public document info",
+                              request: .get("/public/documents/\(did)"))
+    }
+
+    /// Sends the 6-digit signing token to a signer via email or WhatsApp.
+    ///
+    /// Mirrors `PUT /public/documents/{id}/send-token`. No authentication is
+    /// required; the SDK forwards the request as-is.
+    @discardableResult
+    public func sendPublicSignToken(
+        documentId: String,
+        payload: SendTokenPayload
+    ) async throws -> SendTokenResponse {
+        let did = try requireId(documentId, name: "Document ID")
+        let request = try APIRequest.put("/public/documents/\(did)/send-token", body: payload)
+        return try await call("Failed to send signing token", request: request)
     }
 
     /// Confirms a signer's data for a virtual assignment.

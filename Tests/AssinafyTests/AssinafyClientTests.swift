@@ -24,6 +24,7 @@ final class AssinafyClientTests: XCTestCase {
         XCTAssertNotNil(client.webhooks)
         XCTAssertNotNil(client.templates)
         XCTAssertNotNil(client.workspaces)
+        XCTAssertNotNil(client.fields)
         XCTAssertNotNil(client.auth)
     }
 

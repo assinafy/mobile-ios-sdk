@@ -18,7 +18,7 @@ Add the package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.1.0")
+    .package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.2.0")
 ]
 ```
 
@@ -103,17 +103,76 @@ let assignment = try await client.assignments.create(
 )
 ```
 
+### Signer-facing flows
+
+The signer-facing endpoints expect a signer access code (delivered to the
+signer by email or WhatsApp):
+
+```swift
+// Look up the current document
+let doc = try await client.signers.getCurrentDocument(
+    signerId: signerId,
+    signerAccessCode: code
+)
+
+// Confirm the signer's data before signing (virtual assignments only)
+try await client.documents.confirmSignerData(
+    documentId: doc.id,
+    signerAccessCode: code,
+    payload: ConfirmSignerDataPayload(email: signer.email, hasAcceptedTerms: true)
+)
+
+// Sign or decline the assignment
+try await client.assignments.sign(
+    documentId: doc.id,
+    assignmentId: doc.assignment!.id,
+    signerAccessCode: code
+)
+// or
+try await client.assignments.decline(
+    documentId: doc.id,
+    assignmentId: doc.assignment!.id,
+    signerAccessCode: code,
+    reason: "Terms unacceptable."
+)
+```
+
+### Validating field values
+
+```swift
+let result = try await client.fields.validate(
+    fieldId: cpfDefinition.id,
+    value: "400.676.228-36"
+)
+print(result.success, result.errorMessage)
+```
+
+### Templates
+
+```swift
+let template = try await client.templates.create(
+    name: "Hiring contract",
+    pdfData: contractPDF
+)
+
+_ = try await client.templates.update(
+    templateId: template.id,
+    payload: UpdateTemplatePayload(message: "Please sign within 7 days")
+)
+```
+
 ## Resources
 
-The SDK exposes seven resource objects:
+The SDK exposes eight resource objects covering 100% of the public API:
 
-- `client.documents` - Document uploads, downloads, and management
-- `client.signers` - Signer creation and management
-- `client.assignments` - Signing assignments
-- `client.webhooks` - Webhook subscriptions
-- `client.templates` - Document templates
-- `client.workspaces` - Workspace management
-- `client.auth` - Login, password reset, and API key management
+- `client.documents` - Document uploads, downloads, management, public lookup, signing token delivery, status catalog
+- `client.signers` - Signer CRUD, self-service flows, signer-facing document listing/sign-multiple/decline-multiple/download
+- `client.assignments` - Signing assignments: create, sign, decline, resend, cost estimation, reset expiration, WhatsApp notification log
+- `client.webhooks` - Webhook subscriptions, event-type catalog, dispatch history, retry
+- `client.templates` - Document template CRUD (create, list, get, update, delete) and instantiation
+- `client.workspaces` - Workspace (account) CRUD
+- `client.fields` - Field-definition CRUD, value validation (single and batch), field type catalog
+- `client.auth` - Login, social login, password reset, change password, API key management
 
 ## Error Handling
 

@@ -67,12 +67,17 @@ public final class Assignment: NSObject {
     public let expiresAt: String?
     public let message: String?
     public let signers: [Signer]
-    public let copyReceivers: [String]?
+    /// Signers configured as copy receivers on this assignment.
+    ///
+    /// The API responds with full signer objects. When creating an
+    /// assignment, pass signer IDs in
+    /// ``CreateAssignmentPayload/copyReceivers``.
+    public let copyReceivers: [Signer]
     public let summary: AssignmentSummary?
 
     init(id: String, senderEmail: String? = nil, method: AssignmentMethod, methodString: String,
          expiresAt: String? = nil, message: String? = nil, signers: [Signer] = [],
-         copyReceivers: [String]? = nil, summary: AssignmentSummary? = nil) {
+         copyReceivers: [Signer] = [], summary: AssignmentSummary? = nil) {
         self.id = id; self.senderEmail = senderEmail
         self.method = method; self.methodString = methodString
         self.expiresAt = expiresAt; self.message = message
@@ -102,7 +107,7 @@ extension Assignment: Decodable {
             expiresAt:     try c.decodeIfPresent(String.self,         forKey: .expiresAt),
             message:       try c.decodeIfPresent(String.self,         forKey: .message),
             signers:       (try? c.decode([Signer].self, forKey: .signers)) ?? [],
-            copyReceivers: try c.decodeIfPresent([String].self,       forKey: .copyReceivers),
+            copyReceivers: (try? c.decode([Signer].self, forKey: .copyReceivers)) ?? [],
             summary:       try c.decodeIfPresent(AssignmentSummary.self, forKey: .summary)
         )
     }
@@ -299,6 +304,95 @@ private func buildEntryBody(_ entry: AssignmentEntry) throws -> AssignmentEntryB
     }
     return AssignmentEntryBody(pageId: entry.pageId, fields: fields)
 }
+
+// MARK: - SignAssignmentField
+
+/// A single signed field placement payload sent by a signer.
+@objcMembers
+public final class SignAssignmentField: NSObject, Encodable {
+    public let itemId: String
+    public let fieldId: String
+    public let pageId: String?
+    public let value: String
+
+    @objc public init(itemId: String, fieldId: String, pageId: String? = nil, value: String) {
+        self.itemId = itemId; self.fieldId = fieldId
+        self.pageId = pageId; self.value = value
+    }
+
+    enum CodingKeys: String, CodingKey { case itemId, fieldId, pageId, value }
+}
+
+extension SignAssignmentField: @unchecked Sendable {}
+
+// MARK: - WhatsappNotification
+
+/// A single WhatsApp notification record returned by
+/// `GET /documents/{id}/assignments/{aid}/whatsapp-notifications`.
+@objcMembers
+public final class WhatsappNotification: NSObject {
+    /// Unix timestamp (seconds) when the WhatsApp message was sent.
+    public let sentAt: Int
+    /// Rendered header text.
+    public let header: String?
+    /// Rendered body text.
+    public let body: String?
+    /// Action buttons rendered in the message (only `text` is exposed).
+    public let buttonTexts: [String]
+    /// Recipient phone number (E.164).
+    public let phoneNumber: String?
+    /// ID of the signer that received the notification.
+    public let signerId: String?
+
+    init(sentAt: Int, header: String? = nil, body: String? = nil,
+         buttonTexts: [String] = [], phoneNumber: String? = nil, signerId: String? = nil) {
+        self.sentAt = sentAt; self.header = header; self.body = body
+        self.buttonTexts = buttonTexts
+        self.phoneNumber = phoneNumber; self.signerId = signerId
+    }
+}
+
+extension WhatsappNotification: @unchecked Sendable {}
+
+extension WhatsappNotification: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case sentAt = "sent_at"
+        case header, body, buttons
+        case phoneNumber = "phone_number"
+        case signerId = "signer_id"
+    }
+
+    struct Button: Decodable { let text: String? }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let buttons = (try? c.decode([Button].self, forKey: .buttons)) ?? []
+        self.init(
+            sentAt: try c.decodeIfPresent(Int.self, forKey: .sentAt) ?? 0,
+            header: try c.decodeIfPresent(String.self, forKey: .header),
+            body: try c.decodeIfPresent(String.self, forKey: .body),
+            buttonTexts: buttons.compactMap(\.text),
+            phoneNumber: try c.decodeIfPresent(String.self, forKey: .phoneNumber),
+            signerId: try c.decodeIfPresent(String.self, forKey: .signerId)
+        )
+    }
+}
+
+// MARK: - DeclineAssignmentPayload
+
+/// Payload for `PUT /documents/{id}/assignments/{aid}/reject`.
+@objcMembers
+public final class DeclineAssignmentPayload: NSObject, Encodable {
+    public let declineReason: String
+
+    @objc public init(declineReason: String) {
+        self.declineReason = declineReason
+    }
+
+    enum CodingKeys: String, CodingKey { case declineReason = "decline_reason" }
+}
+
+extension DeclineAssignmentPayload: @unchecked Sendable {}
 
 // MARK: - ResendNotificationResponse
 

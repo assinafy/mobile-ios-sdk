@@ -78,6 +78,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 /// - ``webhooks`` — Register and query webhook subscriptions.
 /// - ``templates`` — Browse reusable document templates.
 /// - ``workspaces`` — Manage workspaces (accounts).
+/// - ``fields`` — Manage workspace field definitions and validation.
 /// - ``auth`` — Login, password reset, and API key management.
 ///
 /// ## Objective-C
@@ -93,7 +94,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 public final class AssinafyClient: NSObject {
 
     /// The SDK version string included in the `User-Agent` header.
-    public static let sdkVersion = "1.1.0"
+    public static let sdkVersion = "1.2.0"
 
     // MARK: Resources
 
@@ -109,6 +110,8 @@ public final class AssinafyClient: NSObject {
     public let templates: TemplateResource
     /// Manages workspace (account) objects.
     public let workspaces: WorkspaceResource
+    /// Manages workspace field definitions and validation.
+    public let fields: FieldResource
     /// Manages login, password, social login, and API key endpoints.
     public let auth: AuthResource
 
@@ -146,6 +149,7 @@ public final class AssinafyClient: NSObject {
         webhooks    = WebhookResource(http: http, defaultAccountId: accountId, logger: logger)
         templates   = TemplateResource(http: http, defaultAccountId: accountId, logger: logger)
         workspaces  = WorkspaceResource(http: http, defaultAccountId: accountId, logger: logger)
+        fields      = FieldResource(http: http, defaultAccountId: accountId, logger: logger)
         auth        = AuthResource(http: http, defaultAccountId: accountId, logger: logger)
         super.init()
     }
@@ -197,6 +201,7 @@ public final class AssinafyClient: NSObject {
         webhooks    = WebhookResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         templates   = TemplateResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         workspaces  = WorkspaceResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
+        fields      = FieldResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         auth        = AuthResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         super.init()
     }

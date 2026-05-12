@@ -113,6 +113,84 @@ public final class AssignmentResource: BaseResource {
         return try await callCostEstimate("Failed to estimate resend cost", request: request)
     }
 
+    /// Signs an assignment on behalf of the signer (collect or virtual).
+    ///
+    /// Mirrors `POST /documents/{documentId}/assignments/{assignmentId}`.
+    ///
+    /// For **virtual** assignments, ``DocumentResource/confirmSignerData(documentId:signerAccessCode:payload:)``
+    /// must be called first or the API responds with a `400` error
+    /// (`"Signer data must be confirmed before signing."`).
+    ///
+    /// - Parameters:
+    ///   - documentId: The document ID.
+    ///   - assignmentId: The assignment ID.
+    ///   - signerAccessCode: The signer access code from the signing URL.
+    ///   - fields: Array of signed field placements; pass an empty array for
+    ///     virtual assignments without input fields.
+    public func sign(
+        documentId: String,
+        assignmentId: String,
+        signerAccessCode: String,
+        fields: [SignAssignmentField] = []
+    ) async throws {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        let body = try JSONEncoder.assinafy.encode(fields)
+        let request = APIRequest(
+            method: .post,
+            path: "/documents/\(did)/assignments/\(aid)",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            body: body
+        )
+        try await callVoid("Failed to sign assignment", request: request)
+    }
+
+    /// Declines (rejects) an assignment on behalf of the signer.
+    ///
+    /// Mirrors `PUT /documents/{documentId}/assignments/{assignmentId}/reject`.
+    ///
+    /// - Parameters:
+    ///   - documentId: The document ID.
+    ///   - assignmentId: The assignment ID.
+    ///   - signerAccessCode: The signer access code from the signing URL.
+    ///   - reason: Descriptive reason for declining the invitation.
+    public func decline(
+        documentId: String,
+        assignmentId: String,
+        signerAccessCode: String,
+        reason: String
+    ) async throws {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        let payload = DeclineAssignmentPayload(declineReason: reason)
+        let body = try JSONEncoder.assinafy.encode(payload)
+        let request = APIRequest(
+            method: .put,
+            path: "/documents/\(did)/assignments/\(aid)/reject",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            body: body
+        )
+        try await callVoid("Failed to decline assignment", request: request)
+    }
+
+    /// Lists WhatsApp notification messages dispatched for an assignment.
+    ///
+    /// Mirrors `GET /documents/{documentId}/assignments/{assignmentId}/whatsapp-notifications`.
+    public func listWhatsappNotifications(
+        documentId: String,
+        assignmentId: String
+    ) async throws -> [WhatsappNotification] {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let result: PaginatedResult<WhatsappNotification> = try await callList(
+            "Failed to list WhatsApp notifications",
+            request: .get("/documents/\(did)/assignments/\(aid)/whatsapp-notifications")
+        )
+        return result.data
+    }
+
     // MARK: - Objective-C / completion-handler API
 
     /// Creates an assignment and delivers the result on the **main queue**.

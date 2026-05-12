@@ -310,3 +310,74 @@ extension ConfirmSignerDataPayload: @unchecked Sendable {}
         }
     }
 }
+
+// MARK: - Signer-facing document filtering
+
+/// Parameters for ``SignerResource/listSignerDocuments(signerId:signerAccessCode:params:)``.
+@objcMembers
+public final class SignerDocumentListParams: NSObject {
+    public var status: String?
+    public var method: String?
+    public var search: String?
+    public var sort: String?
+
+    @objc public init(
+        status: String? = nil,
+        method: String? = nil,
+        search: String? = nil,
+        sort: String? = nil
+    ) {
+        self.status = status
+        self.method = method
+        self.search = search
+        self.sort = sort
+    }
+
+    func toQueryItems() -> [URLQueryItem] {
+        var items: [URLQueryItem] = []
+        if let s = status { items.append(.init(name: "status", value: s)) }
+        if let m = method { items.append(.init(name: "method", value: m)) }
+        if let s = search { items.append(.init(name: "search", value: s)) }
+        if let s = sort   { items.append(.init(name: "sort",   value: s)) }
+        return items
+    }
+}
+
+extension SignerDocumentListParams: @unchecked Sendable {}
+
+// MARK: - SignMultipleDocumentsPayload
+
+/// Payload for `PUT /signers/documents/sign-multiple`.
+@objcMembers
+public final class SignMultipleDocumentsPayload: NSObject, Encodable {
+    public let documentIds: [String]
+
+    @objc public init(documentIds: [String]) {
+        self.documentIds = documentIds
+    }
+
+    enum CodingKeys: String, CodingKey { case documentIds = "document_ids" }
+}
+
+extension SignMultipleDocumentsPayload: @unchecked Sendable {}
+
+// MARK: - DeclineMultipleDocumentsPayload
+
+/// Payload for `PUT /signers/documents/decline-multiple`.
+@objcMembers
+public final class DeclineMultipleDocumentsPayload: NSObject, Encodable {
+    public let documentIds: [String]
+    public let declineReason: String
+
+    @objc public init(documentIds: [String], declineReason: String) {
+        self.documentIds = documentIds
+        self.declineReason = declineReason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case documentIds = "document_ids"
+        case declineReason = "decline_reason"
+    }
+}
+
+extension DeclineMultipleDocumentsPayload: @unchecked Sendable {}

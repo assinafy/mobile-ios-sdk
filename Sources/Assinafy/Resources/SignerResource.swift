@@ -218,6 +218,109 @@ public final class SignerResource: BaseResource {
                                   request: .get("/signature/\(type.stringValue)", queryItems: items))
     }
 
+    // MARK: - Signer-facing document endpoints
+
+    /// Retrieves the signer's current document via the access code.
+    ///
+    /// Mirrors `GET /signers/{signer_id}/document?signer-access-code=...`.
+    /// The returned document mirrors the standard ``DocumentDetails`` shape
+    /// but omits the `pages` array and filters `assignment.items` to the
+    /// current signer's items.
+    public func getCurrentDocument(
+        signerId: String,
+        signerAccessCode: String
+    ) async throws -> DocumentDetails {
+        let sid = try requireId(signerId, name: "Signer ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        return try await call("Failed to fetch signer's current document",
+                              request: .get("/signers/\(sid)/document",
+                                            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]))
+    }
+
+    /// Lists every document the signer has access to with the given access code.
+    ///
+    /// Mirrors `GET /signers/{signer_id}/documents?signer-access-code=...`.
+    public func listSignerDocuments(
+        signerId: String,
+        signerAccessCode: String,
+        params: SignerDocumentListParams = SignerDocumentListParams()
+    ) async throws -> PaginatedResult<DocumentDetails> {
+        let sid = try requireId(signerId, name: "Signer ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        var items = params.toQueryItems()
+        items.append(URLQueryItem(name: "signer-access-code", value: code))
+        return try await callList(
+            "Failed to list signer documents",
+            request: .get("/signers/\(sid)/documents", queryItems: items)
+        )
+    }
+
+    /// Signs multiple virtual-method documents in one call.
+    ///
+    /// Mirrors `PUT /signers/documents/sign-multiple?signer-access-code=...`.
+    public func signMultipleDocuments(
+        signerAccessCode: String,
+        documentIds: [String]
+    ) async throws {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        guard !documentIds.isEmpty else {
+            throw ValidationError("documentIds must not be empty")
+        }
+        let payload = SignMultipleDocumentsPayload(documentIds: documentIds)
+        let body = try JSONEncoder.assinafy.encode(payload)
+        let request = APIRequest(
+            method: .put,
+            path: "/signers/documents/sign-multiple",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            body: body
+        )
+        try await callVoid("Failed to sign multiple documents", request: request)
+    }
+
+    /// Declines multiple documents in one call.
+    ///
+    /// Mirrors `PUT /signers/documents/decline-multiple?signer-access-code=...`.
+    public func declineMultipleDocuments(
+        signerAccessCode: String,
+        documentIds: [String],
+        reason: String
+    ) async throws {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        guard !documentIds.isEmpty else {
+            throw ValidationError("documentIds must not be empty")
+        }
+        let payload = DeclineMultipleDocumentsPayload(documentIds: documentIds, declineReason: reason)
+        let body = try JSONEncoder.assinafy.encode(payload)
+        let request = APIRequest(
+            method: .put,
+            path: "/signers/documents/decline-multiple",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            body: body
+        )
+        try await callVoid("Failed to decline multiple documents", request: request)
+    }
+
+    /// Downloads a signed document artifact using the signer's access code.
+    ///
+    /// Mirrors `GET /signers/{signer_id}/documents/{document_id}/download/{artifact}`.
+    public func downloadSignerDocumentArtifact(
+        signerId: String,
+        documentId: String,
+        artifact: DocumentArtifactName,
+        signerAccessCode: String
+    ) async throws -> Data {
+        let sid = try requireId(signerId, name: "Signer ID")
+        let did = try requireId(documentId, name: "Document ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        return try await callData(
+            "Failed to download signer document artifact",
+            request: .get(
+                "/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)",
+                queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
+            )
+        )
+    }
+
     // MARK: - Objective-C / completion-handler API
 
     /// Creates a signer and delivers the result on the **main queue**.

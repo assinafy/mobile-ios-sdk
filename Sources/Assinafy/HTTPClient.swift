@@ -121,8 +121,12 @@ public final class URLSessionHTTPClient: HTTPClientProtocol {
     init(baseURL: URL, defaultHeaders: [String: String], timeout: TimeInterval = 30) {
         self.baseURL = baseURL
         self.defaultHeaders = defaultHeaders
-        let config = URLSessionConfiguration.default
+        let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
+        config.httpShouldSetCookies = false
+        config.httpCookieAcceptPolicy = .never
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: config)
     }
 

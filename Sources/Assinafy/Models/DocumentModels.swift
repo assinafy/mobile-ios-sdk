@@ -86,15 +86,22 @@ public extension DocumentArtifactName {
 // MARK: - DocumentArtifacts
 
 /// URLs for each downloadable artifact associated with a document.
+///
+/// `thumbnail` appears once metadata processing completes; the certificated
+/// PDF, certificate page, and bundle ZIP appear after the document has been
+/// fully signed and certificated.
 @objcMembers
 public final class DocumentArtifacts: NSObject {
     public let original: String
+    public let thumbnail: String?
     public let certificated: String?
     public let certificatePage: String?
     public let bundle: String?
 
-    init(original: String, certificated: String? = nil, certificatePage: String? = nil, bundle: String? = nil) {
+    init(original: String, thumbnail: String? = nil, certificated: String? = nil,
+         certificatePage: String? = nil, bundle: String? = nil) {
         self.original = original
+        self.thumbnail = thumbnail
         self.certificated = certificated
         self.certificatePage = certificatePage
         self.bundle = bundle
@@ -105,7 +112,7 @@ extension DocumentArtifacts: @unchecked Sendable {}
 
 extension DocumentArtifacts: Decodable {
     enum CodingKeys: String, CodingKey {
-        case original, certificated, bundle
+        case original, thumbnail, certificated, bundle
         case certificatePage = "certificate-page"
     }
 
@@ -113,6 +120,7 @@ extension DocumentArtifacts: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             original:        try c.decode(String.self,         forKey: .original),
+            thumbnail:       try c.decodeIfPresent(String.self, forKey: .thumbnail),
             certificated:    try c.decodeIfPresent(String.self, forKey: .certificated),
             certificatePage: try c.decodeIfPresent(String.self, forKey: .certificatePage),
             bundle:          try c.decodeIfPresent(String.self, forKey: .bundle)
@@ -497,3 +505,145 @@ public final class WaitUntilReadyOptions: NSObject {
 }
 
 extension WaitUntilReadyOptions: @unchecked Sendable {}
+
+// MARK: - DocumentStatusInfo
+
+/// Metadata for a single document status returned by `GET /documents/statuses`.
+@objcMembers
+public final class DocumentStatusInfo: NSObject {
+    /// The raw status string (e.g. `"metadata_ready"`).
+    public let code: String
+    /// Whether a document currently in this status may be deleted.
+    public let deletable: Bool
+
+    init(code: String, deletable: Bool) {
+        self.code = code; self.deletable = deletable
+    }
+}
+
+extension DocumentStatusInfo: @unchecked Sendable {}
+
+extension DocumentStatusInfo: Decodable {
+    enum CodingKeys: String, CodingKey { case code, deletable }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            code: try c.decode(String.self, forKey: .code),
+            deletable: try c.decodeIfPresent(Bool.self, forKey: .deletable) ?? false
+        )
+    }
+}
+
+// MARK: - PublicDocumentInfo
+
+/// The unauthenticated public view of a document returned by
+/// `GET /public/documents/{document_id}`.
+@objcMembers
+public final class PublicDocumentInfo: NSObject {
+    public let id: String
+    public let name: String
+    public let pageCount: Int
+    public let createdBy: String?
+
+    init(id: String, name: String, pageCount: Int, createdBy: String? = nil) {
+        self.id = id; self.name = name
+        self.pageCount = pageCount; self.createdBy = createdBy
+    }
+}
+
+extension PublicDocumentInfo: @unchecked Sendable {}
+
+extension PublicDocumentInfo: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case pageCount = "page_count"
+        case createdBy = "created_by"
+    }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let count: Int
+        if let n = try? c.decode(Int.self, forKey: .pageCount) {
+            count = n
+        } else if let s = try? c.decode(String.self, forKey: .pageCount), let n = Int(s) {
+            count = n
+        } else {
+            count = 0
+        }
+        self.init(
+            id: try c.decode(String.self, forKey: .id),
+            name: try c.decode(String.self, forKey: .name),
+            pageCount: count,
+            createdBy: try c.decodeIfPresent(String.self, forKey: .createdBy)
+        )
+    }
+}
+
+// MARK: - SendTokenChannel
+
+/// The delivery channel for `PUT /public/documents/{id}/send-token`.
+@objc public enum SendTokenChannel: Int {
+    case email = 0
+    case whatsapp = 1
+
+    var stringValue: String {
+        switch self {
+        case .email:    return "email"
+        case .whatsapp: return "whatsapp"
+        }
+    }
+}
+
+/// Payload for `PUT /public/documents/{id}/send-token`.
+@objcMembers
+public final class SendTokenPayload: NSObject, Encodable {
+    /// The recipient address (email or phone, depending on ``channel``).
+    public let recipient: String
+    /// The delivery channel.
+    public let channel: SendTokenChannel
+
+    @objc public init(recipient: String, channel: SendTokenChannel = .email) {
+        self.recipient = recipient
+        self.channel = channel
+    }
+
+    enum CodingKeys: String, CodingKey { case recipient, channel }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(recipient, forKey: .recipient)
+        try c.encode(channel.stringValue, forKey: .channel)
+    }
+}
+
+extension SendTokenPayload: @unchecked Sendable {}
+
+/// Response from `PUT /public/documents/{id}/send-token`.
+@objcMembers
+public final class SendTokenResponse: NSObject {
+    public let document: PublicDocumentInfo
+    public let channel: String
+    public let recipient: String
+
+    init(document: PublicDocumentInfo, channel: String, recipient: String) {
+        self.document = document
+        self.channel = channel
+        self.recipient = recipient
+    }
+}
+
+extension SendTokenResponse: @unchecked Sendable {}
+
+extension SendTokenResponse: Decodable {
+    enum CodingKeys: String, CodingKey { case document, channel, recipient }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            document: try c.decode(PublicDocumentInfo.self, forKey: .document),
+            channel: try c.decode(String.self, forKey: .channel),
+            recipient: try c.decode(String.self, forKey: .recipient)
+        )
+    }
+}

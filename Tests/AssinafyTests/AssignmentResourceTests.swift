@@ -200,4 +200,126 @@ final class AssignmentResourceTests: XCTestCase {
         )
         XCTAssertEqual(estimate.estimatedCost, 0.45)
     }
+
+    func testAssignmentDecodesCopyReceiversAsSignerObjects() async throws {
+        mock.stubEnvelope([
+            "id": "a1",
+            "method": "virtual",
+            "signers": [],
+            "copy_receivers": [
+                ["id": "s2", "full_name": "Eric Flores", "email": "eric@example.com"],
+            ],
+        ])
+        let assignment = try await resource.create(
+            documentId: "doc1",
+            payload: .withSignerIds(["s1"])
+        )
+        XCTAssertEqual(assignment.copyReceivers.count, 1)
+        XCTAssertEqual(assignment.copyReceivers.first?.id, "s2")
+        XCTAssertEqual(assignment.copyReceivers.first?.fullName, "Eric Flores")
+    }
+
+    func testAssignmentTolerantOfMissingCopyReceivers() async throws {
+        mock.stubEnvelope(assignmentDict())
+        let assignment = try await resource.create(
+            documentId: "doc1",
+            payload: .withSignerIds(["s1"])
+        )
+        XCTAssertTrue(assignment.copyReceivers.isEmpty)
+    }
+
+    func testSignPostsToAssignmentEndpointWithAccessCode() async throws {
+        mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
+        try await resource.sign(
+            documentId: "doc1",
+            assignmentId: "a1",
+            signerAccessCode: "code-123",
+            fields: [SignAssignmentField(itemId: "i1", fieldId: "fd1", pageId: "p1", value: "Signed")]
+        )
+        XCTAssertEqual(mock.lastRequest?.method, .post)
+        XCTAssertEqual(mock.lastRequest?.path, "/documents/doc1/assignments/a1")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.name, "signer-access-code")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code-123")
+        guard let body = mock.lastRequest?.body,
+              let arr = try? JSONSerialization.jsonObject(with: body) as? [[String: Any]] else {
+            XCTFail("Expected array body")
+            return
+        }
+        XCTAssertEqual(arr.first?["itemId"] as? String, "i1")
+        XCTAssertEqual(arr.first?["fieldId"] as? String, "fd1")
+    }
+
+    func testSignAllowsEmptyFieldsForVirtual() async throws {
+        mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
+        try await resource.sign(
+            documentId: "doc1",
+            assignmentId: "a1",
+            signerAccessCode: "code",
+            fields: []
+        )
+        guard let body = mock.lastRequest?.body else {
+            XCTFail("No body")
+            return
+        }
+        XCTAssertEqual(String(data: body, encoding: .utf8), "[]")
+    }
+
+    func testSignRequiresAccessCode() async {
+        await assertThrowsValidationError {
+            try await self.resource.sign(documentId: "doc1", assignmentId: "a1", signerAccessCode: "")
+        }
+    }
+
+    func testDeclineSendsRejectEndpoint() async throws {
+        mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
+        try await resource.decline(
+            documentId: "doc1",
+            assignmentId: "a1",
+            signerAccessCode: "code",
+            reason: "Not happy"
+        )
+        XCTAssertEqual(mock.lastRequest?.method, .put)
+        XCTAssertEqual(mock.lastRequest?.path, "/documents/doc1/assignments/a1/reject")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code")
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No body")
+            return
+        }
+        XCTAssertEqual(json["decline_reason"] as? String, "Not happy")
+    }
+
+    func testListWhatsappNotificationsDecodesButtons() async throws {
+        mock.stubEnvelopeList([
+            [
+                "sent_at": 1710000000,
+                "header": "Documento para assinatura",
+                "body": "Texto",
+                "buttons": [["text": "Abrir documento"]],
+                "phone_number": "+5511999990001",
+                "signer_id": "s1",
+            ]
+        ])
+        let result = try await resource.listWhatsappNotifications(documentId: "doc1", assignmentId: "a1")
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.sentAt, 1710000000)
+        XCTAssertEqual(result.first?.buttonTexts, ["Abrir documento"])
+        XCTAssertEqual(mock.lastRequest?.path,
+                       "/documents/doc1/assignments/a1/whatsapp-notifications")
+    }
+
+    func testCreateAssignmentSendsCopyReceiverIDsAsStrings() async throws {
+        mock.stubEnvelope(assignmentDict())
+        let payload = CreateAssignmentPayload.withSignerIds(
+            ["s1"],
+            copyReceivers: ["s2", "s3"]
+        )
+        _ = try await resource.create(documentId: "doc1", payload: payload)
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No request body")
+            return
+        }
+        XCTAssertEqual(json["copy_receivers"] as? [String], ["s2", "s3"])
+    }
 }

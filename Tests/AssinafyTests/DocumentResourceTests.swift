@@ -155,4 +155,125 @@ final class DocumentResourceTests: XCTestCase {
         let result = try await resource.isFullySigned(documentId: "doc1")
         XCTAssertFalse(result)
     }
+
+    // MARK: - Artifact decoding
+
+    func testArtifactsDecodeThumbnailURLWhenPresent() async throws {
+        var dict = uploadResponseDict()
+        dict["artifacts"] = [
+            "original": "https://api.assinafy.com.br/v1/documents/doc1/download/original",
+            "thumbnail": "https://api.assinafy.com.br/v1/documents/doc1/thumbnail",
+        ]
+        mock.stubEnvelope(dict)
+        let pdf = Data([0x25, 0x50, 0x44, 0x46, 0x2D])
+        let resp = try await resource.upload(pdf)
+        XCTAssertEqual(resp.artifacts.thumbnail,
+                       "https://api.assinafy.com.br/v1/documents/doc1/thumbnail")
+        XCTAssertNil(resp.artifacts.certificated)
+    }
+
+    func testArtifactsDecodeWithoutThumbnail() async throws {
+        mock.stubEnvelope(uploadResponseDict())
+        let pdf = Data([0x25, 0x50, 0x44, 0x46, 0x2D])
+        let resp = try await resource.upload(pdf)
+        XCTAssertNil(resp.artifacts.thumbnail)
+    }
+
+    // MARK: - waitUntilReady
+
+    func testWaitUntilReadyReturnsImmediatelyWhenStatusReady() async throws {
+        var dict = uploadResponseDict()
+        dict["status"] = "metadata_ready"
+        mock.stubEnvelope(dict)
+        _ = try await resource.waitUntilReady(documentId: "doc1")
+        XCTAssertEqual(mock.allRequests.count, 1,
+                       "waitUntilReady should not make a second GET when already ready")
+        XCTAssertEqual(mock.lastRequest?.path, "/documents/doc1")
+    }
+
+    func testWaitUntilReadyAcceptsPendingSignatureStatus() async throws {
+        var dict = uploadResponseDict()
+        dict["status"] = "pending_signature"
+        mock.stubEnvelope(dict)
+        let resp = try await resource.waitUntilReady(documentId: "doc1")
+        XCTAssertEqual(resp.statusString, "pending_signature")
+    }
+
+    func testWaitUntilReadyThrowsImmediatelyWhenFailed() async {
+        var dict = uploadResponseDict()
+        dict["status"] = "failed"
+        mock.stubEnvelope(dict)
+        do {
+            _ = try await resource.waitUntilReady(documentId: "doc1")
+            XCTFail("Expected SDK error")
+        } catch let error as AssinafySDKError {
+            XCTAssertTrue(error.message.contains("failed"),
+                          "Error message should mention failure, got: \(error.message)")
+        } catch {
+            XCTFail("Expected AssinafySDKError, got \(type(of: error))")
+        }
+    }
+
+    func testWaitUntilReadyRejectsEmptyDocumentID() async {
+        await assertThrowsValidationError {
+            _ = try await self.resource.waitUntilReady(documentId: "")
+        }
+    }
+
+    // MARK: - Statuses / public endpoints
+
+    func testListStatusesUsesDocumentsStatusesEndpoint() async throws {
+        mock.stubEnvelopeList([
+            ["code": "metadata_ready", "deletable": true],
+            ["code": "certificating", "deletable": false],
+        ])
+        let result = try await resource.listStatuses()
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0].code, "metadata_ready")
+        XCTAssertTrue(result[0].deletable)
+        XCTAssertFalse(result[1].deletable)
+        XCTAssertEqual(mock.lastRequest?.path, "/documents/statuses")
+    }
+
+    func testGetPublicInfoUsesPublicEndpointAndDecodesStringPageCount() async throws {
+        mock.stubEnvelope([
+            "id": "doc1",
+            "name": "1.pdf",
+            "page_count": "1",
+            "created_by": "John Smith",
+        ])
+        let info = try await resource.getPublicInfo(documentId: "doc1")
+        XCTAssertEqual(info.id, "doc1")
+        XCTAssertEqual(info.pageCount, 1)
+        XCTAssertEqual(info.createdBy, "John Smith")
+        XCTAssertEqual(mock.lastRequest?.path, "/public/documents/doc1")
+    }
+
+    func testSendPublicSignTokenSendsRecipientAndChannel() async throws {
+        mock.stubEnvelope([
+            "document": [
+                "id": "doc1",
+                "name": "1.pdf",
+                "page_count": 1,
+                "created_by": "John",
+            ],
+            "channel": "email",
+            "recipient": "someone@example.com",
+        ])
+        let resp = try await resource.sendPublicSignToken(
+            documentId: "doc1",
+            payload: SendTokenPayload(recipient: "someone@example.com", channel: .email)
+        )
+        XCTAssertEqual(resp.channel, "email")
+        XCTAssertEqual(resp.recipient, "someone@example.com")
+        XCTAssertEqual(mock.lastRequest?.path, "/public/documents/doc1/send-token")
+        XCTAssertEqual(mock.lastRequest?.method, .put)
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No body")
+            return
+        }
+        XCTAssertEqual(json["recipient"] as? String, "someone@example.com")
+        XCTAssertEqual(json["channel"] as? String, "email")
+    }
 }

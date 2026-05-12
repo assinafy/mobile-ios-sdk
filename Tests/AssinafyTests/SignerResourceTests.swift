@@ -172,4 +172,90 @@ final class SignerResourceTests: XCTestCase {
         let signer = Signer(id: "1", fullName: "Test", email: "t@t.com")
         XCTAssertFalse(signer.description.isEmpty)
     }
+
+    // MARK: - Signer-facing document endpoints
+
+    func testGetCurrentDocumentUsesSignerEndpoint() async throws {
+        mock.stubEnvelope([
+            "id": "doc1",
+            "account_id": "acc1",
+            "name": "test.pdf",
+            "status": "metadata_ready",
+            "pages": [],
+            "created_at": "2024-01-01",
+            "updated_at": "2024-01-01",
+        ])
+        _ = try await resource.getCurrentDocument(signerId: "s1", signerAccessCode: "code")
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/s1/document")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.name, "signer-access-code")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code")
+    }
+
+    func testListSignerDocumentsForwardsFilters() async throws {
+        mock.stubEnvelopeList([])
+        _ = try await resource.listSignerDocuments(
+            signerId: "s1",
+            signerAccessCode: "code",
+            params: SignerDocumentListParams(status: "pending_signature", method: "virtual", search: "abc", sort: "name")
+        )
+        let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { acc, item in
+            acc[item.name] = item.value
+        }
+        XCTAssertEqual(pairs["status"], "pending_signature")
+        XCTAssertEqual(pairs["method"], "virtual")
+        XCTAssertEqual(pairs["search"], "abc")
+        XCTAssertEqual(pairs["sort"], "name")
+        XCTAssertEqual(pairs["signer-access-code"], "code")
+    }
+
+    func testSignMultipleSendsArrayOfIDs() async throws {
+        mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
+        try await resource.signMultipleDocuments(
+            signerAccessCode: "code",
+            documentIds: ["d1", "d2"]
+        )
+        XCTAssertEqual(mock.lastRequest?.method, .put)
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/documents/sign-multiple")
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No body")
+            return
+        }
+        XCTAssertEqual(json["document_ids"] as? [String], ["d1", "d2"])
+    }
+
+    func testSignMultipleRejectsEmpty() async {
+        await assertThrowsValidationError {
+            try await self.resource.signMultipleDocuments(signerAccessCode: "c", documentIds: [])
+        }
+    }
+
+    func testDeclineMultipleEncodesReason() async throws {
+        mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
+        try await resource.declineMultipleDocuments(
+            signerAccessCode: "code",
+            documentIds: ["d1"],
+            reason: "Bad terms"
+        )
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/documents/decline-multiple")
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No body")
+            return
+        }
+        XCTAssertEqual(json["document_ids"] as? [String], ["d1"])
+        XCTAssertEqual(json["decline_reason"] as? String, "Bad terms")
+    }
+
+    func testDownloadSignerArtifactBuildsCorrectPath() async throws {
+        mock.stub(response: APIResponse(data: Data([0xFF]), headers: [:], statusCode: 200))
+        _ = try await resource.downloadSignerDocumentArtifact(
+            signerId: "s1",
+            documentId: "d1",
+            artifact: .certificated,
+            signerAccessCode: "code"
+        )
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/s1/documents/d1/download/certificated")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code")
+    }
 }

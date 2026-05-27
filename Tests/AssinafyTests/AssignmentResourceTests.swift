@@ -178,8 +178,11 @@ final class AssignmentResourceTests: XCTestCase {
         mock.stubEnvelope([
             "credit_balance": 10.0,
             "document_balance": 5.0,
-            "estimated_cost": 1.45,
-            "has_sufficient_balance": true,
+            "credits": 0.45,
+            "total_credits": 1.45,
+            "needs_extra_document": true,
+            "extra_document_cost": 1.0,
+            "has_sufficient_resources": true,
         ])
         let estimate = try await resource.estimateCost(
             documentId: "doc1",
@@ -189,6 +192,11 @@ final class AssignmentResourceTests: XCTestCase {
         XCTAssertEqual(estimate.documentBalance, 5.0)
         XCTAssertEqual(estimate.estimatedCost, 1.45)
         XCTAssertTrue(estimate.hasSufficientBalance)
+        XCTAssertEqual(estimate.credits, 0.45)
+        XCTAssertEqual(estimate.totalCredits, 1.45)
+        XCTAssertTrue(estimate.needsExtraDocument)
+        XCTAssertEqual(estimate.extraDocumentCost, 1.0)
+        XCTAssertTrue(estimate.hasSufficientResources)
     }
 
     func testEstimateResendCostReturnsTypedCostEstimate() async throws {

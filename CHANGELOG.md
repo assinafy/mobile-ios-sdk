@@ -1,26 +1,35 @@
 # Changelog
 
-## [1.2.0] - 2026-05-11
+## [1.2.0] - 2026-05-27
 
 ### Added — full API coverage
 The SDK now wraps every endpoint documented at
 <https://api.assinafy.com.br/v1/docs>. New surfaces:
 
+- **`client.tags`** (new resource) — workspace tag CRUD plus document tag
+  list, replace, append, and detach endpoints.
 - **`client.fields`** (new resource) — `create`, `list`, `get`, `update`,
   `delete`, `validate`, `validateMultiple`, `listFieldTypes`. Supports both
   authenticated-user and signer-access-code flows on the validate endpoints.
 - **`client.documents`** — `listStatuses`, `getPublicInfo` (public, no
-  auth), `sendPublicSignToken` (public, no auth).
+  auth), `sendPublicSignToken` (public, no auth), document-specific filters,
+  document tag decoding, and template instantiation with editor fields, tags,
+  signer notification methods, and signer step ordering.
 - **`client.assignments`** — `sign(documentId:assignmentId:signerAccessCode:fields:)`,
   `decline(documentId:assignmentId:signerAccessCode:reason:)`,
-  `listWhatsappNotifications(documentId:assignmentId:)`.
+  `listWhatsappNotifications(documentId:assignmentId:)`. Assignment responses
+  now decode items, signing URLs, summary signers, notification history, and
+  documented cost estimate fields.
 - **`client.signers`** — `getCurrentDocument`, `listSignerDocuments`,
   `signMultipleDocuments`, `declineMultipleDocuments`,
-  `downloadSignerDocumentArtifact` — the signer-facing document endpoints
-  driven by a signer access code.
+  `downloadSignerDocumentArtifact`, `getSigningDocument` — the signer-facing
+  document endpoints driven by a signer access code. Signers may now be created
+  with email or WhatsApp contact details, matching the documented nullable
+  email response shape.
 - **`client.templates`** — `create(name:pdfData:)`, `update(templateId:payload:)`,
-  `delete(templateId:)`. `TemplateDetails` now exposes `documentName` and
-  `message`.
+  `delete(templateId:)`. Template responses now expose `documentName`,
+  `message`, roles, pages, field placements, tags, default document tags, and
+  template-specific list filters.
 
 New model types include `FieldDefinition`, `FieldTypeInfo`,
 `FieldValidationResult`, `FieldValidateMultipleItem`, `CreateFieldPayload`,
@@ -28,20 +37,19 @@ New model types include `FieldDefinition`, `FieldTypeInfo`,
 `PublicDocumentInfo`, `SendTokenPayload`, `SendTokenResponse`,
 `SignAssignmentField`, `DeclineAssignmentPayload`, `WhatsappNotification`,
 `SignMultipleDocumentsPayload`, `DeclineMultipleDocumentsPayload`,
-`SignerDocumentListParams`, `UpdateTemplatePayload`.
+`SignerDocumentListParams`, `UpdateTemplatePayload`, `Tag`, `TagListParams`,
+`CreateTagPayload`, `UpdateTagPayload`, `DocumentListParams`,
+`TemplateListParams`, `TemplatePage`, `TemplateFieldPlacement`,
+`TemplateEditorField`, `AssignmentItem`, and `AssignmentSigningURL`.
 
 ### Tests
-- Added 36 unit tests covering every new endpoint and its decoding paths,
-  including new `FieldResourceTests` and `TemplateResourceTests` suites
-  (total: 135 unit tests passing).
-- Verified end-to-end against the live `https://api.assinafy.com.br/v1`
-  API for 32 endpoints exercised in sequence (documents, signers,
-  assignments, workspaces, templates, fields, webhooks, public document
-  info). Signer-access-code-only endpoints (sign, decline, sign-multiple,
-  decline-multiple, signer document views, public send-token) are covered
-  by unit tests; they require a real signer access code obtained by the
-  signer through email/WhatsApp delivery, which is not available to an
-  automated test runner.
+- Added unit coverage for tag endpoints, documented filters, nullable signer
+  email, richer document/template/assignment decoding, and live-test gating.
+- `swift test`: 157 tests, 0 failures, with four credential-gated live tests
+  skipped by default.
+- Verified against the live `https://api.assinafy.com.br/v1` API using
+  environment-only credentials: read-only catalog/list endpoints, tag CRUD,
+  signer CRUD, and opt-in document upload/get/download/delete all passed.
 
 ## [1.1.1] - 2026-05-11
 

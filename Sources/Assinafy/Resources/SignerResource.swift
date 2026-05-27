@@ -35,22 +35,31 @@ public final class SignerResource: BaseResource {
         _ payload: CreateSignerPayload,
         accountId: String? = nil
     ) async throws -> Signer {
-        try assertValidEmail(payload.email)
+        if let email = payload.email {
+            try assertValidEmail(email)
+        }
+        guard payload.email?.isEmpty == false || payload.whatsappPhoneNumber?.isEmpty == false else {
+            throw ValidationError("Signer email or WhatsApp phone number is required")
+        }
         let id = try self.accountId(accountId)
 
-        if let existing = try await findByEmail(payload.email, accountId: id) {
-            logger.info("Using existing signer", context: ["email": payload.email])
-            return existing
+        if let email = payload.email {
+            if let existing = try await findByEmail(email, accountId: id) {
+                logger.info("Using existing signer", context: ["email": email])
+                return existing
+            }
         }
 
-        logger.info("Creating signer", context: ["email": payload.email])
+        logger.info("Creating signer", context: ["email": payload.email as Any])
         do {
             let request = try APIRequest.post("/accounts/\(id)/signers", body: payload)
             return try await call("Failed to create signer", request: request)
         } catch let error as APIError where error.statusCode == 409 {
-            if let duplicate = try await findByEmail(payload.email, accountId: id) {
-                logger.info("Signer already exists, reusing", context: ["email": payload.email])
-                return duplicate
+            if let email = payload.email {
+                if let duplicate = try await findByEmail(email, accountId: id) {
+                    logger.info("Signer already exists, reusing", context: ["email": email])
+                    return duplicate
+                }
             }
             throw error
         }
@@ -130,7 +139,7 @@ public final class SignerResource: BaseResource {
             let params = ListParams(perPage: 100, search: email)
             let result = try await list(params: params, accountId: accountId)
             let lower = email.lowercased()
-            return result.data.first { $0.email.lowercased() == lower }
+            return result.data.first { $0.email?.lowercased() == lower }
         } catch let error as APIError where error.statusCode == 404 {
             return nil
         }
@@ -318,6 +327,25 @@ public final class SignerResource: BaseResource {
                 "/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)",
                 queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
             )
+        )
+    }
+
+    /// Retrieves document assignment details from the generic signer endpoint.
+    ///
+    /// Mirrors `GET /sign?signer-access-code=...`. This is useful when a
+    /// signing URL carries only an access code and not a signer ID.
+    public func getSigningDocument(
+        signerAccessCode: String,
+        hasAcceptedTerms: Bool? = nil
+    ) async throws -> DocumentDetails {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        var items = [URLQueryItem(name: "signer-access-code", value: code)]
+        if let hasAcceptedTerms {
+            items.append(.init(name: "has_accepted_terms", value: hasAcceptedTerms ? "true" : "false"))
+        }
+        return try await call(
+            "Failed to fetch signing document",
+            request: .get("/sign", queryItems: items)
         )
     }
 

@@ -54,6 +54,28 @@ final class SignerResourceTests: XCTestCase {
         }
     }
 
+    func testCreateAllowsWhatsappOnlySigner() async throws {
+        mock.stubEnvelope(signerDict(id: "123", email: ""))
+        _ = try await resource.create(
+            CreateSignerPayload(fullName: "John", whatsappPhoneNumber: "+5548999990000")
+        )
+        XCTAssertEqual(mock.lastRequest?.method, .post)
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/signers")
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No request body")
+            return
+        }
+        XCTAssertNil(json["email"])
+        XCTAssertEqual(json["whatsapp_phone_number"] as? String, "+5548999990000")
+    }
+
+    func testCreateRequiresEmailOrWhatsapp() async {
+        await assertThrowsValidationError {
+            _ = try await self.resource.create(CreateSignerPayload(fullName: "Test"))
+        }
+    }
+
     // MARK: - Create
 
     func testUsesCustomAccountIDWhenProvided() async throws {
@@ -173,6 +195,26 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertFalse(signer.description.isEmpty)
     }
 
+    func testSignerDecodesDocumentAssignmentFields() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": "s1",
+            "full_name": "Test",
+            "email": NSNull(),
+            "verification_method": "Whatsapp",
+            "notification_methods": ["Whatsapp"],
+            "completed": true,
+            "notification_history": [
+                ["event": "signature_requested", "status": "sent", "sent_at": "2026-05-04T15:00:00Z"]
+            ],
+        ])
+        let signer = try JSONDecoder.assinafy.decode(Signer.self, from: data)
+        XCTAssertNil(signer.email)
+        XCTAssertEqual(signer.verificationMethod, "Whatsapp")
+        XCTAssertEqual(signer.notificationMethods, ["Whatsapp"])
+        XCTAssertTrue(signer.completed)
+        XCTAssertEqual(signer.notificationHistory.first?.event, "signature_requested")
+    }
+
     // MARK: - Signer-facing document endpoints
 
     func testGetCurrentDocumentUsesSignerEndpoint() async throws {
@@ -257,5 +299,24 @@ final class SignerResourceTests: XCTestCase {
         )
         XCTAssertEqual(mock.lastRequest?.path, "/signers/s1/documents/d1/download/certificated")
         XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code")
+    }
+
+    func testGetSigningDocumentUsesGenericSignEndpoint() async throws {
+        mock.stubEnvelope([
+            "id": "doc1",
+            "account_id": "acc1",
+            "name": "test.pdf",
+            "status": "pending_signature",
+            "pages": [],
+            "created_at": "2024-01-01",
+            "updated_at": "2024-01-01",
+        ])
+        _ = try await resource.getSigningDocument(signerAccessCode: "code", hasAcceptedTerms: true)
+        XCTAssertEqual(mock.lastRequest?.path, "/sign")
+        let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { acc, item in
+            acc[item.name] = item.value
+        }
+        XCTAssertEqual(pairs["signer-access-code"], "code")
+        XCTAssertEqual(pairs["has_accepted_terms"], "true")
     }
 }

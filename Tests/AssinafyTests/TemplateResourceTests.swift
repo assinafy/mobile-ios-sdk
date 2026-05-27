@@ -30,12 +30,67 @@ final class TemplateResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/templates")
     }
 
+    func testListSupportsTemplateSpecificFilters() async throws {
+        mock.stubEnvelopeList([])
+        _ = try await resource.list(
+            params: TemplateListParams(
+                status: "ready",
+                search: "contract",
+                tagIds: ["tag1", "tag2"],
+                sort: "updated_at"
+            )
+        )
+        let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { acc, item in
+            acc[item.name] = item.value
+        }
+        XCTAssertEqual(pairs["status"], "ready")
+        XCTAssertEqual(pairs["search"], "contract")
+        XCTAssertEqual(pairs["tags"], "tag1,tag2")
+        XCTAssertEqual(pairs["sort"], "updated_at")
+    }
+
     func testGetUsesCorrectPath() async throws {
-        mock.stubEnvelope(templateDict())
+        var dict = templateDict()
+        dict["pages"] = [
+            [
+                "id": "p1",
+                "number": 1,
+                "height": 2100,
+                "width": 1275,
+                "download_url": "https://api.assinafy.com.br/page",
+                "fields": [
+                    [
+                        "id": "fp1",
+                        "field_id": "f1",
+                        "role_id": "r1",
+                        "label": "Name",
+                        "display_settings": ["left": 10],
+                        "created_at": "2024-07-19T15:23:03Z",
+                        "updated_at": "2024-07-19T15:23:03Z",
+                    ],
+                ],
+            ],
+        ]
+        dict["roles"] = [
+            [
+                "id": "r1",
+                "name": "Signer",
+                "assignment_type": "Signer",
+                "created_at": "2024-07-19T15:23:03Z",
+                "updated_at": "2024-07-19T15:23:03Z",
+            ],
+        ]
+        dict["tags"] = [["id": "tag1", "name": "HR"]]
+        dict["default_document_tags"] = [["id": "tag2", "name": "Contracts"]]
+        mock.stubEnvelope(dict)
         let details = try await resource.get(templateId: "t1")
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/templates/t1")
         XCTAssertEqual(details.documentName, "doc.pdf")
         XCTAssertEqual(details.message, "Sign please")
+        XCTAssertEqual(details.pages.first?.fields.first?.fieldId, "f1")
+        XCTAssertEqual(details.roles?.first?.assignmentType, "Signer")
+        XCTAssertEqual(details.tags.first?.name, "HR")
+        XCTAssertEqual(details.defaultDocumentTags.first?.name, "Contracts")
     }
 
     func testCreateRejectsEmptyName() async {

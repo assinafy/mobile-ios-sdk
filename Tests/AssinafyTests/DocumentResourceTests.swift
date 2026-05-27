@@ -79,6 +79,31 @@ final class DocumentResourceTests: XCTestCase {
         XCTAssertEqual(result.meta?.lastPage, 3)
     }
 
+    func testListSupportsDocumentSpecificFilters() async throws {
+        mock.stubEnvelopeList([])
+        _ = try await resource.list(
+            params: DocumentListParams(
+                status: "pending_signature",
+                method: "virtual",
+                search: "contract",
+                tagIds: ["tag1", "tag2"],
+                sort: "-updated_at",
+                page: 2,
+                perPage: 25
+            )
+        )
+        let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { acc, item in
+            acc[item.name] = item.value
+        }
+        XCTAssertEqual(pairs["status"], "pending_signature")
+        XCTAssertEqual(pairs["method"], "virtual")
+        XCTAssertEqual(pairs["search"], "contract")
+        XCTAssertEqual(pairs["tags"], "tag1,tag2")
+        XCTAssertEqual(pairs["sort"], "-updated_at")
+        XCTAssertEqual(pairs["page"], "2")
+        XCTAssertEqual(pairs["per-page"], "25")
+    }
+
     // MARK: - Get
 
     func testGetUsesCorrectPath() async throws {
@@ -179,6 +204,78 @@ final class DocumentResourceTests: XCTestCase {
         XCTAssertNil(resp.artifacts.thumbnail)
     }
 
+    func testUploadResponseDecodesNumericTimestampsAndMissingAccountID() async throws {
+        var dict = uploadResponseDict()
+        dict.removeValue(forKey: "account_id")
+        dict["created_at"] = 1633026554
+        dict["updated_at"] = 1633026555
+        dict["tags"] = [["id": "tag1", "name": "Contracts", "color": "#FF0000"]]
+        mock.stubEnvelope(dict)
+        let pdf = Data([0x25, 0x50, 0x44, 0x46, 0x2D])
+        let resp = try await resource.upload(pdf)
+        XCTAssertNil(resp.accountId)
+        XCTAssertEqual(resp.createdAt, "1633026554")
+        XCTAssertEqual(resp.updatedAt, "1633026555")
+        XCTAssertEqual(resp.tags.first?.name, "Contracts")
+    }
+
+    func testDocumentDetailsDecodeTagsAndAssignmentItems() async throws {
+        mock.stubEnvelope([
+            "id": "doc1",
+            "account_id": "acc1",
+            "name": "test.pdf",
+            "status": "pending_signature",
+            "assignment": [
+                "id": "a1",
+                "method": "collect",
+                "signers": [
+                    [
+                        "id": "s1",
+                        "full_name": "Signer",
+                        "email": NSNull(),
+                        "verification_method": "Whatsapp",
+                        "notification_methods": ["Whatsapp"],
+                    ]
+                ],
+                "items": [
+                    [
+                        "id": "i1",
+                        "field": [
+                            "id": "f1",
+                            "name": "CPF",
+                            "type": "cpf",
+                        ],
+                        "display_settings": ["top": 10],
+                        "value": NSNull(),
+                        "completed": false,
+                    ]
+                ],
+                "summary": [
+                    "signer_count": 1,
+                    "completed_count": 0,
+                    "signers": [
+                        ["id": "s1", "full_name": "Signer", "email": NSNull(), "completed": false]
+                    ],
+                ],
+                "signing_urls": [
+                    ["signer_id": "s1", "url": "https://api.assinafy.com.br/v1/sign/code"]
+                ],
+            ],
+            "pages": [],
+            "tags": [["id": "tag1", "name": "Contracts"]],
+            "created_at": 1633026554,
+            "updated_at": 1633026555,
+        ])
+        let details = try await resource.get(documentId: "doc1")
+        XCTAssertEqual(details.tags.first?.id, "tag1")
+        XCTAssertEqual(details.assignment?.signers.first?.verificationMethod, "Whatsapp")
+        XCTAssertEqual(details.assignment?.items.first?.field?.type, "cpf")
+        XCTAssertEqual(details.assignment?.items.first?.displaySettings, "{\"top\":10}")
+        XCTAssertEqual(details.assignment?.summary?.signers.count, 1)
+        XCTAssertEqual(details.assignment?.signingUrls.first?.signerId, "s1")
+        XCTAssertEqual(details.createdAt, "1633026554")
+    }
+
     // MARK: - waitUntilReady
 
     func testWaitUntilReadyReturnsImmediatelyWhenStatusReady() async throws {
@@ -275,5 +372,39 @@ final class DocumentResourceTests: XCTestCase {
         }
         XCTAssertEqual(json["recipient"] as? String, "someone@example.com")
         XCTAssertEqual(json["channel"] as? String, "email")
+    }
+
+    func testCreateFromTemplateSendsEditorFieldsTagsAndSignerStep() async throws {
+        mock.stubEnvelope(uploadResponseDict())
+        _ = try await resource.createFromTemplate(
+            templateId: "tpl1",
+            signers: [
+                TemplateSigner(
+                    roleId: "role1",
+                    id: "s1",
+                    verificationMethod: "Email",
+                    notificationMethods: ["Email"],
+                    step: NSNumber(value: 1)
+                )
+            ],
+            options: CreateDocumentFromTemplateOptions(
+                name: "Generated.pdf",
+                message: "Please sign",
+                expiresAt: "2026-06-01T00:00:00Z",
+                editorFields: [TemplateEditorField(fieldId: "field1", value: "value1")],
+                tags: ["Audit"]
+            )
+        )
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/templates/tpl1/documents")
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let signers = json["signers"] as? [[String: Any]],
+              let editorFields = json["editor_fields"] as? [[String: Any]] else {
+            XCTFail("No request body")
+            return
+        }
+        XCTAssertEqual(signers.first?["step"] as? Int, 1)
+        XCTAssertEqual(editorFields.first?["field_id"] as? String, "field1")
+        XCTAssertEqual(json["tags"] as? [String], ["Audit"])
     }
 }

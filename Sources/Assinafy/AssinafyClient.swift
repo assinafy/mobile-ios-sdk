@@ -77,6 +77,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 /// - ``assignments`` — Create and manage signing assignments.
 /// - ``webhooks`` — Register and query webhook subscriptions.
 /// - ``templates`` — Browse reusable document templates.
+/// - ``tags`` — Manage workspace tags and document tag attachments.
 /// - ``workspaces`` — Manage workspaces (accounts).
 /// - ``fields`` — Manage workspace field definitions and validation.
 /// - ``auth`` — Login, password reset, and API key management.
@@ -108,6 +109,8 @@ public final class AssinafyClient: NSObject {
     public let webhooks: WebhookResource
     /// Provides read access to document templates.
     public let templates: TemplateResource
+    /// Manages workspace tags and document tag attachments.
+    public let tags: TagResource
     /// Manages workspace (account) objects.
     public let workspaces: WorkspaceResource
     /// Manages workspace field definitions and validation.
@@ -148,6 +151,7 @@ public final class AssinafyClient: NSObject {
         assignments = AssignmentResource(http: http, defaultAccountId: accountId, logger: logger)
         webhooks    = WebhookResource(http: http, defaultAccountId: accountId, logger: logger)
         templates   = TemplateResource(http: http, defaultAccountId: accountId, logger: logger)
+        tags        = TagResource(http: http, defaultAccountId: accountId, logger: logger)
         workspaces  = WorkspaceResource(http: http, defaultAccountId: accountId, logger: logger)
         fields      = FieldResource(http: http, defaultAccountId: accountId, logger: logger)
         auth        = AuthResource(http: http, defaultAccountId: accountId, logger: logger)
@@ -200,6 +204,7 @@ public final class AssinafyClient: NSObject {
         assignments = AssignmentResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         webhooks    = WebhookResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         templates   = TemplateResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
+        tags        = TagResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         workspaces  = WorkspaceResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         fields      = FieldResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         auth        = AuthResource(http: http, defaultAccountId: defaultAccountId, logger: logger)

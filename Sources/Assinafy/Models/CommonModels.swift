@@ -79,6 +79,114 @@ struct AssinafyEnvelope<T: Decodable>: Decodable {
     let data: T?
 }
 
+func decodeFlexibleString<K: CodingKey>(
+    from container: KeyedDecodingContainer<K>,
+    forKey key: K
+) throws -> String {
+    if let value = try? container.decode(String.self, forKey: key) {
+        return value
+    }
+    if let value = try? container.decode(Int.self, forKey: key) {
+        return String(value)
+    }
+    if let value = try? container.decode(Double.self, forKey: key) {
+        return String(value)
+    }
+    if let value = try? container.decode(Bool.self, forKey: key) {
+        return value ? "true" : "false"
+    }
+    return try container.decode(String.self, forKey: key)
+}
+
+func decodeFlexibleOptionalString<K: CodingKey>(
+    from container: KeyedDecodingContainer<K>,
+    forKey key: K
+) throws -> String? {
+    if (try? container.decodeNil(forKey: key)) == true {
+        return nil
+    }
+    if let value = try? container.decode(String.self, forKey: key) {
+        return value
+    }
+    if let value = try? container.decode(Int.self, forKey: key) {
+        return String(value)
+    }
+    if let value = try? container.decode(Double.self, forKey: key) {
+        return String(value)
+    }
+    if let value = try? container.decode(Bool.self, forKey: key) {
+        return value ? "true" : "false"
+    }
+    if let raw = try? container.decode(JSONFragment.self, forKey: key) {
+        return raw.stringValue
+    }
+    return nil
+}
+
+struct JSONFragment: Codable, Sendable, Equatable {
+    enum Storage: Sendable, Equatable {
+        case string(String)
+        case number(Double)
+        case bool(Bool)
+        case object([String: JSONFragment])
+        case array([JSONFragment])
+        case null
+    }
+
+    let storage: Storage
+
+    init(_ storage: Storage) {
+        self.storage = storage
+    }
+
+    init(from decoder: Decoder) throws {
+        let single = try decoder.singleValueContainer()
+        if single.decodeNil() {
+            storage = .null
+        } else if let value = try? single.decode(Bool.self) {
+            storage = .bool(value)
+        } else if let value = try? single.decode(Double.self) {
+            storage = .number(value)
+        } else if let value = try? single.decode(String.self) {
+            storage = .string(value)
+        } else if let value = try? single.decode([String: JSONFragment].self) {
+            storage = .object(value)
+        } else if let value = try? single.decode([JSONFragment].self) {
+            storage = .array(value)
+        } else {
+            storage = .null
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var single = encoder.singleValueContainer()
+        switch storage {
+        case .string(let value): try single.encode(value)
+        case .number(let value): try single.encode(value)
+        case .bool(let value): try single.encode(value)
+        case .object(let value): try single.encode(value)
+        case .array(let value): try single.encode(value)
+        case .null: try single.encodeNil()
+        }
+    }
+
+    var stringValue: String {
+        switch storage {
+        case .string(let value):
+            return value
+        case .number(let value):
+            return String(value)
+        case .bool(let value):
+            return value ? "true" : "false"
+        case .object, .array:
+            let data = try? JSONEncoder.assinafy.encode(self)
+            return data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        case .null:
+            return ""
+        }
+    }
+}
+
 extension String {
     var utf8Data: Data { Data(self.utf8) }
 }

@@ -179,6 +179,10 @@ public final class DocumentListItem: NSObject {
     public let statusString: String
     public let accountId: String?
     public let templateId: String?
+    public let assignment: Assignment?
+    public let artifacts: DocumentArtifacts?
+    public let pages: [DocumentPage]
+    public let tags: [Tag]
     public let createdAt: String
     public let updatedAt: String?
     public let isClosed: Bool
@@ -186,6 +190,8 @@ public final class DocumentListItem: NSObject {
 
     init(id: String, name: String, status: DocumentStatus, statusString: String,
          accountId: String? = nil, templateId: String? = nil,
+         assignment: Assignment? = nil, artifacts: DocumentArtifacts? = nil,
+         pages: [DocumentPage] = [], tags: [Tag] = [],
          createdAt: String, updatedAt: String? = nil, isClosed: Bool = false,
          declineReason: String? = nil) {
         self.id = id
@@ -194,6 +200,10 @@ public final class DocumentListItem: NSObject {
         self.statusString = statusString
         self.accountId = accountId
         self.templateId = templateId
+        self.assignment = assignment
+        self.artifacts = artifacts
+        self.pages = pages
+        self.tags = tags
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isClosed = isClosed
@@ -205,7 +215,7 @@ extension DocumentListItem: @unchecked Sendable {}
 
 extension DocumentListItem: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, status
+        case id, name, status, assignment, artifacts, pages, tags
         case accountId = "account_id"
         case templateId = "template_id"
         case createdAt = "created_at"
@@ -224,8 +234,12 @@ extension DocumentListItem: Decodable {
             statusString:  statusString,
             accountId:     try c.decodeIfPresent(String.self, forKey: .accountId),
             templateId:    try c.decodeIfPresent(String.self, forKey: .templateId),
-            createdAt:     try c.decode(String.self,        forKey: .createdAt),
-            updatedAt:     try c.decodeIfPresent(String.self, forKey: .updatedAt),
+            assignment:    try c.decodeIfPresent(Assignment.self, forKey: .assignment),
+            artifacts:     try c.decodeIfPresent(DocumentArtifacts.self, forKey: .artifacts),
+            pages:         (try? c.decode([DocumentPage].self, forKey: .pages)) ?? [],
+            tags:          (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            createdAt:     try decodeFlexibleString(from: c, forKey: .createdAt),
+            updatedAt:     try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
             isClosed:      try c.decodeIfPresent(Bool.self,   forKey: .isClosed) ?? false,
             declineReason: try c.decodeIfPresent(String.self, forKey: .declineReason)
         )
@@ -237,7 +251,7 @@ extension DocumentListItem: Decodable {
 public struct DeclinedBySigner: Decodable {
     public let id: String
     public let fullName: String
-    public let email: String
+    public let email: String?
 
     public enum CodingKeys: String, CodingKey {
         case id
@@ -245,10 +259,19 @@ public struct DeclinedBySigner: Decodable {
         case email
     }
 
-    public init(id: String, fullName: String, email: String) {
+    public init(id: String, fullName: String, email: String?) {
         self.id = id
         self.fullName = fullName
         self.email = email
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try c.decode(String.self, forKey: .id),
+            fullName: try c.decode(String.self, forKey: .fullName),
+            email: try c.decodeIfPresent(String.self, forKey: .email)
+        )
     }
 }
 
@@ -258,7 +281,7 @@ public struct DeclinedBySigner: Decodable {
 @objcMembers
 public final class DocumentUploadResponse: NSObject {
     public let id: String
-    public let accountId: String
+    public let accountId: String?
     public let templateId: String?
     public let name: String
     public let status: DocumentStatus
@@ -270,18 +293,21 @@ public final class DocumentUploadResponse: NSObject {
     public let isClosed: Bool
     public let declineReason: String?
     public let declinedBy: DeclinedBySigner?
+    public let tags: [Tag]
 
-    init(id: String, accountId: String, templateId: String? = nil,
+    init(id: String, accountId: String?, templateId: String? = nil,
          name: String, status: DocumentStatus, statusString: String,
          artifacts: DocumentArtifacts, pages: [DocumentPage],
          createdAt: String, updatedAt: String, isClosed: Bool = false,
-         declineReason: String? = nil, declinedBy: DeclinedBySigner? = nil) {
+         declineReason: String? = nil, declinedBy: DeclinedBySigner? = nil,
+         tags: [Tag] = []) {
         self.id = id; self.accountId = accountId; self.templateId = templateId
         self.name = name; self.status = status; self.statusString = statusString
         self.artifacts = artifacts; self.pages = pages
         self.createdAt = createdAt; self.updatedAt = updatedAt
         self.isClosed = isClosed; self.declineReason = declineReason
         self.declinedBy = declinedBy
+        self.tags = tags
     }
 }
 
@@ -289,7 +315,7 @@ extension DocumentUploadResponse: @unchecked Sendable {}
 
 extension DocumentUploadResponse: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, status, artifacts, pages
+        case id, name, status, artifacts, pages, tags
         case accountId    = "account_id"
         case templateId   = "template_id"
         case createdAt    = "created_at"
@@ -304,18 +330,19 @@ extension DocumentUploadResponse: Decodable {
         let statusString = try c.decode(String.self, forKey: .status)
         self.init(
             id:            try c.decode(String.self,             forKey: .id),
-            accountId:     try c.decode(String.self,             forKey: .accountId),
+            accountId:     try c.decodeIfPresent(String.self,    forKey: .accountId),
             templateId:    try c.decodeIfPresent(String.self,    forKey: .templateId),
             name:          try c.decode(String.self,             forKey: .name),
             status:        DocumentStatus(string: statusString),
             statusString:  statusString,
             artifacts:     try c.decode(DocumentArtifacts.self,  forKey: .artifacts),
-            pages:         try c.decode([DocumentPage].self,     forKey: .pages),
-            createdAt:     try c.decode(String.self,             forKey: .createdAt),
-            updatedAt:     try c.decode(String.self,             forKey: .updatedAt),
+            pages:         (try? c.decode([DocumentPage].self, forKey: .pages)) ?? [],
+            createdAt:     try decodeFlexibleString(from: c, forKey: .createdAt),
+            updatedAt:     try decodeFlexibleString(from: c, forKey: .updatedAt),
             isClosed:      try c.decodeIfPresent(Bool.self,      forKey: .isClosed) ?? false,
             declineReason: try c.decodeIfPresent(String.self,    forKey: .declineReason),
-            declinedBy:    try c.decodeIfPresent(DeclinedBySigner.self, forKey: .declinedBy)
+            declinedBy:    try c.decodeIfPresent(DeclinedBySigner.self, forKey: .declinedBy),
+            tags:          (try? c.decode([Tag].self, forKey: .tags)) ?? []
         )
     }
 }
@@ -329,11 +356,12 @@ public final class DocumentActivity: NSObject {
     public let event: String
     public let message: String
     public let origin: String
+    public let payload: String?
     public let createdAt: String
 
-    init(id: Int, event: String, message: String, origin: String, createdAt: String) {
+    init(id: Int, event: String, message: String, origin: String, payload: String? = nil, createdAt: String) {
         self.id = id; self.event = event; self.message = message
-        self.origin = origin; self.createdAt = createdAt
+        self.origin = origin; self.payload = payload; self.createdAt = createdAt
     }
 }
 
@@ -341,7 +369,7 @@ extension DocumentActivity: @unchecked Sendable {}
 
 extension DocumentActivity: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, event, message, origin
+        case id, event, message, origin, payload
         case createdAt = "created_at"
     }
 
@@ -351,8 +379,9 @@ extension DocumentActivity: Decodable {
             id:        try c.decode(Int.self,    forKey: .id),
             event:     try c.decode(String.self, forKey: .event),
             message:   try c.decode(String.self, forKey: .message),
-            origin:    try c.decode(String.self, forKey: .origin),
-            createdAt: try c.decode(String.self, forKey: .createdAt)
+            origin:    (try decodeFlexibleOptionalString(from: c, forKey: .origin)) ?? "",
+            payload:   try decodeFlexibleOptionalString(from: c, forKey: .payload),
+            createdAt: try decodeFlexibleString(from: c, forKey: .createdAt)
         )
     }
 }
@@ -363,15 +392,17 @@ extension DocumentActivity: Decodable {
 @objcMembers
 public final class DocumentDetails: NSObject {
     public let id: String
-    public let accountId: String
+    public let accountId: String?
     public let name: String
     public let status: DocumentStatus
     public let statusString: String
     public let assignment: Assignment?
     public let downloadUrl: String?
+    public let downloadFinalUrl: String?
     public let signingUrl: String?
     public let artifacts: DocumentArtifacts?
     public let pages: [DocumentPage]
+    public let tags: [Tag]
     public let createdAt: String
     public let updatedAt: String
     public let isClosed: Bool
@@ -379,17 +410,19 @@ public final class DocumentDetails: NSObject {
     public let declinedBy: DeclinedBySigner?
     public let activities: [DocumentActivity]?
 
-    init(id: String, accountId: String, name: String, status: DocumentStatus, statusString: String,
-         assignment: Assignment? = nil, downloadUrl: String? = nil,
+    init(id: String, accountId: String?, name: String, status: DocumentStatus, statusString: String,
+         assignment: Assignment? = nil, downloadUrl: String? = nil, downloadFinalUrl: String? = nil,
          signingUrl: String? = nil, artifacts: DocumentArtifacts? = nil, pages: [DocumentPage] = [],
+         tags: [Tag] = [],
          createdAt: String, updatedAt: String, isClosed: Bool = false,
          declineReason: String? = nil, declinedBy: DeclinedBySigner? = nil,
          activities: [DocumentActivity]? = nil) {
         self.id = id; self.accountId = accountId; self.name = name
         self.status = status; self.statusString = statusString
         self.assignment = assignment; self.downloadUrl = downloadUrl
+        self.downloadFinalUrl = downloadFinalUrl
         self.signingUrl = signingUrl
-        self.artifacts = artifacts; self.pages = pages
+        self.artifacts = artifacts; self.pages = pages; self.tags = tags
         self.createdAt = createdAt; self.updatedAt = updatedAt
         self.isClosed = isClosed; self.declineReason = declineReason
         self.declinedBy = declinedBy; self.activities = activities
@@ -403,7 +436,9 @@ extension DocumentDetails: Decodable {
         case id, name, status, assignment, artifacts, pages, activities
         case accountId       = "account_id"
         case downloadUrl     = "download_url"
+        case downloadFinalUrl = "download_final_url"
         case signingUrl      = "signing_url"
+        case tags
         case createdAt       = "created_at"
         case updatedAt       = "updated_at"
         case isClosed        = "is_closed"
@@ -416,17 +451,19 @@ extension DocumentDetails: Decodable {
         let statusString = try c.decode(String.self, forKey: .status)
         self.init(
             id:               try c.decode(String.self,                  forKey: .id),
-            accountId:        try c.decode(String.self,                  forKey: .accountId),
+            accountId:        try c.decodeIfPresent(String.self,         forKey: .accountId),
             name:             try c.decode(String.self,                  forKey: .name),
             status:           DocumentStatus(string: statusString),
             statusString:     statusString,
             assignment:       try c.decodeIfPresent(Assignment.self,     forKey: .assignment),
             downloadUrl:      try c.decodeIfPresent(String.self,         forKey: .downloadUrl),
+            downloadFinalUrl: try c.decodeIfPresent(String.self,         forKey: .downloadFinalUrl),
             signingUrl:       try c.decodeIfPresent(String.self,         forKey: .signingUrl),
             artifacts:        try c.decodeIfPresent(DocumentArtifacts.self, forKey: .artifacts),
             pages:            (try? c.decode([DocumentPage].self, forKey: .pages)) ?? [],
-            createdAt:        try c.decode(String.self,                  forKey: .createdAt),
-            updatedAt:        try c.decode(String.self,                  forKey: .updatedAt),
+            tags:             (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            createdAt:        try decodeFlexibleString(from: c, forKey: .createdAt),
+            updatedAt:        try decodeFlexibleString(from: c, forKey: .updatedAt),
             isClosed:         try c.decodeIfPresent(Bool.self,           forKey: .isClosed) ?? false,
             declineReason:    try c.decodeIfPresent(String.self,         forKey: .declineReason),
             declinedBy:       try c.decodeIfPresent(DeclinedBySigner.self, forKey: .declinedBy),
@@ -471,6 +508,52 @@ public final class DocumentUploadOptions: NSObject {
 }
 
 extension DocumentUploadOptions: @unchecked Sendable {}
+
+// MARK: - DocumentListParams
+
+/// Query parameters for `GET /accounts/{account_id}/documents`.
+@objcMembers
+public final class DocumentListParams: NSObject {
+    public var status: String?
+    public var method: String?
+    public var search: String?
+    public var tagIds: [String]
+    public var sort: String?
+    public var page: Int
+    public var perPage: Int
+
+    @objc public init(
+        status: String? = nil,
+        method: String? = nil,
+        search: String? = nil,
+        tagIds: [String] = [],
+        sort: String? = nil,
+        page: Int = 0,
+        perPage: Int = 0
+    ) {
+        self.status = status
+        self.method = method
+        self.search = search
+        self.tagIds = tagIds
+        self.sort = sort
+        self.page = page
+        self.perPage = perPage
+    }
+
+    func toQueryItems() -> [URLQueryItem] {
+        var items: [URLQueryItem] = []
+        if page > 0 { items.append(.init(name: "page", value: "\(page)")) }
+        if perPage > 0 { items.append(.init(name: "per-page", value: "\(perPage)")) }
+        if let status, !status.isEmpty { items.append(.init(name: "status", value: status)) }
+        if let method, !method.isEmpty { items.append(.init(name: "method", value: method)) }
+        if let search, !search.isEmpty { items.append(.init(name: "search", value: search)) }
+        if !tagIds.isEmpty { items.append(.init(name: "tags", value: tagIds.joined(separator: ","))) }
+        if let sort, !sort.isEmpty { items.append(.init(name: "sort", value: sort)) }
+        return items
+    }
+}
+
+extension DocumentListParams: @unchecked Sendable {}
 
 // MARK: - VerifyResponse
 

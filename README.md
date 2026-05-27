@@ -94,6 +94,19 @@ let signer = try await client.signers.create(
 )
 ```
 
+### Tags
+
+```swift
+let tag = try await client.tags.create(
+    CreateTagPayload(name: "Contracts", color: "ff8800")
+)
+
+_ = try await client.tags.appendDocumentTags(
+    documentId: document.id,
+    tagNames: [tag.name]
+)
+```
+
 ### Create Assignment
 
 ```swift
@@ -159,20 +172,55 @@ _ = try await client.templates.update(
     templateId: template.id,
     payload: UpdateTemplatePayload(message: "Please sign within 7 days")
 )
+
+let generated = try await client.documents.createFromTemplate(
+    templateId: template.id,
+    signers: [
+        TemplateSigner(
+            roleId: "role-id",
+            id: signer.id,
+            verificationMethod: "Email",
+            notificationMethods: ["Email"],
+            step: NSNumber(value: 1)
+        )
+    ],
+    options: CreateDocumentFromTemplateOptions(
+        name: "Hiring contract - John.pdf",
+        editorFields: [TemplateEditorField(fieldId: "field-id", value: "Acme")],
+        tags: ["Onboarding"]
+    )
+)
 ```
 
 ## Resources
 
-The SDK exposes eight resource objects covering 100% of the public API:
+The SDK exposes resource objects for the public API documented at https://api.assinafy.com.br/v1/docs:
 
 - `client.documents` - Document uploads, downloads, management, public lookup, signing token delivery, status catalog
 - `client.signers` - Signer CRUD, self-service flows, signer-facing document listing/sign-multiple/decline-multiple/download
 - `client.assignments` - Signing assignments: create, sign, decline, resend, cost estimation, reset expiration, WhatsApp notification log
 - `client.webhooks` - Webhook subscriptions, event-type catalog, dispatch history, retry
 - `client.templates` - Document template CRUD (create, list, get, update, delete) and instantiation
+- `client.tags` - Workspace tag CRUD and document tag listing/replacement/append/detach
 - `client.workspaces` - Workspace (account) CRUD
 - `client.fields` - Field-definition CRUD, value validation (single and batch), field type catalog
 - `client.auth` - Login, social login, password reset, change password, API key management
+
+## Testing
+
+Run the unit suite:
+
+```bash
+swift test
+```
+
+Live API checks are gated by environment variables and are skipped by default:
+
+```bash
+ASSINAFY_API_KEY="..." ASSINAFY_ACCOUNT_ID="..." swift test --filter AssinafyLiveTests
+```
+
+The live suite exercises read-only catalog/list endpoints plus isolated tag and signer CRUD with cleanup. Add `ASSINAFY_RUN_DOCUMENT_LIVE_TESTS=1` to also run upload/get/download/delete against a generated test PDF. Do not commit live credentials.
 
 ## Error Handling
 

@@ -48,8 +48,8 @@ public struct APIRequest {
         APIRequest(method: .get, path: path, queryItems: queryItems)
     }
 
-    static func delete(_ path: String) -> APIRequest {
-        APIRequest(method: .delete, path: path)
+    static func delete(_ path: String, queryItems: [URLQueryItem]? = nil) -> APIRequest {
+        APIRequest(method: .delete, path: path, queryItems: queryItems)
     }
 
     static func post<B: Encodable>(_ path: String, body: B) throws -> APIRequest {

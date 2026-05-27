@@ -90,6 +90,21 @@ public final class TemplateResource: BaseResource {
                                                 queryItems: items.isEmpty ? nil : items))
     }
 
+    /// Lists templates in a workspace using the documented template filters.
+    ///
+    /// Mirrors `GET /accounts/{account_id}/templates` with `status`,
+    /// `search`, `tags`, and `sort` filters.
+    public func list(
+        params: TemplateListParams,
+        accountId: String? = nil
+    ) async throws -> PaginatedResult<TemplateListItem> {
+        let id = try self.accountId(accountId)
+        let items = params.toQueryItems()
+        return try await callList("Failed to list templates",
+                                  request: .get("/accounts/\(id)/templates",
+                                                queryItems: items.isEmpty ? nil : items))
+    }
+
     /// Fetches a template with its full role definitions.
     ///
     /// - Parameters:

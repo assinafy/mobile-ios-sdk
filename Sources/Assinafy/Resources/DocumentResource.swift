@@ -75,6 +75,21 @@ public final class DocumentResource: BaseResource {
                                                 queryItems: items.isEmpty ? nil : items))
     }
 
+    /// Lists documents in a workspace using the documented document filters.
+    ///
+    /// Mirrors `GET /accounts/{account_id}/documents` with `status`,
+    /// `method`, `search`, `tags`, and `sort` filters.
+    public func list(
+        params: DocumentListParams,
+        accountId: String? = nil
+    ) async throws -> PaginatedResult<DocumentListItem> {
+        let id = try self.accountId(accountId)
+        let items = params.toQueryItems()
+        return try await callList("Failed to list documents",
+                                  request: .get("/accounts/\(id)/documents",
+                                                queryItems: items.isEmpty ? nil : items))
+    }
+
     /// Fetches full details for a document including assignment and activities.
     ///
     /// - Parameters:
@@ -213,13 +228,19 @@ public final class DocumentResource: BaseResource {
             let name: String?
             let message: String?
             let expiresAt: String?
+            let editorFields: [TemplateEditorField]?
+            let tags: [String]?
             enum CodingKeys: String, CodingKey {
                 case signers, name, message
                 case expiresAt = "expires_at"
+                case editorFields = "editor_fields"
+                case tags
             }
         }
         let body = Body(signers: signers, name: options?.name,
-                        message: options?.message, expiresAt: options?.expiresAt)
+                        message: options?.message, expiresAt: options?.expiresAt,
+                        editorFields: options?.editorFields.isEmpty == false ? options?.editorFields : nil,
+                        tags: options?.tags.isEmpty == false ? options?.tags : nil)
         let request = try APIRequest.post(
             "/accounts/\(id)/templates/\(tid)/documents", body: body
         )

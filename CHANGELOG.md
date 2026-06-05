@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.1] - 2026-06-05
 
 ### Fixed
 - **Assignment decoding no longer crashes on `"method": null`.** The documented

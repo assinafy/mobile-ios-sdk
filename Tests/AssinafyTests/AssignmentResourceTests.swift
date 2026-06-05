@@ -236,6 +236,49 @@ final class AssignmentResourceTests: XCTestCase {
         XCTAssertTrue(assignment.copyReceivers.isEmpty)
     }
 
+    /// The documented collect-assignment create response returns `"method": null`;
+    /// decoding must not throw and should default to `.virtual`.
+    func testAssignmentDecodesNullMethodAsVirtual() async throws {
+        mock.stubEnvelope(["id": "a1", "method": NSNull(), "signers": []])
+        let assignment = try await resource.create(
+            documentId: "doc1",
+            payload: .withSignerIds(["s1"])
+        )
+        XCTAssertEqual(assignment.method, .virtual)
+        XCTAssertEqual(assignment.methodString, "virtual")
+    }
+
+    /// The published docs examples use the `expiration` key while the live API
+    /// uses `expires_at`; both must populate ``Assignment/expiresAt``.
+    func testAssignmentDecodesExpirationKeyFallback() async throws {
+        mock.stubEnvelope([
+            "id": "a1",
+            "method": "virtual",
+            "signers": [],
+            "expiration": "2026-01-01T00:00:00Z",
+        ])
+        let assignment = try await resource.create(
+            documentId: "doc1",
+            payload: .withSignerIds(["s1"])
+        )
+        XCTAssertEqual(assignment.expiresAt, "2026-01-01T00:00:00Z")
+    }
+
+    /// `expires_at` (live API) takes precedence and is decoded as-is.
+    func testAssignmentDecodesExpiresAtKey() async throws {
+        mock.stubEnvelope([
+            "id": "a1",
+            "method": "virtual",
+            "signers": [],
+            "expires_at": "2026-02-02T00:00:00Z",
+        ])
+        let assignment = try await resource.create(
+            documentId: "doc1",
+            payload: .withSignerIds(["s1"])
+        )
+        XCTAssertEqual(assignment.expiresAt, "2026-02-02T00:00:00Z")
+    }
+
     func testSignPostsToAssignmentEndpointWithAccessCode() async throws {
         mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
         try await resource.sign(

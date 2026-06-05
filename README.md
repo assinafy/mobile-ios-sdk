@@ -206,6 +206,9 @@ The SDK exposes resource objects for the public API documented at https://api.as
 - `client.fields` - Field-definition CRUD, value validation (single and batch), field type catalog
 - `client.auth` - Login, social login, password reset, change password, API key management
 
+For a per-method reference with full request/response payloads, see
+[`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
+
 ## Testing
 
 Run the unit suite:
@@ -220,7 +223,10 @@ Live API checks are gated by environment variables and are skipped by default:
 ASSINAFY_API_KEY="..." ASSINAFY_ACCOUNT_ID="..." swift test --filter AssinafyLiveTests
 ```
 
-The live suite exercises read-only catalog/list endpoints plus isolated tag and signer CRUD with cleanup. Add `ASSINAFY_RUN_DOCUMENT_LIVE_TESTS=1` to also run upload/get/download/delete against a generated test PDF. Do not commit live credentials.
+Set `ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1"` to run against the
+sandbox (sandbox keys do not authenticate against the production host).
+
+The live suite exercises read-only catalog/list endpoints plus isolated tag and signer CRUD with cleanup. Add `ASSINAFY_RUN_DOCUMENT_LIVE_TESTS=1` to also run upload/get/download/delete and the full upload→assign signature flow against a generated test PDF. Do not commit live credentials.
 
 ## Error Handling
 

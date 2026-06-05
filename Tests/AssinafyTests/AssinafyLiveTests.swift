@@ -5,6 +5,7 @@ final class AssinafyLiveTests: XCTestCase {
     private struct LiveCredentials {
         let apiKey: String
         let accountId: String
+        let baseURL: String
     }
 
     private func credentials() throws -> LiveCredentials {
@@ -13,12 +14,16 @@ final class AssinafyLiveTests: XCTestCase {
               let accountId = env["ASSINAFY_ACCOUNT_ID"], !accountId.isEmpty else {
             throw XCTSkip("Set ASSINAFY_API_KEY and ASSINAFY_ACCOUNT_ID to run live API tests.")
         }
-        return LiveCredentials(apiKey: apiKey, accountId: accountId)
+        // Sandbox keys only authenticate against the sandbox host, so allow the
+        // base URL to be overridden (e.g. https://sandbox.assinafy.com.br/v1).
+        let baseURL = env["ASSINAFY_BASE_URL"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? AssinafyClientConfiguration.productionBaseURL
+        return LiveCredentials(apiKey: apiKey, accountId: accountId, baseURL: baseURL)
     }
 
     private func liveClient() throws -> AssinafyClient {
         let creds = try credentials()
-        return AssinafyClient(apiKey: creds.apiKey, defaultAccountId: creds.accountId)
+        return AssinafyClient(apiKey: creds.apiKey, defaultAccountId: creds.accountId, baseURL: creds.baseURL)
     }
 
     private func uniqueName(_ prefix: String) -> String {
@@ -148,6 +153,65 @@ final class AssinafyLiveTests: XCTestCase {
                 artifact: .original
             )
             XCTAssertTrue(original.starts(with: Data("%PDF".utf8)))
+
+            // A freshly uploaded document is `metadata_processing`, which the
+            // API reports as non-deletable. Wait until it reaches a deletable
+            // state (`metadata_ready`) before cleaning up.
+            _ = try await client.documents.waitUntilReady(
+                documentId: uploaded.id,
+                options: WaitUntilReadyOptions(maxWaitSeconds: 60, pollIntervalSeconds: 2)
+            )
+
+            try await client.documents.delete(documentId: uploaded.id)
+            createdDocumentId = nil
+        } catch {
+            if let createdDocumentId {
+                try? await client.documents.delete(documentId: createdDocumentId)
+            }
+            throw error
+        }
+    }
+
+    /// Exercises the end-to-end signature-request path: upload a document,
+    /// wait for processing, create signers, estimate the assignment cost, and
+    /// create a virtual assignment. Cleans up the document afterwards.
+    func testLiveAssignmentFlow() async throws {
+        try requiresDocumentMutationOptIn()
+        let client = try liveClient()
+        var createdDocumentId: String?
+
+        do {
+            let uploaded = try await client.documents.upload(minimalPDF())
+            createdDocumentId = uploaded.id
+            _ = try await client.documents.waitUntilReady(
+                documentId: uploaded.id,
+                options: WaitUntilReadyOptions(maxWaitSeconds: 60, pollIntervalSeconds: 2)
+            )
+
+            // `create` is idempotent by email, so reusing the audit signers is safe.
+            let signerA = try await client.signers.create(
+                CreateSignerPayload(fullName: "Audit Signer A", email: "bill@febacapital.com")
+            )
+            let signerB = try await client.signers.create(
+                CreateSignerPayload(fullName: "Audit Signer B", email: "billm@billm.org")
+            )
+
+            let payload = CreateAssignmentPayload.withSignerIds(
+                [signerA.id, signerB.id],
+                method: .virtual,
+                message: "Assinafy iOS SDK live audit"
+            )
+
+            // Cost estimation should succeed regardless of the account balance.
+            _ = try await client.assignments.estimateCost(documentId: uploaded.id, payload: payload)
+
+            let assignment = try await client.assignments.create(
+                documentId: uploaded.id,
+                payload: payload
+            )
+            XCTAssertFalse(assignment.id.isEmpty)
+            XCTAssertEqual(assignment.method, .virtual)
+            XCTAssertEqual(assignment.signers.count, 2)
 
             try await client.documents.delete(documentId: uploaded.id)
             createdDocumentId = nil

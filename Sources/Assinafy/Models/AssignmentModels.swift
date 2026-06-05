@@ -183,19 +183,26 @@ extension Assignment: Decodable {
         case id, method, message, signers, items, summary
         case senderEmail    = "sender_email"
         case expiresAt      = "expires_at"
+        case expiration
         case copyReceivers  = "copy_receivers"
         case signingUrls    = "signing_urls"
     }
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let methodString = try c.decode(String.self, forKey: .method)
+        // The collect-assignment create response documents `"method": null`,
+        // so decode defensively and default to the documented `virtual` value.
+        let methodString = (try c.decodeIfPresent(String.self, forKey: .method)) ?? "virtual"
+        // The live API returns `expires_at`; the published docs examples use
+        // `expiration`. Accept either so the value is never silently dropped.
+        let expiresAt = try decodeFlexibleOptionalString(from: c, forKey: .expiresAt)
+            ?? decodeFlexibleOptionalString(from: c, forKey: .expiration)
         self.init(
             id:            try c.decode(String.self,                  forKey: .id),
             senderEmail:   try c.decodeIfPresent(String.self,         forKey: .senderEmail),
             method:        AssignmentMethod(string: methodString),
             methodString:  methodString,
-            expiresAt:     try decodeFlexibleOptionalString(from: c, forKey: .expiresAt),
+            expiresAt:     expiresAt,
             message:       try c.decodeIfPresent(String.self,         forKey: .message),
             signers:       (try? c.decode([Signer].self, forKey: .signers)) ?? [],
             copyReceivers: (try? c.decode([Signer].self, forKey: .copyReceivers)) ?? [],

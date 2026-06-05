@@ -11,9 +11,6 @@ import Foundation
 @objcMembers
 public final class TemplateResource: BaseResource {
 
-    private static let maxFileSizeBytes = 25 * 1024 * 1024
-    private static let pdfMagicBytes: [UInt8] = [0x25, 0x50, 0x44, 0x46]
-
     // MARK: - Swift async API
 
     /// Uploads a PDF as a new template.
@@ -35,15 +32,16 @@ public final class TemplateResource: BaseResource {
     ) async throws -> TemplateDetails {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ValidationError("Template name is required") }
-        try validatePDF(pdfData)
+        try PDFValidation.validate(pdfData)
         let id = try self.accountId(accountId)
-        let boundary = "AssinafyBoundary-\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        let body = Self.buildMultipartBody(name: trimmed, file: pdfData, boundary: boundary)
+        var form = MultipartFormData()
+        form.addField(name: "name", value: trimmed)
+        form.addFile(name: "file", filename: "\(trimmed).pdf", contentType: "application/pdf", data: pdfData)
         let request = APIRequest(
             method: .post,
             path: "/accounts/\(id)/templates",
-            body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)"
+            body: form.finalized(),
+            contentType: form.contentType
         )
         return try await call("Failed to create template", request: request)
     }
@@ -149,31 +147,4 @@ public final class TemplateResource: BaseResource {
         withVoidCompletion({ try await self.delete(templateId: templateId, accountId: accountId) }, completion: completion)
     }
 
-    // MARK: - Private
-
-    private func validatePDF(_ data: Data) throws {
-        guard data.count > 4 else {
-            throw ValidationError("File data is empty or too small to be a PDF")
-        }
-        let header = [UInt8](data.prefix(4))
-        guard header == TemplateResource.pdfMagicBytes else {
-            throw ValidationError("File must be a valid PDF document")
-        }
-        guard data.count <= TemplateResource.maxFileSizeBytes else {
-            throw ValidationError("File size must not exceed 25 MB")
-        }
-    }
-
-    private static func buildMultipartBody(name: String, file: Data, boundary: String) -> Data {
-        var body = Data()
-        body.append("--\(boundary)\r\n".utf8Data)
-        body.append("Content-Disposition: form-data; name=\"name\"\r\n\r\n".utf8Data)
-        body.append(name.utf8Data)
-        body.append("\r\n--\(boundary)\r\n".utf8Data)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(name).pdf\"\r\n".utf8Data)
-        body.append("Content-Type: application/pdf\r\n\r\n".utf8Data)
-        body.append(file)
-        body.append("\r\n--\(boundary)--\r\n".utf8Data)
-        return body
-    }
 }

@@ -17,9 +17,6 @@ import Foundation
 @objcMembers
 public final class DocumentResource: BaseResource {
 
-    private static let maxFileSizeBytes = 25 * 1024 * 1024
-    private static let pdfMagicBytes: [UInt8] = [0x25, 0x50, 0x44, 0x46]
-
     // MARK: - Swift async API
 
     /// Uploads a PDF document for signature processing.
@@ -34,28 +31,18 @@ public final class DocumentResource: BaseResource {
     /// - Returns: The upload result containing the document ID and initial status.
     /// - Throws: ``ValidationError`` if file validation fails, ``APIError`` on HTTP failure.
     public func upload(_ data: Data, options: DocumentUploadOptions? = nil) async throws -> DocumentUploadResponse {
-        try validatePDF(data)
+        try PDFValidation.validate(data)
         let id = try self.accountId(options?.accountId)
-        let boundary = "AssinafyBoundary-\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        let body = Self.buildMultipartBody(file: data, filename: "document.pdf", boundary: boundary)
+        var form = MultipartFormData()
+        form.addFile(name: "file", filename: "document.pdf", contentType: "application/pdf", data: data)
 
         let request = APIRequest(
             method: .post,
             path: "/accounts/\(id)/documents",
-            body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)"
+            body: form.finalized(),
+            contentType: form.contentType
         )
         return try await call("Failed to upload document", request: request)
-    }
-
-    private static func buildMultipartBody(file: Data, filename: String, boundary: String) -> Data {
-        var body = Data()
-        body.append("--\(boundary)\r\n".utf8Data)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".utf8Data)
-        body.append("Content-Type: application/pdf\r\n\r\n".utf8Data)
-        body.append(file)
-        body.append("\r\n--\(boundary)--\r\n".utf8Data)
-        return body
     }
 
     /// Lists documents in a workspace.
@@ -409,18 +396,4 @@ public final class DocumentResource: BaseResource {
         withVoidCompletion({ try await self.delete(documentId: documentId) }, completion: completion)
     }
 
-    // MARK: - Private
-
-    private func validatePDF(_ data: Data) throws {
-        guard data.count > 4 else {
-            throw ValidationError("File data is empty or too small to be a PDF")
-        }
-        let header = [UInt8](data.prefix(4))
-        guard header == DocumentResource.pdfMagicBytes else {
-            throw ValidationError("File must be a valid PDF document")
-        }
-        guard data.count <= DocumentResource.maxFileSizeBytes else {
-            throw ValidationError("File size must not exceed 25 MB")
-        }
-    }
 }

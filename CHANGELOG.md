@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Assignment decoding no longer crashes on `"method": null`.** The documented
+  collect-assignment create response returns a null method; the SDK now decodes
+  defensively and defaults to `virtual`.
+- **Assignment expiry is no longer dropped.** Decoding now accepts both the live
+  API's `expires_at` key and the docs' `expiration` key for `Assignment.expiresAt`.
+- **Live test harness can target the sandbox.** `AssinafyLiveTests` now honours an
+  `ASSINAFY_BASE_URL` environment variable; previously it hard-coded the production
+  host, so sandbox API keys failed with `401 Credenciais inválidas`.
+- **Document live test waits for a deletable state** (`waitUntilReady`) before
+  deleting, fixing a `400` when the document was still `metadata_processing`.
+
+### Changed
+- Extracted the duplicated PDF validation and multipart-body construction from
+  `DocumentResource`/`TemplateResource` into shared `PDFValidation` and
+  `MultipartFormData` helpers (byte-identical output; DRY).
+
+### Added
+- `docs/API_REFERENCE.md` — full request/response payload reference for every
+  public SDK method, verified against the live sandbox API.
+- `testLiveAssignmentFlow` — end-to-end live coverage of upload → wait → create
+  signers → estimate cost → create assignment.
+- Regression tests for null-method and `expiration`/`expires_at` assignment decoding.
+
 ## [1.2.0] - 2026-05-27
 
 ### Added — full API coverage

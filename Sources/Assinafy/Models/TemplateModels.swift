@@ -143,6 +143,10 @@ extension TemplatePage: Decodable {
 public final class TemplateListItem: NSObject {
     public let id: String
     public let name: String
+    /// Default document name applied when instantiating documents from this template.
+    public let documentName: String?
+    /// Default invitation message attached to documents instantiated from this template.
+    public let message: String?
     public let status: String
     public let accountId: String?
     public let createdAt: String
@@ -151,10 +155,13 @@ public final class TemplateListItem: NSObject {
     public let roles: [TemplateRole]
     public let tags: [Tag]
 
-    init(id: String, name: String, status: String, accountId: String? = nil,
+    init(id: String, name: String, documentName: String? = nil, message: String? = nil,
+         status: String, accountId: String? = nil,
          createdAt: String, updatedAt: String? = nil,
          pages: [TemplatePage] = [], roles: [TemplateRole] = [], tags: [Tag] = []) {
-        self.id = id; self.name = name; self.status = status
+        self.id = id; self.name = name
+        self.documentName = documentName; self.message = message
+        self.status = status
         self.accountId = accountId; self.createdAt = createdAt; self.updatedAt = updatedAt
         self.pages = pages; self.roles = roles; self.tags = tags
     }
@@ -164,7 +171,8 @@ extension TemplateListItem: @unchecked Sendable {}
 
 extension TemplateListItem: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, status, pages, roles, tags
+        case id, name, message, status, pages, roles, tags
+        case documentName = "document_name"
         case accountId = "account_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -173,15 +181,17 @@ extension TemplateListItem: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            id:        try c.decode(String.self,          forKey: .id),
-            name:      try c.decode(String.self,          forKey: .name),
-            status:    try c.decode(String.self,          forKey: .status),
-            accountId: try c.decodeIfPresent(String.self, forKey: .accountId),
-            createdAt: try decodeFlexibleString(from: c, forKey: .createdAt),
-            updatedAt: try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
-            pages:     (try? c.decode([TemplatePage].self, forKey: .pages)) ?? [],
-            roles:     (try? c.decode([TemplateRole].self, forKey: .roles)) ?? [],
-            tags:      (try? c.decode([Tag].self, forKey: .tags)) ?? []
+            id:           try c.decode(String.self,          forKey: .id),
+            name:         try c.decode(String.self,          forKey: .name),
+            documentName: try c.decodeIfPresent(String.self, forKey: .documentName),
+            message:      try c.decodeIfPresent(String.self, forKey: .message),
+            status:       try c.decode(String.self,          forKey: .status),
+            accountId:    try c.decodeIfPresent(String.self, forKey: .accountId),
+            createdAt:    try decodeFlexibleString(from: c, forKey: .createdAt),
+            updatedAt:    try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
+            pages:        (try? c.decode([TemplatePage].self, forKey: .pages)) ?? [],
+            roles:        (try? c.decode([TemplateRole].self, forKey: .roles)) ?? [],
+            tags:         (try? c.decode([Tag].self, forKey: .tags)) ?? []
         )
     }
 }

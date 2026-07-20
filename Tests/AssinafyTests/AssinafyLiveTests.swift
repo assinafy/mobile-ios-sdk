@@ -74,6 +74,58 @@ final class AssinafyLiveTests: XCTestCase {
         _ = try await client.webhooks.listEventTypes()
     }
 
+    /// Exercises the endpoints added during the API audit: account theme, the
+    /// authenticated-user profile, lightweight document search, and the
+    /// account-scoped assignment list.
+    func testLiveAuditedReadEndpoints() async throws {
+        let client = try liveClient()
+
+        let theme = try await client.workspaces.theme()
+        XCTAssertNotNil(theme.accountName)
+
+        let me = try await client.auth.currentUser()
+        XCTAssertFalse(me.user.id.isEmpty)
+        XCTAssertFalse(me.accounts.isEmpty)
+
+        _ = try await client.documents.search(search: nil)
+        _ = try await client.assignments.list(params: ListParams(page: 1, perPage: 1))
+
+        // The stats endpoints are production-only; tolerate a 404 on sandbox.
+        do {
+            _ = try await client.workspaces.stats()
+        } catch let error as APIError where error.statusCode == 404 {
+            // Expected on sandbox — endpoint is served on production only.
+        }
+    }
+
+    /// Uploads a document, renames it via `PATCH /documents/{id}`, and cleans up.
+    func testLiveDocumentRename() async throws {
+        try requiresDocumentMutationOptIn()
+        let client = try liveClient()
+        var createdDocumentId: String?
+
+        do {
+            let uploaded = try await client.documents.upload(minimalPDF())
+            createdDocumentId = uploaded.id
+            _ = try await client.documents.waitUntilReady(
+                documentId: uploaded.id,
+                options: WaitUntilReadyOptions(maxWaitSeconds: 60, pollIntervalSeconds: 2)
+            )
+
+            let newName = uniqueName("renamed") + ".pdf"
+            let renamed = try await client.documents.rename(documentId: uploaded.id, name: newName)
+            XCTAssertEqual(renamed.name, newName)
+
+            try await client.documents.delete(documentId: uploaded.id)
+            createdDocumentId = nil
+        } catch {
+            if let createdDocumentId {
+                try? await client.documents.delete(documentId: createdDocumentId)
+            }
+            throw error
+        }
+    }
+
     func testLiveTagCrud() async throws {
         let client = try liveClient()
         let tagName = uniqueName("codex-sdk-audit")

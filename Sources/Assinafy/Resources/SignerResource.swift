@@ -189,19 +189,24 @@ public final class SignerResource: BaseResource {
     ///   - signerAccessCode: The signer access code from the signing URL.
     ///   - type: The type of image to upload (signature or initial).
     ///   - imageData: The PNG or JPEG image data.
+    ///   - reuse: When `true`, marks the uploaded image to be reused for future
+    ///     documents (sends `reuse=true`). Defaults to `false`.
     public func uploadSignature(
         signerAccessCode: String,
         type: SignatureType,
-        imageData: Data
+        imageData: Data,
+        reuse: Bool = false
     ) async throws {
         let code = try requireId(signerAccessCode, name: "Signer access code")
+        var items = [
+            URLQueryItem(name: "signer-access-code", value: code),
+            URLQueryItem(name: "type", value: type.stringValue)
+        ]
+        if reuse { items.append(.init(name: "reuse", value: "true")) }
         let request = APIRequest(
             method: .post,
             path: "/signature",
-            queryItems: [
-                URLQueryItem(name: "signer-access-code", value: code),
-                URLQueryItem(name: "type", value: type.stringValue)
-            ],
+            queryItems: items,
             body: imageData,
             contentType: "image/png"
         )
@@ -261,6 +266,32 @@ public final class SignerResource: BaseResource {
         return try await callList(
             "Failed to list signer documents",
             request: .get("/signers/\(sid)/documents", queryItems: items)
+        )
+    }
+
+    /// Searches the signer's accessible documents (lightweight).
+    ///
+    /// Mirrors `GET /signers/{signer_id}/documents/search?signer-access-code=...`.
+    ///
+    /// - Parameters:
+    ///   - signerId: The signer identifier.
+    ///   - signerAccessCode: The signer access code from the signing URL.
+    ///   - search: Free-text search term.
+    ///   - status: Optional status filter.
+    public func searchSignerDocuments(
+        signerId: String,
+        signerAccessCode: String,
+        search: String? = nil,
+        status: String? = nil
+    ) async throws -> PaginatedResult<DocumentDetails> {
+        let sid = try requireId(signerId, name: "Signer ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        var items = [URLQueryItem(name: "signer-access-code", value: code)]
+        if let search { items.append(.init(name: "search", value: search)) }
+        if let status { items.append(.init(name: "status", value: status)) }
+        return try await callList(
+            "Failed to search signer documents",
+            request: .get("/signers/\(sid)/documents/search", queryItems: items)
         )
     }
 

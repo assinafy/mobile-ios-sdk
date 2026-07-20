@@ -111,18 +111,22 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertEqual(json["whatsapp_phone_number"] as? String, "+5548999990000")
     }
 
-    func testCreateStripsCPFNonDigits() async throws {
+    func testCreateOmitsUnsupportedCPFField() async throws {
+        // The live API silently ignores `cpf`/`government_id` on signer create,
+        // so the payload must not send them.
         mock.stubEnvelopeList([])
         mock.stubEnvelope(signerDict(id: "123"))
         _ = try await resource.create(
-            CreateSignerPayload(fullName: "John", email: "john@example.com", cpf: "123.456.789-00")
+            CreateSignerPayload(fullName: "John", email: "john@example.com")
         )
         guard let body = mock.lastRequest?.body,
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
             XCTFail("No request body")
             return
         }
-        XCTAssertEqual(json["cpf"] as? String, "12345678900")
+        XCTAssertNil(json["cpf"])
+        XCTAssertNil(json["government_id"])
+        XCTAssertEqual(json["full_name"] as? String, "John")
     }
 
     // MARK: - List

@@ -16,6 +16,27 @@ public final class AssignmentResource: BaseResource {
 
     // MARK: - Swift async API
 
+    /// Lists the assignments belonging to an account.
+    ///
+    /// Mirrors `GET /assignments`. The account context is supplied via the
+    /// `accountId` query parameter (using the client's default account when not
+    /// overridden).
+    ///
+    /// - Parameters:
+    ///   - params: Pagination parameters (`page`, `per-page`).
+    ///   - accountId: Override the client's default account ID.
+    /// - Returns: A ``PaginatedResult`` of ``Assignment`` objects.
+    public func list(
+        params: ListParams = ListParams(),
+        accountId: String? = nil
+    ) async throws -> PaginatedResult<Assignment> {
+        let id = try self.accountId(accountId)
+        var items = params.toQueryItems()
+        items.append(URLQueryItem(name: "accountId", value: id))
+        return try await callList("Failed to list assignments",
+                                  request: .get("/assignments", queryItems: items))
+    }
+
     /// Creates a signing assignment for a document.
     ///
     /// - Parameters:
@@ -192,6 +213,15 @@ public final class AssignmentResource: BaseResource {
     }
 
     // MARK: - Objective-C / completion-handler API
+
+    /// Lists assignments and delivers the result on the **main queue**.
+    @objc(listAssignmentsWithAccountId:completion:)
+    public func list(
+        accountId: String?,
+        completion: @escaping ([Assignment]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(accountId: accountId) }, completion: completion)
+    }
 
     /// Creates an assignment and delivers the result on the **main queue**.
     @objc(createAssignmentForDocument:signerIds:completion:)

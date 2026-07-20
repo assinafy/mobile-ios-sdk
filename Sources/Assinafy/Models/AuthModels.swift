@@ -53,6 +53,8 @@ public final class User: NSObject {
     public let governmentId: String?
     public let isEmailVerified: Bool
     public let hasAcceptedTerms: Bool
+    /// Whether the user has a password set (returned by `GET /users/self`).
+    public let isPasswordSet: Bool
     public let createdAt: String
     public let toBeDeletedAt: String?
 
@@ -64,6 +66,7 @@ public final class User: NSObject {
         governmentId: String? = nil,
         isEmailVerified: Bool = false,
         hasAcceptedTerms: Bool = false,
+        isPasswordSet: Bool = false,
         createdAt: String,
         toBeDeletedAt: String? = nil
     ) {
@@ -74,6 +77,7 @@ public final class User: NSObject {
         self.governmentId = governmentId
         self.isEmailVerified = isEmailVerified
         self.hasAcceptedTerms = hasAcceptedTerms
+        self.isPasswordSet = isPasswordSet
         self.createdAt = createdAt
         self.toBeDeletedAt = toBeDeletedAt
     }
@@ -87,6 +91,7 @@ extension User: Decodable {
         case governmentId = "government_id"
         case isEmailVerified = "is_email_verified"
         case hasAcceptedTerms = "has_accepted_terms"
+        case isPasswordSet = "is_password_set"
         case createdAt = "created_at"
         case toBeDeletedAt = "to_be_deleted_at"
     }
@@ -101,6 +106,7 @@ extension User: Decodable {
             governmentId: try c.decodeIfPresent(String.self, forKey: .governmentId),
             isEmailVerified: try c.decodeIfPresent(Bool.self, forKey: .isEmailVerified) ?? false,
             hasAcceptedTerms: try c.decodeIfPresent(Bool.self, forKey: .hasAcceptedTerms) ?? false,
+            isPasswordSet: try c.decodeIfPresent(Bool.self, forKey: .isPasswordSet) ?? false,
             createdAt: try c.decode(String.self, forKey: .createdAt),
             toBeDeletedAt: try c.decodeIfPresent(String.self, forKey: .toBeDeletedAt)
         )
@@ -136,6 +142,37 @@ extension LoginResponse: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             accessToken: try c.decode(String.self, forKey: .accessToken),
+            user: try c.decode(User.self, forKey: .user),
+            accounts: (try? c.decode([Account].self, forKey: .accounts)) ?? []
+        )
+    }
+}
+
+// MARK: - SelfResponse
+
+/// The authenticated user's profile and the accounts they belong to,
+/// returned by `GET /users/self`.
+@objcMembers
+public final class SelfResponse: NSObject {
+    public let user: User
+    public let accounts: [Account]
+
+    init(user: User, accounts: [Account]) {
+        self.user = user
+        self.accounts = accounts
+    }
+}
+
+extension SelfResponse: @unchecked Sendable {}
+
+extension SelfResponse: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case user, accounts
+    }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
             user: try c.decode(User.self, forKey: .user),
             accounts: (try? c.decode([Account].self, forKey: .accounts)) ?? []
         )
@@ -244,6 +281,22 @@ public final class CreateAPIKeyPayload: NSObject, Encodable {
 }
 
 extension CreateAPIKeyPayload: @unchecked Sendable {}
+
+/// Payload for `POST /auth/link-social-login`.
+@objcMembers
+public final class LinkSocialLoginPayload: NSObject, Encodable {
+    /// The social provider. Currently only `"google"` is supported.
+    public let provider: String
+    /// The provider-issued token to link to the authenticated account.
+    public let token: String
+
+    @objc public init(provider: String = "google", token: String) {
+        self.provider = provider
+        self.token = token
+    }
+}
+
+extension LinkSocialLoginPayload: @unchecked Sendable {}
 
 // MARK: - APIKeyResponse
 

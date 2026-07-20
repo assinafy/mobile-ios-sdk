@@ -77,6 +77,30 @@ public final class DocumentResource: BaseResource {
                                                 queryItems: items.isEmpty ? nil : items))
     }
 
+    /// Searches documents in a workspace (lightweight).
+    ///
+    /// Mirrors `GET /accounts/{account_id}/documents/search`. Unlike ``list(params:accountId:)``,
+    /// this returns a trimmed payload suited to autocomplete and quick lookups.
+    ///
+    /// - Parameters:
+    ///   - search: Free-text search term.
+    ///   - status: Optional status filter.
+    ///   - accountId: Override the client's default account ID.
+    /// - Returns: A ``PaginatedResult`` of ``DocumentListItem`` objects.
+    public func search(
+        search: String? = nil,
+        status: String? = nil,
+        accountId: String? = nil
+    ) async throws -> PaginatedResult<DocumentListItem> {
+        let id = try self.accountId(accountId)
+        var items: [URLQueryItem] = []
+        if let search { items.append(.init(name: "search", value: search)) }
+        if let status { items.append(.init(name: "status", value: status)) }
+        return try await callList("Failed to search documents",
+                                  request: .get("/accounts/\(id)/documents/search",
+                                                queryItems: items.isEmpty ? nil : items))
+    }
+
     /// Fetches full details for a document including assignment and activities.
     ///
     /// - Parameters:
@@ -86,6 +110,22 @@ public final class DocumentResource: BaseResource {
         let did = try requireId(documentId, name: "Document ID")
         return try await call("Failed to fetch document",
                               request: .get("/documents/\(did)"))
+    }
+
+    /// Renames a document.
+    ///
+    /// Mirrors `PATCH /documents/{id}` with body `{ "name": "..." }`.
+    ///
+    /// - Parameters:
+    ///   - documentId: The document identifier.
+    ///   - name: The new document name.
+    /// - Returns: The updated ``DocumentDetails``.
+    @discardableResult
+    public func rename(documentId: String, name: String) async throws -> DocumentDetails {
+        let did = try requireId(documentId, name: "Document ID")
+        let newName = try requireId(name, name: "Document name")
+        let request = try APIRequest.patch("/documents/\(did)", body: ["name": newName])
+        return try await call("Failed to rename document", request: request)
     }
 
     /// Polls the API until a document reaches `metadataReady` status or times out.
@@ -394,6 +434,28 @@ public final class DocumentResource: BaseResource {
         completion: @escaping (Error?) -> Void
     ) {
         withVoidCompletion({ try await self.delete(documentId: documentId) }, completion: completion)
+    }
+
+    /// Renames a document and delivers the result on the **main queue**.
+    @objc(renameDocumentWithId:name:completion:)
+    public func rename(
+        documentId: String,
+        name: String,
+        completion: @escaping (DocumentDetails?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.rename(documentId: documentId, name: name) }, completion: completion)
+    }
+
+    /// Searches documents and delivers the result on the **main queue**.
+    @objc(searchDocumentsWithTerm:status:accountId:completion:)
+    public func search(
+        search: String?,
+        status: String?,
+        accountId: String?,
+        completion: @escaping ([DocumentListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.search(search: search, status: status, accountId: accountId) },
+                           completion: completion)
     }
 
 }

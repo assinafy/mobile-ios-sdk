@@ -52,6 +52,11 @@ public struct APIRequest {
         APIRequest(method: .delete, path: path, queryItems: queryItems)
     }
 
+    static func delete<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
+        let data = try JSONEncoder.assinafy.encode(body)
+        return APIRequest(method: .delete, path: path, body: data)
+    }
+
     static func post<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
         let data = try JSONEncoder.assinafy.encode(body)
         return APIRequest(method: .post, path: path, body: data)

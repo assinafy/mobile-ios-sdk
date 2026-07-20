@@ -155,12 +155,14 @@ public final class WebhookDispatch: NSObject {
     public let httpStatus: Int
     public let responseBody: String?
     public let deliveryError: String?
-    public let createdAt: Int
-    public let updatedAt: Int
+    /// ISO-8601 timestamp of the first delivery attempt (e.g. `2026-07-20T19:03:13Z`).
+    public let createdAt: String?
+    /// ISO-8601 timestamp of the most recent delivery attempt.
+    public let updatedAt: String?
 
     init(id: String, event: String, activityId: Int, endpoint: String? = nil,
          delivered: Bool, httpStatus: Int = 0, responseBody: String? = nil,
-         deliveryError: String? = nil, createdAt: Int, updatedAt: Int = 0) {
+         deliveryError: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
         self.id = id; self.event = event; self.activityId = activityId
         self.endpoint = endpoint; self.delivered = delivered; self.httpStatus = httpStatus
         self.responseBody = responseBody; self.deliveryError = deliveryError
@@ -192,8 +194,8 @@ extension WebhookDispatch: Decodable {
             httpStatus:   try c.decodeIfPresent(Int.self,     forKey: .httpStatus) ?? 0,
             responseBody: try c.decodeIfPresent(String.self,  forKey: .responseBody),
             deliveryError:try c.decodeIfPresent(String.self,  forKey: .deliveryError),
-            createdAt:   try c.decode(Int.self,             forKey: .createdAt),
-            updatedAt:    try c.decodeIfPresent(Int.self,     forKey: .updatedAt) ?? 0
+            createdAt:    try c.decodeIfPresent(String.self,  forKey: .createdAt),
+            updatedAt:    try c.decodeIfPresent(String.self,  forKey: .updatedAt)
         )
     }
 }

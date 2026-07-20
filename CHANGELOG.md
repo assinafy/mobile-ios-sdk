@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.3.0] - 2026-07-20
+
+Full audit against the current OpenAPI spec (`https://api.assinafy.com.br/v1/docs/openapi.json`,
+now a Scalar/OpenAPI reference) with every change verified against the live sandbox.
+
+### Added — new endpoint coverage
+- **`client.documents.rename(documentId:name:)`** — `PATCH /documents/{id}`.
+- **`client.documents.search(search:status:accountId:)`** — `GET /accounts/{id}/documents/search`.
+- **`client.assignments.list(params:accountId:)`** — `GET /assignments` (account context
+  supplied via the undocumented-but-required `accountId` query parameter, verified live).
+- **`client.auth.currentUser()`** — `GET /users/self` (returns `SelfResponse`).
+- **`client.auth.stats(params:)`** — `GET /users/self/stats` (production-only; 404 on sandbox).
+- **`client.auth.linkSocialLogin(_:)`** — `POST /auth/link-social-login`.
+- **`client.workspaces.theme(accountId:)`** — `GET /accounts/{id}/theme` (`AccountTheme`,
+  the canonical source of branding colours).
+- **`client.workspaces.stats(params:accountId:)`** — `GET /accounts/{id}/stats`
+  (`DocumentStatsRow` series; production-only, 404 on sandbox).
+- **`client.workspaces.downloadLogo/uploadLogo/deleteLogo`** — account logo endpoints.
+- **`client.signers.searchSignerDocuments(...)`** — `GET /signers/{id}/documents/search`.
+- **`AssinafyClient.socialLoginAuthorizationURL(authClient:)`** — builds the
+  `GET /auth/authenticate` OAuth-start URL.
+- Ordered-signing support: `SignerReference.descriptor(..., step:)` now encodes the
+  assignment signer `step`, and `Signer.step` is decoded from responses.
+- `client.signers.uploadSignature(..., reuse:)` forwards the `reuse` query flag.
+- `Objective-C` completion-handler wrappers for all of the above.
+
+### Fixed
+- **`WebhookDispatch.createdAt`/`updatedAt` are now `String?`** (ISO-8601). They were
+  typed `Int`, which crashed decoding on real delivery records.
+- **Account create/update now send `notification_sender_type`** (per the spec) instead
+  of `primary_color`/`secondary_color`, which the API silently ignored (verified live).
+  Branding colours are exposed read-only via `workspaces.theme(...)`.
+- **`workspaces.delete(workspaceId:force:)`** now sends the documented `{ "force": … }` body.
+- **`send-token` request now uses the documented `email` field** (was `recipient`/`channel`);
+  the WhatsApp channel still sends `channel`.
+- **`ConfirmSignerDataPayload`** now also carries the documented `full_name`/`government_id`.
+
+### Removed
+- **Signer `cpf`** from `CreateSignerPayload`/`UpdateSignerPayload`/`Signer`/`SignerInput`.
+  Live testing confirmed the API silently drops `cpf`/`government_id` on signer create/update.
+- **`WebhookResource.delete()`** is deprecated and now forwards to `inactivate()`
+  (`PUT /accounts/{id}/webhooks/inactivate`); the API has no DELETE for subscriptions
+  (the old path returned `404`).
+
+### Documentation
+- `docs/API_REFERENCE.md` refreshed to cover all endpoints with request/response payloads.
+
 ## [1.2.1] - 2026-06-05
 
 ### Fixed

@@ -9,19 +9,21 @@ public final class Signer: NSObject {
     public let fullName: String
     public let email: String?
     public let whatsappPhoneNumber: String?
-    public let cpf: String?
     public let hasAcceptedTerms: Bool
     public let verificationMethod: String?
     public let notificationMethods: [String]
+    /// The signing step (1-based) in an ordered assignment, when present.
+    public let step: Int
     public let completed: Bool
     public let notificationHistory: [SignerNotificationHistory]
 
     init(id: String, fullName: String, email: String,
-         whatsappPhoneNumber: String? = nil, cpf: String? = nil, hasAcceptedTerms: Bool = false) {
+         whatsappPhoneNumber: String? = nil, hasAcceptedTerms: Bool = false) {
         self.id = id; self.fullName = fullName; self.email = email
-        self.whatsappPhoneNumber = whatsappPhoneNumber; self.cpf = cpf
+        self.whatsappPhoneNumber = whatsappPhoneNumber
         self.hasAcceptedTerms = hasAcceptedTerms
         self.verificationMethod = nil; self.notificationMethods = []
+        self.step = 0
         self.completed = false; self.notificationHistory = []
     }
 
@@ -30,18 +32,19 @@ public final class Signer: NSObject {
         fullName: String,
         email: String?,
         whatsappPhoneNumber: String? = nil,
-        cpf: String? = nil,
         hasAcceptedTerms: Bool = false,
         verificationMethod: String? = nil,
         notificationMethods: [String] = [],
+        step: Int = 0,
         completed: Bool = false,
         notificationHistory: [SignerNotificationHistory] = []
     ) {
         self.id = id; self.fullName = fullName; self.email = email
-        self.whatsappPhoneNumber = whatsappPhoneNumber; self.cpf = cpf
+        self.whatsappPhoneNumber = whatsappPhoneNumber
         self.hasAcceptedTerms = hasAcceptedTerms
         self.verificationMethod = verificationMethod
         self.notificationMethods = notificationMethods
+        self.step = step
         self.completed = completed
         self.notificationHistory = notificationHistory
     }
@@ -55,13 +58,12 @@ extension Signer: @unchecked Sendable {}
 
 extension Signer: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, email, cpf
+        case id, email, step, completed
         case fullName            = "full_name"
         case whatsappPhoneNumber = "whatsapp_phone_number"
         case hasAcceptedTerms    = "has_accepted_terms"
         case verificationMethod  = "verification_method"
         case notificationMethods = "notification_methods"
-        case completed
         case notificationHistory = "notification_history"
     }
 
@@ -72,10 +74,10 @@ extension Signer: Decodable {
             fullName:             try c.decode(String.self,           forKey: .fullName),
             email:                try c.decodeIfPresent(String.self,  forKey: .email),
             whatsappPhoneNumber:  try c.decodeIfPresent(String.self,  forKey: .whatsappPhoneNumber),
-            cpf:                  try c.decodeIfPresent(String.self,  forKey: .cpf),
             hasAcceptedTerms:     try c.decodeIfPresent(Bool.self,    forKey: .hasAcceptedTerms) ?? false,
             verificationMethod:   try c.decodeIfPresent(String.self,  forKey: .verificationMethod),
             notificationMethods:  (try? c.decode([String].self, forKey: .notificationMethods)) ?? [],
+            step:                 try c.decodeIfPresent(Int.self,     forKey: .step) ?? 0,
             completed:            try c.decodeIfPresent(Bool.self,    forKey: .completed) ?? false,
             notificationHistory:  (try? c.decode([SignerNotificationHistory].self, forKey: .notificationHistory)) ?? []
         )
@@ -153,8 +155,6 @@ public final class CreateSignerPayload: NSObject, Encodable {
     public let email: String?
     /// The signer's WhatsApp-enabled phone number in E.164 format.
     public let whatsappPhoneNumber: String?
-    /// The signer's Brazilian CPF. Non-digit characters are stripped automatically.
-    public let cpf: String?
 
     /// Creates a new signer payload.
     ///
@@ -162,25 +162,20 @@ public final class CreateSignerPayload: NSObject, Encodable {
     ///   - fullName: The signer's full display name.
     ///   - email: A valid email address.
     ///   - whatsappPhoneNumber: E.164 phone number for WhatsApp notifications.
-    ///   - cpf: Optional Brazilian CPF; non-digit characters are stripped.
     @objc public init(
         fullName: String,
         email: String? = nil,
-        whatsappPhoneNumber: String? = nil,
-        cpf: String? = nil
+        whatsappPhoneNumber: String? = nil
     ) {
         self.fullName = fullName
         self.email = email
         self.whatsappPhoneNumber = whatsappPhoneNumber
-        let stripped = cpf?.filter(\.isNumber) ?? ""
-        self.cpf = stripped.isEmpty ? nil : stripped
     }
 
     enum CodingKeys: String, CodingKey {
         case fullName = "full_name"
         case email
         case whatsappPhoneNumber = "whatsapp_phone_number"
-        case cpf
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -188,7 +183,6 @@ public final class CreateSignerPayload: NSObject, Encodable {
         try c.encode(fullName, forKey: .fullName)
         try c.encodeIfPresent(email, forKey: .email)
         try c.encodeIfPresent(whatsappPhoneNumber, forKey: .whatsappPhoneNumber)
-        try c.encodeIfPresent(cpf, forKey: .cpf)
     }
 }
 
@@ -204,26 +198,21 @@ public final class UpdateSignerPayload: NSObject, Encodable {
     public let fullName: String?
     public let email: String?
     public let whatsappPhoneNumber: String?
-    public let cpf: String?
 
     @objc public init(
         fullName: String? = nil,
         email: String? = nil,
-        whatsappPhoneNumber: String? = nil,
-        cpf: String? = nil
+        whatsappPhoneNumber: String? = nil
     ) {
         self.fullName = fullName
         self.email = email
         self.whatsappPhoneNumber = whatsappPhoneNumber
-        let stripped = cpf?.filter(\.isNumber) ?? ""
-        self.cpf = stripped.isEmpty ? nil : stripped
     }
 
     enum CodingKeys: String, CodingKey {
         case fullName = "full_name"
         case email
         case whatsappPhoneNumber = "whatsapp_phone_number"
-        case cpf
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -231,7 +220,6 @@ public final class UpdateSignerPayload: NSObject, Encodable {
         try c.encodeIfPresent(fullName, forKey: .fullName)
         try c.encodeIfPresent(email, forKey: .email)
         try c.encodeIfPresent(whatsappPhoneNumber, forKey: .whatsappPhoneNumber)
-        try c.encodeIfPresent(cpf, forKey: .cpf)
     }
 }
 
@@ -349,28 +337,47 @@ extension VerifyEmailPayload: @unchecked Sendable {}
 
 // MARK: - ConfirmSignerDataPayload
 
-/// Payload for confirming signer data in a virtual assignment.
+/// Payload for `PUT /documents/{id}/signers/confirm-data`.
+///
+/// The documented fields are `full_name`, `email`, and `government_id`; the SDK
+/// also forwards `whatsapp_phone_number` and `has_accepted_terms`, which the
+/// live signing flow accepts. Provide only the fields you need to confirm.
 @objcMembers
 public final class ConfirmSignerDataPayload: NSObject, Encodable {
+    public let fullName: String?
     public let email: String?
+    /// The signer's government-issued identifier (e.g. CPF), per the API docs.
+    public let governmentId: String?
     public let whatsappPhoneNumber: String?
     public let hasAcceptedTerms: Bool
 
-    @objc public init(email: String? = nil, whatsappPhoneNumber: String? = nil, hasAcceptedTerms: Bool = false) {
+    @objc public init(
+        fullName: String? = nil,
+        email: String? = nil,
+        governmentId: String? = nil,
+        whatsappPhoneNumber: String? = nil,
+        hasAcceptedTerms: Bool = false
+    ) {
+        self.fullName = fullName
         self.email = email
+        self.governmentId = governmentId
         self.whatsappPhoneNumber = whatsappPhoneNumber
         self.hasAcceptedTerms = hasAcceptedTerms
     }
 
     enum CodingKeys: String, CodingKey {
+        case fullName            = "full_name"
         case email
+        case governmentId        = "government_id"
         case whatsappPhoneNumber = "whatsapp_phone_number"
-        case hasAcceptedTerms   = "has_accepted_terms"
+        case hasAcceptedTerms    = "has_accepted_terms"
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(fullName, forKey: .fullName)
         try c.encodeIfPresent(email, forKey: .email)
+        try c.encodeIfPresent(governmentId, forKey: .governmentId)
         try c.encodeIfPresent(whatsappPhoneNumber, forKey: .whatsappPhoneNumber)
         try c.encode(hasAcceptedTerms, forKey: .hasAcceptedTerms)
     }

@@ -95,7 +95,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 public final class AssinafyClient: NSObject {
 
     /// The SDK version string included in the `User-Agent` header.
-    public static let sdkVersion = "1.2.1"
+    public static let sdkVersion = "1.3.0"
 
     // MARK: Resources
 
@@ -236,7 +236,6 @@ public final class AssinafyClient: NSObject {
         public var name: String
         public var email: String
         public var whatsappPhoneNumber: String?
-        public var cpf: String?
 
         @objc public init(name: String, email: String) {
             self.name = name
@@ -273,8 +272,7 @@ public final class AssinafyClient: NSObject {
                 let payload = CreateSignerPayload(
                     fullName: input.name,
                     email: input.email,
-                    whatsappPhoneNumber: input.whatsappPhoneNumber,
-                    cpf: input.cpf
+                    whatsappPhoneNumber: input.whatsappPhoneNumber
                 )
                 group.addTask { [weak self] in
                     guard let self else { throw AssinafySDKError("Client deallocated") }
@@ -297,6 +295,21 @@ public final class AssinafyClient: NSObject {
             payload: payload
         )
         return (document, assignment)
+    }
+
+    /// Builds the browser URL that starts the social-login (OAuth) flow.
+    ///
+    /// Open the returned URL in a browser or `ASWebAuthenticationSession`; the
+    /// provider redirects back to Assinafy, which completes the sign-in. Mirrors
+    /// `GET /auth/authenticate`.
+    ///
+    /// - Parameter authClient: The OAuth provider identifier (e.g. `"google"`).
+    /// - Returns: The authorization URL, or `nil` if it cannot be constructed.
+    @objc public func socialLoginAuthorizationURL(authClient: String) -> URL? {
+        let base = Self.normaliseBaseURL(config.baseURL).absoluteString
+        var components = URLComponents(string: base + "/auth/authenticate")
+        components?.queryItems = [URLQueryItem(name: "authclient", value: authClient)]
+        return components?.url
     }
 
     // MARK: - Private

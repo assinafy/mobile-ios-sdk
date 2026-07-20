@@ -18,7 +18,7 @@ Add the package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.2.0")
+    .package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.3.0")
 ]
 ```
 
@@ -196,15 +196,15 @@ let generated = try await client.documents.createFromTemplate(
 
 The SDK exposes resource objects for the public API documented at https://api.assinafy.com.br/v1/docs:
 
-- `client.documents` - Document uploads, downloads, management, public lookup, signing token delivery, status catalog
-- `client.signers` - Signer CRUD, self-service flows, signer-facing document listing/sign-multiple/decline-multiple/download
-- `client.assignments` - Signing assignments: create, sign, decline, resend, cost estimation, reset expiration, WhatsApp notification log
+- `client.documents` - Document uploads, downloads, rename, search, management, public lookup, signing token delivery, status catalog
+- `client.signers` - Signer CRUD, self-service flows, signer-facing document listing/search/sign-multiple/decline-multiple/download
+- `client.assignments` - Signing assignments: list, create, sign, decline, resend, cost estimation, reset expiration, ordered-signing steps, WhatsApp notification log
 - `client.webhooks` - Webhook subscriptions, event-type catalog, dispatch history, retry
 - `client.templates` - Document template CRUD (create, list, get, update, delete) and instantiation
+- `client.workspaces` - Workspace (account) CRUD, theme/branding, document KPI stats, and logo upload/download/delete
 - `client.tags` - Workspace tag CRUD and document tag listing/replacement/append/detach
-- `client.workspaces` - Workspace (account) CRUD
 - `client.fields` - Field-definition CRUD, value validation (single and batch), field type catalog
-- `client.auth` - Login, social login, password reset, change password, API key management
+- `client.auth` - Login, social login (+ linking and authorization-URL builder), password reset, change password, API key management, current-user profile and cross-account KPIs
 
 For a per-method reference with full request/response payloads, see
 [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).

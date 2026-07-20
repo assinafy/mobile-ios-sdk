@@ -30,14 +30,34 @@ final class WorkspaceResourceTests: XCTestCase {
 
     func testCreateEncodesPayloadFields() async throws {
         mock.stubEnvelope(workspaceDict())
-        _ = try await resource.create(CreateWorkspacePayload(name: "Acme Corp", primaryColor: "#FF0000"))
+        _ = try await resource.create(
+            CreateWorkspacePayload(name: "Acme Corp", notificationSenderType: NotificationSenderType.account)
+        )
         guard let body = mock.lastRequest?.body,
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
             XCTFail("No request body")
             return
         }
         XCTAssertEqual(json["name"] as? String, "Acme Corp")
-        XCTAssertEqual(json["primary_color"] as? String, "#FF0000")
+        XCTAssertEqual(json["notification_sender_type"] as? String, "Account")
+    }
+
+    func testDeleteSendsForceBody() async throws {
+        mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 204))
+        try await resource.delete(workspaceId: "ws1", force: true)
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No request body")
+            return
+        }
+        XCTAssertEqual(json["force"] as? Bool, true)
+    }
+
+    func testThemeUsesCorrectPath() async throws {
+        mock.stubEnvelope(["account_name": "MT", "primary_color": "2072b9", "secondary_color": "ffffff"])
+        let theme = try await resource.theme()
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/theme")
+        XCTAssertEqual(theme.primaryColor, "2072b9")
     }
 
     func testListUsesAccountsEndpoint() async throws {

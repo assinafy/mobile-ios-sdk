@@ -27,8 +27,9 @@ final class WebhookResourceTests: XCTestCase {
             "event": "document_ready",
             "activity_id": 1,
             "delivered": true,
-            "created_at": 1,
-            "updated_at": 1,
+            "http_status": 200,
+            "created_at": "2026-07-20T19:03:13Z",
+            "updated_at": "2026-07-20T19:03:13Z",
         ]
     }
 
@@ -46,11 +47,20 @@ final class WebhookResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.method, .get)
     }
 
-    func testDeleteUsesCorrectEndpoint() async throws {
+    func testDeleteForwardsToInactivate() async throws {
+        // The API has no destructive DELETE for subscriptions; the deprecated
+        // delete() forwards to the documented inactivate endpoint.
         mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 204))
         try await resource.delete()
-        XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/webhooks/subscriptions")
-        XCTAssertEqual(mock.lastRequest?.method, .delete)
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/webhooks/inactivate")
+        XCTAssertEqual(mock.lastRequest?.method, .put)
+    }
+
+    func testDispatchDecodesIsoTimestamps() async throws {
+        mock.stubEnvelope(dispatchDict())
+        let dispatch = try await resource.retryDispatch(dispatchId: "d1")
+        XCTAssertEqual(dispatch.createdAt, "2026-07-20T19:03:13Z")
+        XCTAssertEqual(dispatch.httpStatus, 200)
     }
 
     func testInactivateHitsDocumentedEndpoint() async throws {

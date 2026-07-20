@@ -40,12 +40,17 @@ public final class WebhookResource: BaseResource {
         return try await call("Failed to fetch webhook", request: .get("/accounts/\(id)/webhooks/subscriptions"))
     }
 
-    /// Deletes the webhook subscription for a workspace.
+    /// Stops webhook delivery for a workspace.
+    ///
+    /// - Important: The Assinafy API has no destructive delete for subscriptions;
+    ///   the supported operation is deactivation. This method forwards to
+    ///   ``inactivate(accountId:)`` and is retained only for source compatibility.
     ///
     /// - Parameter accountId: Override the client's default account ID.
+    @available(*, deprecated, renamed: "inactivate(accountId:)",
+               message: "The API has no DELETE for webhook subscriptions; use inactivate(accountId:).")
     public func delete(accountId: String? = nil) async throws {
-        let id = try self.accountId(accountId)
-        try await callVoid("Failed to delete webhook", request: .delete("/accounts/\(id)/webhooks/subscriptions"))
+        try await inactivate(accountId: accountId)
     }
 
     /// Deactivates the webhook subscription without deleting it.
@@ -118,13 +123,25 @@ public final class WebhookResource: BaseResource {
         withCompletion({ try await self.get(accountId: accountId) }, completion: completion)
     }
 
-    /// Deletes the webhook subscription and notifies the **main queue** upon completion.
+    /// Stops webhook delivery and notifies the **main queue** upon completion.
+    ///
+    /// - Note: Forwards to ``inactivate(accountId:)`` — the API has no destructive
+    ///   delete for subscriptions.
     @objc(deleteWebhookWithAccountId:completion:)
     public func delete(
         accountId: String?,
         completion: @escaping (Error?) -> Void
     ) {
-        withVoidCompletion({ try await self.delete(accountId: accountId) }, completion: completion)
+        withVoidCompletion({ try await self.inactivate(accountId: accountId) }, completion: completion)
+    }
+
+    /// Deactivates the webhook subscription and notifies the **main queue** upon completion.
+    @objc(inactivateWebhookWithAccountId:completion:)
+    public func inactivate(
+        accountId: String?,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.inactivate(accountId: accountId) }, completion: completion)
     }
 
     /// Lists dispatch records and delivers them on the **main queue**.

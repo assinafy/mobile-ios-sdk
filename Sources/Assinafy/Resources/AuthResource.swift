@@ -23,6 +23,40 @@ public final class AuthResource: BaseResource {
         return try await call("Failed to complete social login", request: request)
     }
 
+    /// Links a social-login provider token to the authenticated user's account.
+    ///
+    /// Mirrors `POST /auth/link-social-login`.
+    public func linkSocialLogin(_ payload: LinkSocialLoginPayload) async throws {
+        let request = try APIRequest.post("/auth/link-social-login", body: payload)
+        try await callVoid("Failed to link social login", request: request)
+    }
+
+    /// Fetches the authenticated user's profile and the accounts they belong to.
+    ///
+    /// Mirrors `GET /users/self`.
+    public func currentUser() async throws -> SelfResponse {
+        return try await call("Failed to fetch current user", request: .get("/users/self"))
+    }
+
+    /// Fetches the authenticated user's document-funnel KPIs, summed across all
+    /// accounts they belong to.
+    ///
+    /// - Note: This endpoint is served on production only and returns `404` on
+    ///   the sandbox host.
+    ///
+    /// Mirrors `GET /users/self/stats`.
+    ///
+    /// - Parameter params: Granularity (`monthly`/`daily`) and month filter.
+    /// - Returns: A zero-filled series of ``DocumentStatsRow`` values, most recent first.
+    public func stats(params: AccountStatsParams = AccountStatsParams()) async throws -> [DocumentStatsRow] {
+        let items = params.toQueryItems()
+        let result: PaginatedResult<DocumentStatsRow> = try await callList(
+            "Failed to fetch user stats",
+            request: .get("/users/self/stats", queryItems: items.isEmpty ? nil : items)
+        )
+        return result.data
+    }
+
     /// Changes a user's password.
     public func changePassword(_ payload: ChangePasswordPayload) async throws {
         let request = try APIRequest.put("/authentication/change-password", body: payload)
@@ -91,5 +125,29 @@ public final class AuthResource: BaseResource {
         completion: @escaping (NSString?, Error?) -> Void
     ) {
         withCompletion({ (try await self.createAPIKey(payload)) as NSString }, completion: completion)
+    }
+
+    /// Fetches the authenticated user and delivers the result on the **main queue**.
+    @objc(currentUserWithCompletion:)
+    public func currentUser(completion: @escaping (SelfResponse?, Error?) -> Void) {
+        withCompletion({ try await self.currentUser() }, completion: completion)
+    }
+
+    /// Fetches the user's KPIs and delivers the result on the **main queue**.
+    @objc(statsWithParams:completion:)
+    public func stats(
+        params: AccountStatsParams,
+        completion: @escaping ([DocumentStatsRow]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.stats(params: params) }, completion: completion)
+    }
+
+    /// Links a social login and notifies the **main queue** upon completion.
+    @objc(linkSocialLogin:completion:)
+    public func linkSocialLogin(
+        _ payload: LinkSocialLoginPayload,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.linkSocialLogin(payload) }, completion: completion)
     }
 }

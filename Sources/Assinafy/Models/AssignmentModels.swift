@@ -223,10 +223,14 @@ public enum SignerReference: Sendable {
     /// A signer identified solely by their ID.
     case id(String)
     /// A signer identified by ID and/or method descriptors for cost estimation.
+    ///
+    /// - Parameter step: The 1-based signing order for ordered (sequential)
+    ///   assignments. Leave `nil` for parallel signing.
     case descriptor(
         id: String? = nil,
         verificationMethod: String? = nil,
-        notificationMethods: [String]? = nil
+        notificationMethods: [String]? = nil,
+        step: Int? = nil
     )
 }
 
@@ -333,9 +337,10 @@ struct AssignmentSignerBody: Encodable {
     let id: String?
     let verificationMethod: String?
     let notificationMethods: [String]?
+    let step: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id
+        case id, step
         case verificationMethod = "verification_method"
         case notificationMethods = "notification_methods"
     }
@@ -384,13 +389,13 @@ private func buildSignerBody(_ ref: SignerReference, allowWithoutId: Bool) throw
     switch ref {
     case .id(let id):
         guard !id.isEmpty else { throw ValidationError("Signer ID cannot be empty") }
-        return AssignmentSignerBody(id: id, verificationMethod: nil, notificationMethods: nil)
-    case .descriptor(let id, let vm, let nm):
+        return AssignmentSignerBody(id: id, verificationMethod: nil, notificationMethods: nil, step: nil)
+    case .descriptor(let id, let vm, let nm, let step):
         let hasId = id?.isEmpty == false
         if !hasId, vm == nil, nm == nil, !allowWithoutId {
             throw ValidationError("Invalid signer reference: must provide id or verification_method")
         }
-        return AssignmentSignerBody(id: hasId ? id : nil, verificationMethod: vm, notificationMethods: nm)
+        return AssignmentSignerBody(id: hasId ? id : nil, verificationMethod: vm, notificationMethods: nm, step: step)
     }
 }
 

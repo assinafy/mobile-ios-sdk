@@ -1,7 +1,8 @@
 # Assinafy iOS SDK — API Reference
 
 Full request/response reference for every public method in the SDK, mapped to the
-endpoints documented at <https://api.assinafy.com.br/v1/docs>. Response samples are
+OpenAPI/Scalar reference at <https://api.assinafy.com.br/v1/docs> (backed by
+<https://api.assinafy.com.br/v1/docs/openapi.json>). Response samples are
 real payloads captured from the sandbox API (`https://sandbox.assinafy.com.br/v1`);
 long arrays are trimmed with `…` and identifiers are illustrative.
 
@@ -112,6 +113,43 @@ Response (`data`): `{ "api_key": "8mzGm_F8K2m6…full-key…" }` → returns the
 ### `deleteAPIKey()`
 `DELETE /users/api-keys` — returns no body.
 
+### `currentUser() -> SelfResponse`
+`GET /users/self`
+
+Response (`data`):
+```json
+{
+  "user": { "id": "md3j…", "name": "Multica Test", "email": "bill@febacapital.com",
+    "telephone": null, "government_id": "", "is_email_verified": true,
+    "has_accepted_terms": true, "is_password_set": true,
+    "created_at": "2026-05-12T18:05:11Z", "to_be_deleted_at": null },
+  "accounts": [ { "id": "102d…45fd", "name": "MT", "roles": ["owner"],
+    "is_delete_allowed": true, "created_at": "2026-05-12T18:05:11Z" } ]
+}
+```
+
+### `stats(params:) -> [DocumentStatsRow]`
+`GET /users/self/stats` — production-only; returns `404` on the sandbox host. Query
+params: `granularity` (`monthly` default / `daily`), `month` (`YYYY-MM`, required for
+daily).
+
+Response (`data`): array of `DocumentStatsRow`:
+```json
+{ "period": "2026-06", "documents_uploaded": 42, "documents_sent": 37,
+  "signature_requests": 61, "signature_requests_email": 55,
+  "signature_requests_whatsapp": 18, "documents_opened": 44,
+  "documents_signed": 52, "documents_certified": 30 }
+```
+
+### `linkSocialLogin(_:)`
+`POST /auth/link-social-login`
+
+Request: `{ "provider": "google", "token": "ya29…" }` — returns `{status, message}` only.
+
+### `socialLoginAuthorizationURL(authClient:) -> URL?`
+Builds the `GET /auth/authenticate?authclient=google` browser URL for social login
+(`AssinafyClient.socialLoginAuthorizationURL(authClient:)`).
+
 ---
 
 ## `client.workspaces`
@@ -122,11 +160,15 @@ stable on the API — verified against the sandbox.)
 ### `create(_:) -> WorkspaceResponse`
 `POST /accounts`
 
-Request:
+Request (`notification_sender_type` ∈ `User` / `Account`):
 ```json
-{ "name": "Acme Corp", "primary_color": "1A2B3C", "secondary_color": "FFFFFF" }
+{ "name": "Acme Corp", "notification_sender_type": "Account" }
 ```
-Response: see `get`.
+Response (`data`):
+```json
+{ "id": "102d…45fd", "name": "Acme Corp", "primary_color": null,
+  "secondary_color": null, "created_at": "2026-05-12T18:05:11Z" }
+```
 
 ### `list(params:) -> PaginatedResult<WorkspaceListItem>`
 `GET /accounts`
@@ -149,10 +191,33 @@ Response (`data`):
 ```
 
 ### `update(workspaceId:payload:) -> WorkspaceResponse`
-`PUT /accounts/{id}` — body is the non-nil subset of `name`/`primary_color`/`secondary_color`. Response as `get`.
+`PUT /accounts/{id}` — body `{ "name": "New", "notification_sender_type": "User" }`
+(non-nil subset). Response as `get`.
 
-### `delete(workspaceId:)`
-`DELETE /accounts/{id}` — irreversible; returns no body.
+### `delete(workspaceId:force:)`
+`DELETE /accounts/{id}` — irreversible; sends `{ "force": true }` body. Returns no body.
+
+### `theme(accountId:) -> AccountTheme`
+`GET /accounts/{id}/theme`
+
+Response (`data`):
+```json
+{ "account_name": "MT", "primary_color": "2072b9", "secondary_color": "ffffff", "logo": null }
+```
+The canonical source of branding colours.
+
+### `stats(params:accountId:) -> [DocumentStatsRow]`
+`GET /accounts/{id}/stats` — production-only (`404` on sandbox). Same `DocumentStatsRow`
+shape and query params (`granularity`, `month`) as `auth.stats`.
+
+### `downloadLogo(accountId:) -> Data`
+`GET /accounts/{id}/logo` — returns raw image bytes (`404` when no logo set).
+
+### `uploadLogo(_:filename:contentType:accountId:)`
+`POST /accounts/{id}/logo` — `multipart/form-data`, part `file`. Returns `{status, message}`.
+
+### `deleteLogo(accountId:)`
+`DELETE /accounts/{id}/logo` — returns no body.
 
 ---
 
@@ -166,13 +231,14 @@ Response (`data`):
 
 Request (`email` **or** `whatsapp_phone_number` required):
 ```json
-{ "full_name": "Bill M", "email": "bill@febacapital.com",
-  "whatsapp_phone_number": "+5548999990000", "cpf": "11144477735" }
+{ "full_name": "John Doe", "email": "john@example.com",
+  "whatsapp_phone_number": "+5548999990000" }
 ```
 Response (`data`):
 ```json
-{ "id": "19e6…d8c", "full_name": "Bill M", "email": "bill@febacapital.com",
-  "whatsapp_phone_number": null, "has_accepted_terms": false }
+{ "resource": "signer", "id": "19e6…d8c", "full_name": "John Doe",
+  "email": "john@example.com", "whatsapp_phone_number": null,
+  "has_accepted_terms": false }
 ```
 
 ### `get(signerId:accountId:) -> Signer`
@@ -192,7 +258,7 @@ Response (`data`): array of the signer object above.
 
 ### `update(signerId:payload:accountId:) -> Signer`
 `PUT /accounts/{account_id}/signers/{signer_id}` — body is the non-nil subset of
-`full_name`/`email`/`whatsapp_phone_number`/`cpf`. Response: the updated `Signer`.
+`full_name`/`email`/`whatsapp_phone_number`. Response: the updated `Signer`.
 
 ### `delete(signerId:accountId:)`
 `DELETE /accounts/{account_id}/signers/{signer_id}` — returns no body.
@@ -221,8 +287,8 @@ Response (`data`): `{ "full_name": "Bill M", "email": "…", "has_accepted_terms
 
 Request: `{ "verification-code": "123456", "signer-access-code": "<code>" }`
 
-### `uploadSignature(signerAccessCode:type:imageData:)`
-`POST /signature?signer-access-code={code}&type={signature|initial}` — raw PNG/JPEG body (`Content-Type: image/png`); returns no body.
+### `uploadSignature(signerAccessCode:type:imageData:reuse:)`
+`POST /signature?signer-access-code={code}&type={signature|initial}` — raw PNG/JPEG body (`Content-Type: image/png`); returns no body. Optional `reuse=true` query flag.
 
 ### `downloadSignature(signerAccessCode:type:) -> Data`
 `GET /signature/{type}?signer-access-code={code}` — returns raw image bytes.
@@ -232,6 +298,9 @@ Request: `{ "verification-code": "123456", "signer-access-code": "<code>" }`
 
 ### `listSignerDocuments(signerId:signerAccessCode:params:) -> PaginatedResult<DocumentDetails>`
 `GET /signers/{signer_id}/documents?signer-access-code={code}` — filters: `status`, `method`, `search`, `sort`.
+
+### `searchSignerDocuments(signerId:signerAccessCode:search:status:) -> PaginatedResult<DocumentDetails>`
+`GET /signers/{signer_id}/documents/search?signer-access-code={code}` — query `search`, `status`.
 
 ### `signMultipleDocuments(signerAccessCode:documentIds:)`
 `PUT /signers/documents/sign-multiple?signer-access-code={code}` — returns no body.
@@ -304,6 +373,15 @@ Response (`data`):
 
 > Note: the API returns `"method": null` for collect assignments and may use the
 > key `expiration` instead of `expires_at`; the SDK decodes both safely.
+
+### `rename(documentId:name:) -> DocumentDetails`
+`PATCH /documents/{document_id}`
+
+Request: `{ "name": "renamed.pdf" }`. Returns the updated `DocumentDetails`.
+
+### `search(search:status:accountId:) -> PaginatedResult<DocumentListItem>`
+`GET /accounts/{account_id}/documents/search` — query `search`, `status`. Lightweight
+list; items match `DocumentListItem` (now includes `signing_url`).
 
 ### `waitUntilReady(documentId:options:) -> DocumentUploadResponse`
 Polls `GET /documents/{document_id}` until status is one of `metadata_ready`,
@@ -396,7 +474,9 @@ Response (`data`): `{ "id": "…", "name": "…", "page_count": "1", "created_by
 ### `sendPublicSignToken(documentId:payload:) -> SendTokenResponse`
 `PUT /public/documents/{document_id}/send-token` — no auth.
 
-Request: `{ "recipient": "user@example.com", "channel": "email" }` (or `"whatsapp"`)
+Request: `{ "email": "someone@example.com" }` (documented field). For the WhatsApp
+channel the SDK additionally sends `"channel": "whatsapp"`. (Previously sent
+`recipient`/`channel`.)
 Response (`data`): `{ "document": { … }, "channel": "email", "recipient": "…" }`
 
 ### `confirmSignerData(documentId:signerAccessCode:payload:)`
@@ -406,10 +486,27 @@ Request:
 ```json
 { "email": "user@example.com", "whatsapp_phone_number": null, "has_accepted_terms": true }
 ```
+The payload also supports the documented `full_name` and `government_id` fields.
 
 ---
 
 ## `client.assignments`
+
+### `list(params:accountId:) -> PaginatedResult<Assignment>`
+`GET /assignments` — the account context is supplied via the `accountId` query
+parameter (camelCase; required — the API returns `400` without it). Query also accepts
+`page`, `per-page`.
+
+Response (`data`): array of `Assignment` objects:
+```json
+{ "id": "…", "sender_email": "bill@febacapital.com", "method": "virtual",
+  "expires_at": null, "message": "…",
+  "signers": [ { "id": "…", "full_name": "…", "email": "…",
+                 "whatsapp_phone_number": null, "has_accepted_terms": false,
+                 "completed": false, "verification_method": "Email",
+                 "notification_methods": ["Email"], "step": 1, "notified": true } ],
+  "copy_receivers": [], "items": [ … ] }
+```
 
 ### `create(documentId:payload:) -> Assignment`
 `POST /documents/{document_id}/assignments`
@@ -430,6 +527,9 @@ Request (collect adds page/field entries):
                                "display_settings": "{…}" } ] } ] }
 ```
 Response (`data`): the `assignment` object shown under `documents.get`.
+
+Per-signer `step` (1-based ordered signing) is supported via
+`SignerReference.descriptor(..., step:)`.
 
 ### `estimateCost(documentId:payload:) -> CostEstimate`
 `POST /documents/{document_id}/assignments/estimate-cost` — same body as `create`
@@ -627,8 +727,9 @@ Response (`data`):
 ### `get(accountId:) -> WebhookSubscription`
 `GET /accounts/{account_id}/webhooks/subscriptions` — `data` is an **object** (above).
 
-### `delete(accountId:)`
-`DELETE /accounts/{account_id}/webhooks/subscriptions` — returns no body.
+### `delete(accountId:)` — **DEPRECATED**
+The API has no `DELETE` for subscriptions; this now forwards to `inactivate()`
+(`PUT /accounts/{account_id}/webhooks/inactivate`). Use `inactivate` instead.
 
 ### `inactivate(accountId:)`
 `PUT /accounts/{account_id}/webhooks/inactivate` — disables delivery without deleting.
@@ -651,8 +752,9 @@ Response (`data`):
 [ { "id": "d1", "event": "document_ready", "activity_id": 42,
     "endpoint": "https://example.com/hook", "delivered": true,
     "http_status": 200, "response_body": "ok", "error": null,
-    "created_at": 1717000000, "updated_at": 1717000005 } ]
+    "created_at": "2026-07-20T19:03:13Z", "updated_at": "2026-07-20T19:03:13Z" } ]
 ```
+`WebhookDispatch.created_at`/`updated_at` are ISO-8601 strings.
 
 ### `retryDispatch(dispatchId:accountId:) -> WebhookDispatch`
 `POST /accounts/{account_id}/webhooks/{dispatch_id}/retry` — re-delivers; returns the updated dispatch.

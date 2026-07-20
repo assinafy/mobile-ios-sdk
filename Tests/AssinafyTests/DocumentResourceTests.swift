@@ -370,8 +370,29 @@ final class DocumentResourceTests: XCTestCase {
             XCTFail("No body")
             return
         }
-        XCTAssertEqual(json["recipient"] as? String, "someone@example.com")
-        XCTAssertEqual(json["channel"] as? String, "email")
+        // The documented body key is `email`; the default email channel omits `channel`.
+        XCTAssertEqual(json["email"] as? String, "someone@example.com")
+        XCTAssertNil(json["channel"])
+        XCTAssertNil(json["recipient"])
+    }
+
+    func testSendPublicSignTokenWhatsappIncludesChannel() async throws {
+        mock.stubEnvelope([
+            "document": ["id": "doc1", "name": "Doc", "status": "pending_signature"],
+            "channel": "whatsapp",
+            "recipient": "+5548999990000",
+        ])
+        _ = try await resource.sendPublicSignToken(
+            documentId: "doc1",
+            payload: SendTokenPayload(recipient: "+5548999990000", channel: .whatsapp)
+        )
+        guard let body = mock.lastRequest?.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            XCTFail("No body")
+            return
+        }
+        XCTAssertEqual(json["email"] as? String, "+5548999990000")
+        XCTAssertEqual(json["channel"] as? String, "whatsapp")
     }
 
     func testCreateFromTemplateSendsEditorFieldsTagsAndSignerStep() async throws {

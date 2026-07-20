@@ -187,13 +187,15 @@ public final class DocumentListItem: NSObject {
     public let updatedAt: String?
     public let isClosed: Bool
     public let declineReason: String?
+    /// Hosted signing URL for the document, when the API provides one.
+    public let signingUrl: String?
 
     init(id: String, name: String, status: DocumentStatus, statusString: String,
          accountId: String? = nil, templateId: String? = nil,
          assignment: Assignment? = nil, artifacts: DocumentArtifacts? = nil,
          pages: [DocumentPage] = [], tags: [Tag] = [],
          createdAt: String, updatedAt: String? = nil, isClosed: Bool = false,
-         declineReason: String? = nil) {
+         declineReason: String? = nil, signingUrl: String? = nil) {
         self.id = id
         self.name = name
         self.status = status
@@ -208,6 +210,7 @@ public final class DocumentListItem: NSObject {
         self.updatedAt = updatedAt
         self.isClosed = isClosed
         self.declineReason = declineReason
+        self.signingUrl = signingUrl
     }
 }
 
@@ -222,6 +225,7 @@ extension DocumentListItem: Decodable {
         case updatedAt = "updated_at"
         case isClosed = "is_closed"
         case declineReason = "decline_reason"
+        case signingUrl = "signing_url"
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -241,7 +245,8 @@ extension DocumentListItem: Decodable {
             createdAt:     try decodeFlexibleString(from: c, forKey: .createdAt),
             updatedAt:     try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
             isClosed:      try c.decodeIfPresent(Bool.self,   forKey: .isClosed) ?? false,
-            declineReason: try c.decodeIfPresent(String.self, forKey: .declineReason)
+            declineReason: try c.decodeIfPresent(String.self, forKey: .declineReason),
+            signingUrl:    try c.decodeIfPresent(String.self, forKey: .signingUrl)
         )
     }
 }
@@ -679,9 +684,13 @@ extension PublicDocumentInfo: Decodable {
 }
 
 /// Payload for `PUT /public/documents/{id}/send-token`.
+///
+/// The documented request body is `{ "email": "..." }`. For the default email
+/// channel the SDK encodes exactly that; when ``channel`` is `.whatsapp` it also
+/// sends a `channel` field so the token is delivered over WhatsApp.
 @objcMembers
 public final class SendTokenPayload: NSObject, Encodable {
-    /// The recipient address (email or phone, depending on ``channel``).
+    /// The recipient address (email address, or phone number for WhatsApp).
     public let recipient: String
     /// The delivery channel.
     public let channel: SendTokenChannel
@@ -691,12 +700,16 @@ public final class SendTokenPayload: NSObject, Encodable {
         self.channel = channel
     }
 
-    enum CodingKeys: String, CodingKey { case recipient, channel }
+    enum CodingKeys: String, CodingKey { case email, channel }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(recipient, forKey: .recipient)
-        try c.encode(channel.stringValue, forKey: .channel)
+        // The documented field is `email`; carry the recipient there.
+        try c.encode(recipient, forKey: .email)
+        // Only signal a non-default channel to keep the email case docs-exact.
+        if channel != .email {
+            try c.encode(channel.stringValue, forKey: .channel)
+        }
     }
 }
 

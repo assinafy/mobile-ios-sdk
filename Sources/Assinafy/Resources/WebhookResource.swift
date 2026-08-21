@@ -62,6 +62,20 @@ public final class WebhookResource: BaseResource {
         try await callVoid("Failed to inactivate webhook", request: request)
     }
 
+    /// Deactivates the webhook subscription and returns its updated configuration.
+    ///
+    /// This additive variant exposes the documented response body while
+    /// ``inactivate(accountId:)`` retains its original `Void` return type for
+    /// source compatibility.
+    ///
+    /// - Parameter accountId: Override the client's default account ID.
+    /// - Returns: The inactivated ``WebhookSubscription``.
+    public func inactivateAndReturn(accountId: String? = nil) async throws -> WebhookSubscription {
+        let id = try self.accountId(accountId)
+        let request = APIRequest.put("/accounts/\(id)/webhooks/inactivate")
+        return try await call("Failed to inactivate webhook", request: request)
+    }
+
     /// Lists all available webhook event types on the platform.
     ///
     /// - Returns: An array of ``WebhookEventTypeInfo`` objects.
@@ -142,6 +156,15 @@ public final class WebhookResource: BaseResource {
         completion: @escaping (Error?) -> Void
     ) {
         withVoidCompletion({ try await self.inactivate(accountId: accountId) }, completion: completion)
+    }
+
+    /// Deactivates the subscription and delivers its updated configuration on the **main queue**.
+    @objc(inactivateWebhookAndReturnWithAccountId:completion:)
+    public func inactivateAndReturn(
+        accountId: String?,
+        completion: @escaping (WebhookSubscription?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.inactivateAndReturn(accountId: accountId) }, completion: completion)
     }
 
     /// Lists dispatch records and delivers them on the **main queue**.

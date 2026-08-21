@@ -89,21 +89,21 @@ public final class TagResource: BaseResource {
         return result.data
     }
 
-    /// Replaces all tags attached to a document.
+    /// Replaces all tags attached to a document by tag ID.
     ///
     /// Mirrors `PUT /accounts/{account_id}/documents/{document_id}/tags`.
     /// Passing an empty array removes all document tags.
     public func replaceDocumentTags(
         documentId: String,
-        tagNames: [String],
+        tagIds: [String],
         accountId: String? = nil
     ) async throws -> [Tag] {
         let id = try self.accountId(accountId)
         let did = try requireId(documentId, name: "Document ID")
-        try validateTagNames(tagNames, allowEmpty: true)
+        try validateTagIds(tagIds, allowEmpty: true)
         let request = try APIRequest.put(
             "/accounts/\(id)/documents/\(did)/tags",
-            body: TagNamesPayload(tags: tagNames)
+            body: TagNamesPayload(tags: tagIds)
         )
         let result: PaginatedResult<Tag> = try await callList(
             "Failed to replace document tags",
@@ -112,26 +112,48 @@ public final class TagResource: BaseResource {
         return result.data
     }
 
-    /// Appends tags to a document without removing existing tags.
-    ///
-    /// Mirrors `POST /accounts/{account_id}/documents/{document_id}/tags`.
-    public func appendDocumentTags(
+    /// Compatibility overload for the former, incorrectly named `tagNames`
+    /// argument. Values have always been tag IDs.
+    @available(*, deprecated, renamed: "replaceDocumentTags(documentId:tagIds:accountId:)")
+    public func replaceDocumentTags(
         documentId: String,
         tagNames: [String],
         accountId: String? = nil
     ) async throws -> [Tag] {
+        try await replaceDocumentTags(documentId: documentId, tagIds: tagNames, accountId: accountId)
+    }
+
+    /// Appends tags to a document by tag ID without removing existing tags.
+    ///
+    /// Mirrors `POST /accounts/{account_id}/documents/{document_id}/tags`.
+    public func appendDocumentTags(
+        documentId: String,
+        tagIds: [String],
+        accountId: String? = nil
+    ) async throws -> [Tag] {
         let id = try self.accountId(accountId)
         let did = try requireId(documentId, name: "Document ID")
-        try validateTagNames(tagNames, allowEmpty: false)
+        try validateTagIds(tagIds, allowEmpty: false)
         let request = try APIRequest.post(
             "/accounts/\(id)/documents/\(did)/tags",
-            body: TagNamesPayload(tags: tagNames)
+            body: TagNamesPayload(tags: tagIds)
         )
         let result: PaginatedResult<Tag> = try await callList(
             "Failed to append document tags",
             request: request
         )
         return result.data
+    }
+
+    /// Compatibility overload for the former, incorrectly named `tagNames`
+    /// argument. Values have always been tag IDs.
+    @available(*, deprecated, renamed: "appendDocumentTags(documentId:tagIds:accountId:)")
+    public func appendDocumentTags(
+        documentId: String,
+        tagNames: [String],
+        accountId: String? = nil
+    ) async throws -> [Tag] {
+        try await appendDocumentTags(documentId: documentId, tagIds: tagNames, accountId: accountId)
     }
 
     /// Detaches one tag from a document without deleting the tag.
@@ -201,12 +223,12 @@ public final class TagResource: BaseResource {
         guard trimmed.count <= 64 else { throw ValidationError("Tag name must be 64 characters or fewer") }
     }
 
-    private func validateTagNames(_ names: [String], allowEmpty: Bool) throws {
-        if names.isEmpty, !allowEmpty {
-            throw ValidationError("At least one tag name is required")
+    private func validateTagIds(_ ids: [String], allowEmpty: Bool) throws {
+        if ids.isEmpty, !allowEmpty {
+            throw ValidationError("At least one tag ID is required")
         }
-        for name in names {
-            try validateTagName(name)
+        for id in ids {
+            _ = try requireId(id, name: "Tag ID")
         }
     }
 }

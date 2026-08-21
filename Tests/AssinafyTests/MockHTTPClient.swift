@@ -1,26 +1,27 @@
 import XCTest
 @testable import Assinafy
 
-final class MockHTTPClient: HTTPClientProtocol {
-    private var responseStub: APIResponse?
-    private var errorStub: Error?
+final class MockHTTPClient: HTTPClientProtocol, @unchecked Sendable {
+    private enum Stub {
+        case response(APIResponse)
+        case error(Error)
+    }
+
+    private var stubs: [Stub] = []
     private(set) var lastRequest: APIRequest?
     private(set) var allRequests: [APIRequest] = []
 
     func stub(response: APIResponse) {
-        self.responseStub = response
-        self.errorStub = nil
+        stubs.append(.response(response))
     }
 
     func stub(error: Error) {
-        self.errorStub = error
-        self.responseStub = nil
+        stubs.append(.error(error))
     }
 
     func stubJSON(_ json: [String: Any], headers: [AnyHashable: Any] = [:]) {
         let data = try! JSONSerialization.data(withJSONObject: json)
-        self.responseStub = APIResponse(data: data, headers: headers, statusCode: 200)
-        self.errorStub = nil
+        stub(response: APIResponse(data: data, headers: headers, statusCode: 200))
     }
 
     func stubEnvelope(_ value: [String: Any], headers: [AnyHashable: Any] = [:]) {
@@ -35,15 +36,15 @@ final class MockHTTPClient: HTTPClientProtocol {
         lastRequest = request
         allRequests.append(request)
 
-        if let error = errorStub {
+        guard !stubs.isEmpty else {
+            throw AssinafySDKError("MockHTTPClient received an unstubbed request: \(request.method.httpValue) \(request.path)")
+        }
+        switch stubs.removeFirst() {
+        case .response(let response):
+            return response
+        case .error(let error):
             throw error
         }
-
-        if let response = responseStub {
-            return response
-        }
-
-        return APIResponse(data: Data(), headers: [:], statusCode: 200)
     }
 
     static func paginationHeaders(currentPage: Int, perPage: Int, total: Int, pageCount: Int) -> [AnyHashable: Any] {

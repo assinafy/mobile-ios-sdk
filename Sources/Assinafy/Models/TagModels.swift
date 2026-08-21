@@ -9,13 +9,17 @@ import Foundation
 /// `color`.
 @objcMembers
 public final class Tag: NSObject {
+    /// Resource discriminator returned by the API when present.
+    public let resource: String?
     public let id: String
     public let name: String
     public let color: String?
     public let createdAt: String?
     public let updatedAt: String?
 
-    init(id: String, name: String, color: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
+    init(resource: String? = nil, id: String, name: String, color: String? = nil,
+         createdAt: String? = nil, updatedAt: String? = nil) {
+        self.resource = resource
         self.id = id
         self.name = name
         self.color = color
@@ -28,7 +32,7 @@ extension Tag: @unchecked Sendable {}
 
 extension Tag: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, color
+        case resource, id, name, color
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -36,6 +40,7 @@ extension Tag: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            resource: try c.decodeIfPresent(String.self, forKey: .resource),
             id: try c.decode(String.self, forKey: .id),
             name: try c.decode(String.self, forKey: .name),
             color: try c.decodeIfPresent(String.self, forKey: .color),
@@ -52,6 +57,7 @@ extension Tag: Decodable {
 public final class TagListParams: NSObject {
     public var search: String?
 
+    /// Creates an optional free-text tag search.
     @objc public init(search: String? = nil) {
         self.search = search
     }
@@ -73,6 +79,7 @@ public final class CreateTagPayload: NSObject, Encodable {
     public let name: String
     public let color: String?
 
+    /// Creates a tag with an optional color value.
     @objc public init(name: String, color: String? = nil) {
         self.name = name
         self.color = color

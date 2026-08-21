@@ -22,7 +22,7 @@ struct MultipartFormData {
     /// Appends a simple text field part.
     mutating func addField(name: String, value: String) {
         body.append("--\(boundary)\r\n".utf8Data)
-        body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8Data)
+        body.append("Content-Disposition: form-data; name=\"\(quoted(name))\"\r\n\r\n".utf8Data)
         body.append(value.utf8Data)
         body.append("\r\n".utf8Data)
     }
@@ -30,8 +30,8 @@ struct MultipartFormData {
     /// Appends a binary file part.
     mutating func addFile(name: String, filename: String, contentType: String, data: Data) {
         body.append("--\(boundary)\r\n".utf8Data)
-        body.append("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".utf8Data)
-        body.append("Content-Type: \(contentType)\r\n\r\n".utf8Data)
+        body.append("Content-Disposition: form-data; name=\"\(quoted(name))\"; filename=\"\(quoted(filename))\"\r\n".utf8Data)
+        body.append("Content-Type: \(safeContentType(contentType))\r\n\r\n".utf8Data)
         body.append(data)
         body.append("\r\n".utf8Data)
     }
@@ -42,6 +42,21 @@ struct MultipartFormData {
         out.append("--\(boundary)--\r\n".utf8Data)
         return out
     }
+}
+
+private func quoted(_ value: String) -> String {
+    value
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+        .replacingOccurrences(of: "\r", with: "")
+        .replacingOccurrences(of: "\n", with: "")
+}
+
+private func safeContentType(_ value: String) -> String {
+    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$&^_.+-/")
+    return value.rangeOfCharacter(from: allowed.inverted) == nil && value.contains("/")
+        ? value
+        : "application/octet-stream"
 }
 
 // MARK: - PDFValidation

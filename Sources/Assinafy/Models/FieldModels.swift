@@ -10,6 +10,8 @@ import Foundation
 /// can also create their own via ``FieldResource/create(_:accountId:)``.
 @objcMembers
 public final class FieldDefinition: NSObject {
+    /// Resource discriminator returned by the API.
+    public let resource: String?
     public let id: String
     /// Field display name.
     public let name: String
@@ -30,9 +32,10 @@ public final class FieldDefinition: NSObject {
     /// `true` when the field is visible to signers.
     public let isVisible: Bool
 
-    init(id: String, name: String, type: String, regex: String? = nil,
+    init(resource: String? = nil, id: String, name: String, type: String, regex: String? = nil,
          isPreDefined: Bool = false, isActive: Bool = true, isRequired: Bool = false,
          isStandard: Bool = false, isReadOnly: Bool = false, isVisible: Bool = true) {
+        self.resource = resource
         self.id = id; self.name = name; self.type = type; self.regex = regex
         self.isPreDefined = isPreDefined; self.isActive = isActive
         self.isRequired = isRequired; self.isStandard = isStandard
@@ -44,7 +47,7 @@ extension FieldDefinition: @unchecked Sendable {}
 
 extension FieldDefinition: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, type, regex
+        case resource, id, name, type, regex
         case isPreDefined = "is_pre_defined"
         case isActive     = "is_active"
         case isRequired   = "is_required"
@@ -56,6 +59,7 @@ extension FieldDefinition: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            resource:     try c.decodeIfPresent(String.self, forKey: .resource),
             id:           try c.decode(String.self, forKey: .id),
             name:         try c.decode(String.self, forKey: .name),
             type:         try c.decode(String.self, forKey: .type),
@@ -79,8 +83,17 @@ public final class CreateFieldPayload: NSObject, Encodable {
     public let name: String
     public let regex: String?
     public let isRequired: Bool
+    /// Sandbox-compatible extension. `true` is omitted (the documented default);
+    /// `false` is sent because the live API accepts and honors it.
     public let isActive: Bool
 
+    /// Creates a custom field definition.
+    /// - Parameters:
+    ///   - type: API field type code.
+    ///   - name: Display name.
+    ///   - regex: Optional validation expression.
+    ///   - isRequired: Whether a value is mandatory.
+    ///   - isActive: Whether the field is active.
     @objc public init(
         type: String,
         name: String,
@@ -104,7 +117,7 @@ public final class CreateFieldPayload: NSObject, Encodable {
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(regex, forKey: .regex)
         try c.encode(isRequired, forKey: .isRequired)
-        try c.encode(isActive, forKey: .isActive)
+        if !isActive { try c.encode(false, forKey: .isActive) }
     }
 }
 
@@ -117,12 +130,17 @@ extension CreateFieldPayload: @unchecked Sendable {}
 /// Provide only the fields you want to change.
 @objcMembers
 public final class UpdateFieldPayload: NSObject, Encodable {
+    /// Sandbox-compatible extension accepted and honored by the live API.
     public let type: String?
     public let name: String?
     public let regex: String?
+    /// Sandbox-compatible extension accepted and honored by the live API.
     public let isRequired: NSNumber?
     public let isActive: NSNumber?
+    /// When `true`, encodes `regex` as explicit JSON `null` instead of omitting it.
+    public let clearsRegex: Bool
 
+    /// Creates a partial field update; `nil` values are omitted.
     @objc public init(
         type: String? = nil,
         name: String? = nil,
@@ -132,6 +150,25 @@ public final class UpdateFieldPayload: NSObject, Encodable {
     ) {
         self.type = type; self.name = name; self.regex = regex
         self.isRequired = isRequired; self.isActive = isActive
+        self.clearsRegex = false
+    }
+
+    /// Creates an update payload that can explicitly clear an existing regex.
+    ///
+    /// When ``clearsRegex`` is `true`, it takes precedence over ``regex`` and
+    /// sends `{ "regex": null }`.
+    @objc(initWithType:name:regex:isRequired:isActive:clearsRegex:)
+    public init(
+        type: String? = nil,
+        name: String? = nil,
+        regex: String? = nil,
+        isRequired: NSNumber? = nil,
+        isActive: NSNumber? = nil,
+        clearsRegex: Bool
+    ) {
+        self.type = type; self.name = name; self.regex = regex
+        self.isRequired = isRequired; self.isActive = isActive
+        self.clearsRegex = clearsRegex
     }
 
     enum CodingKeys: String, CodingKey {
@@ -144,7 +181,11 @@ public final class UpdateFieldPayload: NSObject, Encodable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(type, forKey: .type)
         try c.encodeIfPresent(name, forKey: .name)
-        try c.encodeIfPresent(regex, forKey: .regex)
+        if clearsRegex {
+            try c.encodeNil(forKey: .regex)
+        } else {
+            try c.encodeIfPresent(regex, forKey: .regex)
+        }
         if let r = isRequired { try c.encode(r.boolValue, forKey: .isRequired) }
         if let a = isActive   { try c.encode(a.boolValue, forKey: .isActive)   }
     }
@@ -162,6 +203,7 @@ public final class FieldListParams: NSObject {
     /// Include standard built-in field types (signature, initial, signatureDate).
     public var includeStandard: Bool
 
+    /// Creates field-list inclusion filters.
     @objc public init(includeInactive: Bool = false, includeStandard: Bool = false) {
         self.includeInactive = includeInactive
         self.includeStandard = includeStandard
@@ -223,6 +265,7 @@ public final class FieldValidateMultipleItem: NSObject, Encodable {
     public let fieldId: String
     public let value: String
 
+    /// Creates one field/value pair for batch validation.
     @objc public init(fieldId: String, value: String) {
         self.fieldId = fieldId; self.value = value
     }

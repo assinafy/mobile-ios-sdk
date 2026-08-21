@@ -141,6 +141,8 @@ extension TemplatePage: Decodable {
 /// A template summary item in a paginated list response.
 @objcMembers
 public final class TemplateListItem: NSObject {
+    /// Resource discriminator returned by the API when present.
+    public let resource: String?
     public let id: String
     public let name: String
     /// Default document name applied when instantiating documents from this template.
@@ -155,10 +157,12 @@ public final class TemplateListItem: NSObject {
     public let roles: [TemplateRole]
     public let tags: [Tag]
 
-    init(id: String, name: String, documentName: String? = nil, message: String? = nil,
+    init(resource: String? = nil, id: String, name: String,
+         documentName: String? = nil, message: String? = nil,
          status: String, accountId: String? = nil,
          createdAt: String, updatedAt: String? = nil,
          pages: [TemplatePage] = [], roles: [TemplateRole] = [], tags: [Tag] = []) {
+        self.resource = resource
         self.id = id; self.name = name
         self.documentName = documentName; self.message = message
         self.status = status
@@ -171,7 +175,7 @@ extension TemplateListItem: @unchecked Sendable {}
 
 extension TemplateListItem: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, message, status, pages, roles, tags
+        case resource, id, name, message, status, pages, roles, tags
         case documentName = "document_name"
         case accountId = "account_id"
         case createdAt = "created_at"
@@ -181,6 +185,7 @@ extension TemplateListItem: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            resource:     try c.decodeIfPresent(String.self, forKey: .resource),
             id:           try c.decode(String.self,          forKey: .id),
             name:         try c.decode(String.self,          forKey: .name),
             documentName: try c.decodeIfPresent(String.self, forKey: .documentName),
@@ -201,6 +206,8 @@ extension TemplateListItem: Decodable {
 /// Full template details, including role definitions.
 @objcMembers
 public final class TemplateDetails: NSObject {
+    /// Resource discriminator returned by the API.
+    public let resource: String?
     public let id: String
     public let name: String
     public let status: String
@@ -216,10 +223,11 @@ public final class TemplateDetails: NSObject {
     public let createdAt: String
     public let updatedAt: String?
 
-    init(id: String, name: String, status: String, accountId: String? = nil,
+    init(resource: String? = nil, id: String, name: String, status: String, accountId: String? = nil,
          documentName: String? = nil, message: String? = nil,
          roles: [TemplateRole]? = nil, pages: [TemplatePage] = [], tags: [Tag] = [],
          defaultDocumentTags: [Tag] = [], createdAt: String, updatedAt: String? = nil) {
+        self.resource = resource
         self.id = id; self.name = name; self.status = status
         self.accountId = accountId
         self.documentName = documentName; self.message = message
@@ -235,7 +243,7 @@ extension TemplateDetails: @unchecked Sendable {}
 
 extension TemplateDetails: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, status, roles, message, pages, tags
+        case resource, id, name, status, roles, message, pages, tags
         case accountId = "account_id"
         case documentName = "document_name"
         case defaultDocumentTags = "default_document_tags"
@@ -246,6 +254,7 @@ extension TemplateDetails: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            resource:     try c.decodeIfPresent(String.self,          forKey: .resource),
             id:           try c.decode(String.self,                  forKey: .id),
             name:         try c.decode(String.self,                  forKey: .name),
             status:       try c.decode(String.self,                  forKey: .status),
@@ -273,6 +282,13 @@ public final class TemplateSigner: NSObject, Encodable {
     public let notificationMethods: [String]?
     public let step: NSNumber?
 
+    /// Creates a signer-to-role mapping for template document creation.
+    /// - Parameters:
+    ///   - roleId: Template role ID.
+    ///   - id: Signer ID; required when creating a document.
+    ///   - verificationMethod: Optional verification method.
+    ///   - notificationMethods: Optional notification channels.
+    ///   - step: Optional one-based signing order.
     @objc public init(
         roleId: String,
         id: String? = nil,
@@ -306,6 +322,46 @@ public final class TemplateSigner: NSObject, Encodable {
 
 extension TemplateSigner: @unchecked Sendable {}
 
+extension TemplateSigner {
+    /// Validates the fields required when actually creating a document.
+    func validateForDocumentCreation() throws {
+        try validateRoleId()
+        guard let id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Signer ID is required for template document creation")
+        }
+    }
+
+    /// Builds the narrower signer object accepted by the cost-estimate endpoint.
+    /// Signer IDs and signing steps are intentionally omitted from this payload.
+    func costEstimatePayload() throws -> TemplateSignerCostEstimatePayload {
+        try validateRoleId()
+        return TemplateSignerCostEstimatePayload(
+            roleId: roleId,
+            verificationMethod: verificationMethod,
+            notificationMethods: notificationMethods
+        )
+    }
+
+    private func validateRoleId() throws {
+        guard !roleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Template role ID is required")
+        }
+    }
+}
+
+/// Internal request shape for template cost estimates.
+struct TemplateSignerCostEstimatePayload: Encodable, Sendable {
+    let roleId: String
+    let verificationMethod: String?
+    let notificationMethods: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case roleId = "role_id"
+        case verificationMethod = "verification_method"
+        case notificationMethods = "notification_methods"
+    }
+}
+
 // MARK: - UpdateTemplatePayload
 
 /// Payload for `PUT /accounts/{accountId}/templates/{templateId}`.
@@ -321,6 +377,7 @@ public final class UpdateTemplatePayload: NSObject, Encodable {
     /// Default invitation message sent with documents created from this template.
     public let message: String?
 
+    /// Creates a partial template update; omitted values remain unchanged.
     @objc public init(
         name: String? = nil,
         documentName: String? = nil,
@@ -357,6 +414,7 @@ public final class CreateDocumentFromTemplateOptions: NSObject {
     public var editorFields: [TemplateEditorField]
     public var tags: [String]
 
+    /// Creates options for a document instantiated from a template.
     @objc public init(
         name: String? = nil,
         message: String? = nil,
@@ -377,11 +435,17 @@ extension CreateDocumentFromTemplateOptions: @unchecked Sendable {}
 /// Query parameters for `GET /accounts/{account_id}/templates`.
 @objcMembers
 public final class TemplateListParams: NSObject {
+    /// Live-verified sandbox extension; not present in production OpenAPI.
     public var status: String?
     public var search: String?
+    /// Live-verified sandbox extension; not present in production OpenAPI.
     public var tagIds: [String]
+    /// Legacy server extension retained for compatibility.
     public var sort: String?
+    public var page: Int
+    public var perPage: Int
 
+    /// Creates legacy template-list filters retained for compatibility.
     @objc public init(
         status: String? = nil,
         search: String? = nil,
@@ -392,6 +456,26 @@ public final class TemplateListParams: NSObject {
         self.search = search
         self.tagIds = tagIds
         self.sort = sort
+        self.page = 0
+        self.perPage = 0
+    }
+
+    /// Creates documented template-list parameters plus optional compatibility filters.
+    @objc(initWithStatus:search:tagIds:sort:page:perPage:)
+    public init(
+        status: String? = nil,
+        search: String? = nil,
+        tagIds: [String] = [],
+        sort: String? = nil,
+        page: Int,
+        perPage: Int
+    ) {
+        self.status = status
+        self.search = search
+        self.tagIds = tagIds
+        self.sort = sort
+        self.page = page
+        self.perPage = perPage
     }
 
     func toQueryItems() -> [URLQueryItem] {
@@ -400,6 +484,8 @@ public final class TemplateListParams: NSObject {
         if let search, !search.isEmpty { items.append(.init(name: "search", value: search)) }
         if !tagIds.isEmpty { items.append(.init(name: "tags", value: tagIds.joined(separator: ","))) }
         if let sort, !sort.isEmpty { items.append(.init(name: "sort", value: sort)) }
+        if page > 0 { items.append(.init(name: "page", value: "\(page)")) }
+        if perPage > 0 { items.append(.init(name: "per-page", value: "\(perPage)")) }
         return items
     }
 }
@@ -414,6 +500,7 @@ public final class TemplateEditorField: NSObject, Encodable {
     public let fieldId: String
     public let value: String
 
+    /// Creates one template editor-field value.
     @objc public init(fieldId: String, value: String) {
         self.fieldId = fieldId
         self.value = value

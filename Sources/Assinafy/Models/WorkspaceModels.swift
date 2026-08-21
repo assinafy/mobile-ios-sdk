@@ -28,6 +28,7 @@ public final class CreateWorkspacePayload: NSObject, Encodable {
     /// `"User"` or `"Account"` (see ``NotificationSenderType``). Optional.
     public let notificationSenderType: String?
 
+    /// Creates a workspace request with an optional notification sender type.
     @objc public init(name: String, notificationSenderType: String? = nil) {
         self.name = name
         self.notificationSenderType = notificationSenderType
@@ -52,6 +53,7 @@ public final class UpdateWorkspacePayload: NSObject, Encodable {
     /// `"User"` or `"Account"` (see ``NotificationSenderType``). Optional.
     public let notificationSenderType: String?
 
+    /// Creates a partial workspace update; omitted values remain unchanged.
     @objc public init(name: String? = nil, notificationSenderType: String? = nil) {
         self.name = name
         self.notificationSenderType = notificationSenderType
@@ -70,16 +72,29 @@ extension UpdateWorkspacePayload: @unchecked Sendable {}
 /// A workspace (account) returned by the API.
 @objcMembers
 public final class WorkspaceResponse: NSObject {
+    /// Resource discriminator returned by the API (normally `account`).
+    public let resource: String?
     public let id: String
     public let name: String
     public let primaryColor: String?
     public let secondaryColor: String?
+    /// `User` or `Account`.
+    public let notificationSenderType: String?
+    /// Roles held by the current user in this account.
+    public let roles: [String]
+    /// Whether the API currently permits deletion of this account.
+    public let isDeleteAllowed: Bool
     public let createdAt: String
 
-    init(id: String, name: String, primaryColor: String? = nil,
-         secondaryColor: String? = nil, createdAt: String) {
+    init(resource: String? = nil, id: String, name: String, primaryColor: String? = nil,
+         secondaryColor: String? = nil, notificationSenderType: String? = nil,
+         roles: [String] = [], isDeleteAllowed: Bool = false, createdAt: String) {
+        self.resource = resource
         self.id = id; self.name = name
         self.primaryColor = primaryColor; self.secondaryColor = secondaryColor
+        self.notificationSenderType = notificationSenderType
+        self.roles = roles
+        self.isDeleteAllowed = isDeleteAllowed
         self.createdAt = createdAt
     }
 }
@@ -88,20 +103,26 @@ extension WorkspaceResponse: @unchecked Sendable {}
 
 extension WorkspaceResponse: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name
+        case resource, id, name, roles
         case primaryColor   = "primary_color"
         case secondaryColor = "secondary_color"
+        case notificationSenderType = "notification_sender_type"
+        case isDeleteAllowed = "is_delete_allowed"
         case createdAt      = "created_at"
     }
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            resource:        try c.decodeIfPresent(String.self, forKey: .resource),
             id:             try c.decode(String.self,          forKey: .id),
             name:           try c.decode(String.self,          forKey: .name),
             primaryColor:   try c.decodeIfPresent(String.self, forKey: .primaryColor),
             secondaryColor: try c.decodeIfPresent(String.self, forKey: .secondaryColor),
-            createdAt:      try c.decode(String.self,          forKey: .createdAt)
+            notificationSenderType: try c.decodeIfPresent(String.self, forKey: .notificationSenderType),
+            roles:           (try? c.decode([String].self, forKey: .roles)) ?? [],
+            isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
+            createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt)
         )
     }
 }
@@ -111,14 +132,25 @@ extension WorkspaceResponse: Decodable {
 /// A workspace summary item in a paginated list response.
 @objcMembers
 public final class WorkspaceListItem: NSObject {
+    public let resource: String?
     public let id: String
     public let name: String
+    public let primaryColor: String?
+    public let secondaryColor: String?
+    public let notificationSenderType: String?
     public let isDeleteAllowed: Bool
     public let roles: [String]
     public let createdAt: String
 
-    init(id: String, name: String, isDeleteAllowed: Bool, roles: [String], createdAt: String) {
+    init(resource: String? = nil, id: String, name: String,
+         primaryColor: String? = nil, secondaryColor: String? = nil,
+         notificationSenderType: String? = nil, isDeleteAllowed: Bool,
+         roles: [String], createdAt: String) {
+        self.resource = resource
         self.id = id; self.name = name
+        self.primaryColor = primaryColor
+        self.secondaryColor = secondaryColor
+        self.notificationSenderType = notificationSenderType
         self.isDeleteAllowed = isDeleteAllowed; self.roles = roles
         self.createdAt = createdAt
     }
@@ -128,7 +160,10 @@ extension WorkspaceListItem: @unchecked Sendable {}
 
 extension WorkspaceListItem: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, roles
+        case resource, id, name, roles
+        case primaryColor = "primary_color"
+        case secondaryColor = "secondary_color"
+        case notificationSenderType = "notification_sender_type"
         case isDeleteAllowed = "is_delete_allowed"
         case createdAt       = "created_at"
     }
@@ -136,11 +171,15 @@ extension WorkspaceListItem: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            resource:         try c.decodeIfPresent(String.self, forKey: .resource),
             id:              try c.decode(String.self,   forKey: .id),
             name:            try c.decode(String.self,   forKey: .name),
+            primaryColor:    try c.decodeIfPresent(String.self, forKey: .primaryColor),
+            secondaryColor:  try c.decodeIfPresent(String.self, forKey: .secondaryColor),
+            notificationSenderType: try c.decodeIfPresent(String.self, forKey: .notificationSenderType),
             isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
             roles:           (try? c.decode([String].self, forKey: .roles)) ?? [],
-            createdAt:       try c.decode(String.self,   forKey: .createdAt)
+            createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt)
         )
     }
 }
@@ -203,23 +242,51 @@ public final class DocumentStatsRow: NSObject {
     public let documentsUploaded: Int
     public let documentsSent: Int
     public let signatureRequests: Int
-    public let signatureRequestsEmail: Int
-    public let signatureRequestsWhatsapp: Int
-    public let documentsOpened: Int
-    public let documentsSigned: Int
+    public let signatureRequestsNotificationBypass: Int
+    public let signatureRequestsNotificationEmail: Int
+    public let signatureRequestsNotificationWhatsapp: Int
+    public let signatureRequestsVerificationBypass: Int
+    public let signatureRequestsVerificationEmail: Int
+    public let signatureRequestsVerificationWhatsapp: Int
+    public let signatureRequestsVerificationDigitalCertificate: Int
+    public let signatureRequestsViewed: Int
+    public let signatureRequestsCompleted: Int
     public let documentsCertified: Int
 
+    /// Compatibility alias for ``signatureRequestsNotificationEmail``.
+    @available(*, deprecated, renamed: "signatureRequestsNotificationEmail")
+    public var signatureRequestsEmail: Int { signatureRequestsNotificationEmail }
+    /// Compatibility alias for ``signatureRequestsNotificationWhatsapp``.
+    @available(*, deprecated, renamed: "signatureRequestsNotificationWhatsapp")
+    public var signatureRequestsWhatsapp: Int { signatureRequestsNotificationWhatsapp }
+    /// Compatibility alias for ``signatureRequestsViewed``.
+    @available(*, deprecated, renamed: "signatureRequestsViewed")
+    public var documentsOpened: Int { signatureRequestsViewed }
+    /// Compatibility alias for ``signatureRequestsCompleted``.
+    @available(*, deprecated, renamed: "signatureRequestsCompleted")
+    public var documentsSigned: Int { signatureRequestsCompleted }
+
     init(period: String, documentsUploaded: Int, documentsSent: Int,
-         signatureRequests: Int, signatureRequestsEmail: Int, signatureRequestsWhatsapp: Int,
-         documentsOpened: Int, documentsSigned: Int, documentsCertified: Int) {
+         signatureRequests: Int, signatureRequestsNotificationBypass: Int,
+         signatureRequestsNotificationEmail: Int, signatureRequestsNotificationWhatsapp: Int,
+         signatureRequestsVerificationBypass: Int, signatureRequestsVerificationEmail: Int,
+         signatureRequestsVerificationWhatsapp: Int,
+         signatureRequestsVerificationDigitalCertificate: Int,
+         signatureRequestsViewed: Int, signatureRequestsCompleted: Int,
+         documentsCertified: Int) {
         self.period = period
         self.documentsUploaded = documentsUploaded
         self.documentsSent = documentsSent
         self.signatureRequests = signatureRequests
-        self.signatureRequestsEmail = signatureRequestsEmail
-        self.signatureRequestsWhatsapp = signatureRequestsWhatsapp
-        self.documentsOpened = documentsOpened
-        self.documentsSigned = documentsSigned
+        self.signatureRequestsNotificationBypass = signatureRequestsNotificationBypass
+        self.signatureRequestsNotificationEmail = signatureRequestsNotificationEmail
+        self.signatureRequestsNotificationWhatsapp = signatureRequestsNotificationWhatsapp
+        self.signatureRequestsVerificationBypass = signatureRequestsVerificationBypass
+        self.signatureRequestsVerificationEmail = signatureRequestsVerificationEmail
+        self.signatureRequestsVerificationWhatsapp = signatureRequestsVerificationWhatsapp
+        self.signatureRequestsVerificationDigitalCertificate = signatureRequestsVerificationDigitalCertificate
+        self.signatureRequestsViewed = signatureRequestsViewed
+        self.signatureRequestsCompleted = signatureRequestsCompleted
         self.documentsCertified = documentsCertified
     }
 }
@@ -232,25 +299,48 @@ extension DocumentStatsRow: Decodable {
         case documentsUploaded         = "documents_uploaded"
         case documentsSent             = "documents_sent"
         case signatureRequests         = "signature_requests"
-        case signatureRequestsEmail    = "signature_requests_email"
-        case signatureRequestsWhatsapp = "signature_requests_whatsapp"
-        case documentsOpened           = "documents_opened"
-        case documentsSigned           = "documents_signed"
+        case signatureRequestsNotificationBypass = "signature_requests_notification_bypass"
+        case signatureRequestsNotificationEmail = "signature_requests_notification_email"
+        case signatureRequestsNotificationWhatsapp = "signature_requests_notification_whatsapp"
+        case signatureRequestsVerificationBypass = "signature_requests_verification_bypass"
+        case signatureRequestsVerificationEmail = "signature_requests_verification_email"
+        case signatureRequestsVerificationWhatsapp = "signature_requests_verification_whatsapp"
+        case signatureRequestsVerificationDigitalCertificate = "signature_requests_verification_digital_certificate"
+        case signatureRequestsViewed = "signature_requests_viewed"
+        case signatureRequestsCompleted = "signature_requests_completed"
         case documentsCertified        = "documents_certified"
+        case legacySignatureRequestsEmail = "signature_requests_email"
+        case legacySignatureRequestsWhatsapp = "signature_requests_whatsapp"
+        case legacyDocumentsOpened = "documents_opened"
+        case legacyDocumentsSigned = "documents_signed"
     }
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        func int(_ k: CodingKeys) -> Int { (try? c.decodeIfPresent(Int.self, forKey: k)) ?? 0 }
+        func int(_ key: CodingKeys, legacyKey: CodingKeys? = nil) -> Int {
+            if let value = try? c.decode(Int.self, forKey: key) { return value }
+            if let legacyKey, let value = try? c.decode(Int.self, forKey: legacyKey) { return value }
+            return 0
+        }
         self.init(
             period:                    (try? c.decodeIfPresent(String.self, forKey: .period)) ?? "",
             documentsUploaded:         int(.documentsUploaded),
             documentsSent:             int(.documentsSent),
             signatureRequests:         int(.signatureRequests),
-            signatureRequestsEmail:    int(.signatureRequestsEmail),
-            signatureRequestsWhatsapp: int(.signatureRequestsWhatsapp),
-            documentsOpened:           int(.documentsOpened),
-            documentsSigned:           int(.documentsSigned),
+            signatureRequestsNotificationBypass: int(.signatureRequestsNotificationBypass),
+            signatureRequestsNotificationEmail: int(.signatureRequestsNotificationEmail,
+                                                     legacyKey: .legacySignatureRequestsEmail),
+            signatureRequestsNotificationWhatsapp: int(.signatureRequestsNotificationWhatsapp,
+                                                        legacyKey: .legacySignatureRequestsWhatsapp),
+            signatureRequestsVerificationBypass: int(.signatureRequestsVerificationBypass),
+            signatureRequestsVerificationEmail: int(.signatureRequestsVerificationEmail),
+            signatureRequestsVerificationWhatsapp: int(.signatureRequestsVerificationWhatsapp),
+            signatureRequestsVerificationDigitalCertificate:
+                int(.signatureRequestsVerificationDigitalCertificate),
+            signatureRequestsViewed: int(.signatureRequestsViewed,
+                                         legacyKey: .legacyDocumentsOpened),
+            signatureRequestsCompleted: int(.signatureRequestsCompleted,
+                                            legacyKey: .legacyDocumentsSigned),
             documentsCertified:        int(.documentsCertified)
         )
     }
@@ -266,6 +356,7 @@ public final class AccountStatsParams: NSObject {
     /// `YYYY-MM` — required when ``granularity`` is `"daily"`.
     public var month: String?
 
+    /// Creates account-statistics aggregation parameters.
     @objc public init(granularity: String? = nil, month: String? = nil) {
         self.granularity = granularity
         self.month = month

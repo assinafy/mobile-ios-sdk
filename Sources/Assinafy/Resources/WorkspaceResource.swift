@@ -26,13 +26,14 @@ public final class WorkspaceResource: BaseResource {
 
     /// Lists all workspaces accessible to the authenticated user.
     ///
-    /// - Parameter params: Pagination and search parameters.
+    /// The current API accepts no query parameters. `params` remains in the
+    /// signature for source compatibility and is not sent.
+    ///
+    /// - Parameter params: Retained for source compatibility.
     /// - Returns: A ``PaginatedResult`` of ``WorkspaceListItem`` objects.
     public func list(params: ListParams = ListParams()) async throws -> PaginatedResult<WorkspaceListItem> {
-        let items = params.toQueryItems()
-        return try await callList("Failed to list workspaces",
-                                  request: .get("/accounts",
-                                                queryItems: items.isEmpty ? nil : items))
+        _ = params
+        return try await callList("Failed to list workspaces", request: .get("/accounts"))
     }
 
     /// Fetches a workspace by its ID.

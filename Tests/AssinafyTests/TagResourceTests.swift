@@ -13,6 +13,7 @@ final class TagResourceTests: XCTestCase {
 
     private func tagDict(id: String = "tag1", name: String = "Contracts", color: Any? = "ff8800") -> [String: Any] {
         [
+            "resource": "tag",
             "id": id,
             "name": name,
             "color": color ?? NSNull(),
@@ -23,7 +24,8 @@ final class TagResourceTests: XCTestCase {
 
     func testListUsesTagsEndpointAndSearchFilter() async throws {
         mock.stubEnvelopeList([tagDict()])
-        _ = try await resource.list(params: TagListParams(search: "contract"))
+        let result = try await resource.list(params: TagListParams(search: "contract"))
+        XCTAssertEqual(result.data.first?.resource, "tag")
         XCTAssertEqual(mock.lastRequest?.method, .get)
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/tags")
         XCTAssertEqual(mock.lastRequest?.queryItems?.first, URLQueryItem(name: "search", value: "contract"))
@@ -73,7 +75,7 @@ final class TagResourceTests: XCTestCase {
 
     func testReplaceDocumentTagsAllowsEmptyArray() async throws {
         mock.stubEnvelopeList([])
-        _ = try await resource.replaceDocumentTags(documentId: "doc1", tagNames: [])
+        _ = try await resource.replaceDocumentTags(documentId: "doc1", tagIds: [])
         XCTAssertEqual(mock.lastRequest?.method, .put)
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/documents/doc1/tags")
         guard let body = mock.lastRequest?.body,
@@ -86,15 +88,18 @@ final class TagResourceTests: XCTestCase {
 
     func testAppendDocumentTagsRequiresAtLeastOneName() async {
         await assertThrowsValidationError {
-            _ = try await self.resource.appendDocumentTags(documentId: "doc1", tagNames: [])
+            _ = try await self.resource.appendDocumentTags(documentId: "doc1", tagIds: [])
         }
     }
 
-    func testAppendDocumentTagsPostsNames() async throws {
+    func testAppendDocumentTagsPostsIDs() async throws {
         mock.stubEnvelopeList([tagDict()])
-        _ = try await resource.appendDocumentTags(documentId: "doc1", tagNames: ["Contracts"])
+        _ = try await resource.appendDocumentTags(documentId: "doc1", tagIds: ["tag1"])
         XCTAssertEqual(mock.lastRequest?.method, .post)
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/documents/doc1/tags")
+        let body = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["tags"] as? [String], ["tag1"])
     }
 
     func testDetachDocumentTagUsesDeleteEndpoint() async throws {

@@ -34,6 +34,20 @@ final class AuthResourceTests: XCTestCase {
         ]
     }
 
+    private func notificationPreferencesDict() -> [String: Any] {
+        [
+            "DocumentCompleted": true,
+            "SignerDeclined": false,
+            "DocumentCancelled": true,
+            "DocumentAboutToExpire": false,
+            "DocumentExpired": true,
+            "DocumentExpirationReset": false,
+            "DocumentProcessingFailed": true,
+            "TemplateProcessingFailed": false,
+            "SignerWhatsappFailed": true,
+        ]
+    }
+
     func testLoginUsesDocumentedEndpoint() async throws {
         mock.stubEnvelope(loginResponseDict())
 
@@ -53,6 +67,88 @@ final class AuthResourceTests: XCTestCase {
 
         XCTAssertEqual(mock.lastRequest?.path, "/authentication/social-login")
         XCTAssertEqual(mock.lastRequest?.method, .post)
+    }
+
+    func testCurrentUserDecodesDocumentedDirectUser() async throws {
+        mock.stubEnvelope([
+            "id": "user-1",
+            "name": "Test User",
+            "email": "test@example.com",
+            "created_at": "2026-01-01T00:00:00Z",
+        ])
+
+        let result = try await resource.currentUser()
+
+        XCTAssertEqual(result.user.id, "user-1")
+        XCTAssertTrue(result.accounts.isEmpty)
+        XCTAssertEqual(mock.lastRequest?.path, "/users/self")
+    }
+
+    func testCurrentUserStillDecodesLegacyWrapper() async throws {
+        mock.stubEnvelope([
+            "user": [
+                "id": "user-1",
+                "name": "Test User",
+                "email": "test@example.com",
+                "created_at": "2026-01-01T00:00:00Z",
+            ],
+            "accounts": [[
+                "id": "account-1",
+                "name": "Test Account",
+                "created_at": "2026-01-01T00:00:00Z",
+            ]],
+        ])
+
+        let result = try await resource.currentUser()
+
+        XCTAssertEqual(result.user.id, "user-1")
+        XCTAssertEqual(result.accounts.first?.id, "account-1")
+    }
+
+    func testGetNotificationPreferencesDecodesAllDocumentedFields() async throws {
+        mock.stubEnvelope(notificationPreferencesDict())
+
+        let result = try await resource.getNotificationPreferences()
+
+        XCTAssertTrue(result.documentCompleted)
+        XCTAssertFalse(result.signerDeclined)
+        XCTAssertTrue(result.documentCancelled)
+        XCTAssertFalse(result.documentAboutToExpire)
+        XCTAssertTrue(result.documentExpired)
+        XCTAssertFalse(result.documentExpirationReset)
+        XCTAssertTrue(result.documentProcessingFailed)
+        XCTAssertFalse(result.templateProcessingFailed)
+        XCTAssertTrue(result.signerWhatsappFailed)
+        XCTAssertEqual(mock.lastRequest?.method, .get)
+        XCTAssertEqual(mock.lastRequest?.path, "/users/self/notification-preferences")
+    }
+
+    func testUpdateNotificationPreferencesSendsOnlySelectedFields() async throws {
+        mock.stubEnvelope(notificationPreferencesDict())
+
+        _ = try await resource.updateNotificationPreferences(
+            UpdateNotificationPreferencesPayload(
+                documentCompleted: false,
+                signerWhatsappFailed: true
+            )
+        )
+
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body.count, 2)
+        XCTAssertEqual(body["DocumentCompleted"] as? Bool, false)
+        XCTAssertEqual(body["SignerWhatsappFailed"] as? Bool, true)
+        XCTAssertEqual(mock.lastRequest?.method, .put)
+        XCTAssertEqual(mock.lastRequest?.path, "/users/self/notification-preferences")
+    }
+
+    func testUpdateNotificationPreferencesRejectsEmptyPayload() async {
+        await assertThrowsValidationError {
+            _ = try await self.resource.updateNotificationPreferences(
+                UpdateNotificationPreferencesPayload()
+            )
+        }
+        XCTAssertNil(mock.lastRequest)
     }
 
     func testChangePasswordUsesPut() async throws {

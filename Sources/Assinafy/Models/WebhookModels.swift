@@ -147,12 +147,20 @@ extension WebhookEventTypeInfo: Decodable {
 /// A single webhook delivery attempt record.
 @objcMembers
 public final class WebhookDispatch: NSObject {
+    /// Resource discriminator returned for a single dispatch history entry.
+    public let resource: String?
     public let id: String
     public let event: String
     public let activityId: Int
     public let endpoint: String?
+    /// JSON object delivered to the webhook endpoint, or `nil` when unavailable.
+    public let payload: [String: Any]?
     public let delivered: Bool
-    public let httpStatus: Int
+    /// HTTP status returned by the endpoint, or `nil` when the connection failed.
+    public let httpStatusCode: NSNumber?
+    /// Compatibility view of ``httpStatusCode``; connection failures map to `0`.
+    @available(*, deprecated, message: "Use httpStatusCode to distinguish a missing status from HTTP 0.")
+    public var httpStatus: Int { httpStatusCode?.intValue ?? 0 }
     public let responseBody: String?
     public let deliveryError: String?
     /// ISO-8601 timestamp of the first delivery attempt (e.g. `2026-07-20T19:03:13Z`).
@@ -160,11 +168,14 @@ public final class WebhookDispatch: NSObject {
     /// ISO-8601 timestamp of the most recent delivery attempt.
     public let updatedAt: String?
 
-    init(id: String, event: String, activityId: Int, endpoint: String? = nil,
-         delivered: Bool, httpStatus: Int = 0, responseBody: String? = nil,
+    init(resource: String? = nil, id: String, event: String, activityId: Int,
+         endpoint: String? = nil, payload: [String: Any]? = nil,
+         delivered: Bool, httpStatusCode: NSNumber? = nil, responseBody: String? = nil,
          deliveryError: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
+        self.resource = resource
         self.id = id; self.event = event; self.activityId = activityId
-        self.endpoint = endpoint; self.delivered = delivered; self.httpStatus = httpStatus
+        self.endpoint = endpoint; self.payload = payload; self.delivered = delivered
+        self.httpStatusCode = httpStatusCode
         self.responseBody = responseBody; self.deliveryError = deliveryError
         self.createdAt = createdAt; self.updatedAt = updatedAt
     }
@@ -174,7 +185,7 @@ extension WebhookDispatch: @unchecked Sendable {}
 
 extension WebhookDispatch: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, event, endpoint, delivered
+        case resource, id, event, endpoint, payload, delivered
         case activityId  = "activity_id"
         case httpStatus  = "http_status"
         case responseBody = "response_body"
@@ -186,17 +197,32 @@ extension WebhookDispatch: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            resource:     try c.decodeIfPresent(String.self,   forKey: .resource),
             id:           try c.decode(String.self,           forKey: .id),
             event:        try c.decode(String.self,           forKey: .event),
             activityId:   try c.decode(Int.self,              forKey: .activityId),
             endpoint:     try c.decodeIfPresent(String.self,  forKey: .endpoint),
+            payload:      try Self.decodePayload(from: c),
             delivered:    try c.decode(Bool.self,             forKey: .delivered),
-            httpStatus:   try c.decodeIfPresent(Int.self,     forKey: .httpStatus) ?? 0,
+            httpStatusCode: try c.decodeIfPresent(Int.self, forKey: .httpStatus).map {
+                NSNumber(value: $0)
+            },
             responseBody: try c.decodeIfPresent(String.self,  forKey: .responseBody),
             deliveryError:try c.decodeIfPresent(String.self,  forKey: .deliveryError),
-            createdAt:    try c.decodeIfPresent(String.self,  forKey: .createdAt),
-            updatedAt:    try c.decodeIfPresent(String.self,  forKey: .updatedAt)
+            createdAt:    try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
+            updatedAt:    try decodeFlexibleOptionalString(from: c, forKey: .updatedAt)
         )
+    }
+
+    private static func decodePayload(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) throws -> [String: Any]? {
+        guard let fragment = try container.decodeIfPresent(JSONFragment.self, forKey: .payload),
+              case .object = fragment.storage else {
+            return nil
+        }
+        let data = try JSONEncoder.assinafy.encode(fragment)
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 }
 
@@ -214,6 +240,16 @@ public final class WebhookDispatchListParams: NSObject {
     public var to: Int
     public var hasTimeFilter: Bool
 
+    /// Creates webhook-dispatch pagination and optional filters.
+    /// - Parameters:
+    ///   - page: One-based page number.
+    ///   - perPage: Maximum dispatches per page.
+    ///   - event: Optional webhook event name.
+    ///   - delivered: Delivery state used when `hasDeliveredFilter` is `true`.
+    ///   - hasDeliveredFilter: Whether to include the delivery-state filter.
+    ///   - from: Inclusive Unix-time lower bound.
+    ///   - to: Inclusive Unix-time upper bound.
+    ///   - hasTimeFilter: Whether to include supplied time bounds.
     @objc public init(
         page: Int = 0,
         perPage: Int = 0,

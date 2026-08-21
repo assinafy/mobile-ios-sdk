@@ -13,34 +13,48 @@ open class BaseResource: NSObject {
     let http: HTTPClientProtocol
     let defaultAccountId: String?
     let logger: Logger
+    let usesSandboxCompatibility: Bool
 
-    init(http: HTTPClientProtocol, defaultAccountId: String? = nil, logger: Logger = NoopLogger()) {
+    init(
+        http: HTTPClientProtocol,
+        defaultAccountId: String? = nil,
+        logger: Logger = NoopLogger(),
+        usesSandboxCompatibility: Bool = false
+    ) {
         self.http = http
         self.defaultAccountId = defaultAccountId
         self.logger = logger
+        self.usesSandboxCompatibility = usesSandboxCompatibility
     }
 
     /// Resolves the effective account ID, throwing ``ValidationError`` when none is available.
     func accountId(_ explicit: String? = nil) throws -> String {
-        guard let id = explicit ?? defaultAccountId, !id.isEmpty else {
+        guard let id = explicit ?? defaultAccountId else {
             throw ValidationError(
                 "Account ID is required. Provide it as a parameter or set a default in the client."
             )
         }
-        return id
+        return try requireId(id, name: "Account ID")
     }
 
     /// Guards a required path parameter, throwing ``ValidationError`` when blank.
     func requireId(_ value: String?, name: String) throws -> String {
-        guard let value, !value.isEmpty else {
+        guard let value else {
             throw ValidationError("\(name) is required")
         }
-        return value
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains("/"),
+              !trimmed.contains("?"),
+              !trimmed.contains("#") else {
+            throw ValidationError("\(name) is invalid")
+        }
+        return trimmed
     }
 
     // MARK: HTTP helpers
 
-    func call<T: Decodable>(_ label: String, request: APIRequest) async throws -> T {
+    func call<T: Decodable & Sendable>(_ label: String, request: APIRequest) async throws -> T {
         do {
             let response = try await http.perform(request)
             return try unwrapEnvelope(response.data, label: label)
@@ -53,7 +67,8 @@ open class BaseResource: NSObject {
 
     func callVoid(_ label: String, request: APIRequest) async throws {
         do {
-            _ = try await http.perform(request)
+            let response = try await http.perform(request)
+            try validateVoidEnvelope(response.data)
         } catch let error as AssinafyErrorProtocol {
             throw error
         } catch {
@@ -72,7 +87,7 @@ open class BaseResource: NSObject {
         }
     }
 
-    func callList<T: Decodable>(_ label: String, request: APIRequest) async throws -> PaginatedResult<T> {
+    func callList<T: Decodable & Sendable>(_ label: String, request: APIRequest) async throws -> PaginatedResult<T> {
         do {
             let response = try await http.perform(request)
             let data: [T] = try unwrapListEnvelope(response.data, label: label)
@@ -88,9 +103,7 @@ open class BaseResource: NSObject {
     func callCostEstimate(_ label: String, request: APIRequest) async throws -> CostEstimate {
         do {
             let response = try await http.perform(request)
-            let raw = (try? JSONSerialization.jsonObject(with: response.data)) as? [String: Any]
-            let data = (raw?["data"] as? [String: Any]) ?? raw ?? [:]
-            return CostEstimate.from(data)
+            return try unwrapEnvelope(response.data, label: label)
         } catch let error as AssinafyErrorProtocol {
             throw error
         } catch {
@@ -106,12 +119,21 @@ open class BaseResource: NSObject {
         _ block: @escaping () async throws -> T,
         completion: @escaping (T?, Error?) -> Void
     ) {
-        Task {
+        let work = UncheckedSendable(block)
+        let callback = UncheckedSendable(completion)
+        Task { [work, callback] in
+            let result: Result<T, Error>
             do {
-                let value = try await block()
-                DispatchQueue.main.async { completion(value, nil) }
+                result = .success(try await work.value())
             } catch {
-                DispatchQueue.main.async { completion(nil, error) }
+                result = .failure(error)
+            }
+            let delivery = UncheckedSendable(result)
+            DispatchQueue.main.async { [callback, delivery] in
+                switch delivery.value {
+                case .success(let value): callback.value(value, nil)
+                case .failure(let error): callback.value(nil, error)
+                }
             }
         }
     }
@@ -120,12 +142,19 @@ open class BaseResource: NSObject {
         _ block: @escaping () async throws -> Void,
         completion: @escaping (Error?) -> Void
     ) {
-        Task {
+        let work = UncheckedSendable(block)
+        let callback = UncheckedSendable(completion)
+        Task { [work, callback] in
+            let error: Error?
             do {
-                try await block()
-                DispatchQueue.main.async { completion(nil) }
-            } catch {
-                DispatchQueue.main.async { completion(error) }
+                try await work.value()
+                error = nil
+            } catch let caught {
+                error = caught
+            }
+            let delivery = UncheckedSendable(error)
+            DispatchQueue.main.async { [callback, delivery] in
+                callback.value(delivery.value)
             }
         }
     }
@@ -145,12 +174,21 @@ open class BaseResource: NSObject {
         _ block: @escaping () async throws -> T?,
         completion: @escaping (T?, Error?) -> Void
     ) {
-        Task {
+        let work = UncheckedSendable(block)
+        let callback = UncheckedSendable(completion)
+        Task { [work, callback] in
+            let result: Result<T?, Error>
             do {
-                let value = try await block()
-                DispatchQueue.main.async { completion(value, nil) }
+                result = .success(try await work.value())
             } catch {
-                DispatchQueue.main.async { completion(nil, error) }
+                result = .failure(error)
+            }
+            let delivery = UncheckedSendable(result)
+            DispatchQueue.main.async { [callback, delivery] in
+                switch delivery.value {
+                case .success(let value): callback.value(value, nil)
+                case .failure(let error): callback.value(nil, error)
+                }
             }
         }
     }
@@ -173,11 +211,39 @@ open class BaseResource: NSObject {
     }
 
     private func unwrapListEnvelope<T: Decodable>(_ data: Data, label: String) throws -> [T] {
-        if let envelope = try? JSONDecoder.assinafy.decode(AssinafyEnvelope<[T]>.self, from: data) {
-            if let status = envelope.status, status >= 200, status < 300 { return envelope.data ?? [] }
-            if let arr = envelope.data { return arr }
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["data"] != nil || object["status"] != nil || object["message"] != nil {
+            let envelope = try JSONDecoder.assinafy.decode(AssinafyEnvelope<[T]>.self, from: data)
+            if let status = envelope.status, !(200..<300).contains(status) {
+                throw APIError.from(statusCode: status, responseData: object)
+            }
+            guard let values = envelope.data else {
+                throw ValidationError("\(label): response envelope contained no data")
+            }
+            return values
         }
-        return (try? JSONDecoder.assinafy.decode([T].self, from: data)) ?? []
+        return try JSONDecoder.assinafy.decode([T].self, from: data)
+    }
+
+    private func validateVoidEnvelope(_ data: Data) throws {
+        guard !data.isEmpty,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let status = object["status"] as? Int,
+              !(200..<300).contains(status) else {
+            return
+        }
+        throw APIError.from(statusCode: status, responseData: object)
+    }
+}
+
+/// Explicitly carries callback-style values across Swift concurrency boundaries.
+/// Objective-C completion handlers cannot express `Sendable`, so the bridge
+/// confines their use to a `Task` and delivery on the main queue.
+private struct UncheckedSendable<Value>: @unchecked Sendable {
+    let value: Value
+
+    init(_ value: Value) {
+        self.value = value
     }
 }
 

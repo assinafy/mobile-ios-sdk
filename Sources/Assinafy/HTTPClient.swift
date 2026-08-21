@@ -3,7 +3,7 @@ import Foundation
 // MARK: - HTTPMethod
 
 /// HTTP verbs used internally by the SDK.
-@objc public enum HTTPMethod: Int {
+@objc public enum HTTPMethod: Int, Sendable {
     case get, post, put, patch, delete
 
     var httpValue: String {
@@ -23,14 +23,21 @@ import Foundation
 ///
 /// Construct instances using the static factory methods
 /// (`get(_:)`, `post(_:body:)`, `put(_:body:)`, `patch(_:body:)`, `delete(_:)`).
-public struct APIRequest {
-    let method: HTTPMethod
-    let path: String
-    let queryItems: [URLQueryItem]?
-    let body: Data?
-    let contentType: String
+public struct APIRequest: Sendable {
+    public let method: HTTPMethod
+    public let path: String
+    public let queryItems: [URLQueryItem]?
+    public let body: Data?
+    public let contentType: String
 
-    init(
+    /// Creates an HTTP request.
+    /// - Parameters:
+    ///   - method: HTTP verb.
+    ///   - path: API-relative path.
+    ///   - queryItems: Optional URL query parameters.
+    ///   - body: Optional encoded request body.
+    ///   - contentType: Request body media type.
+    public init(
         method: HTTPMethod,
         path: String,
         queryItems: [URLQueryItem]? = nil,
@@ -44,48 +51,63 @@ public struct APIRequest {
         self.contentType = contentType
     }
 
-    static func get(_ path: String, queryItems: [URLQueryItem]? = nil) -> APIRequest {
+    /// Creates a GET request for `path` with optional query parameters.
+    public static func get(_ path: String, queryItems: [URLQueryItem]? = nil) -> APIRequest {
         APIRequest(method: .get, path: path, queryItems: queryItems)
     }
 
-    static func delete(_ path: String, queryItems: [URLQueryItem]? = nil) -> APIRequest {
+    /// Creates a DELETE request for `path` with optional query parameters.
+    public static func delete(_ path: String, queryItems: [URLQueryItem]? = nil) -> APIRequest {
         APIRequest(method: .delete, path: path, queryItems: queryItems)
     }
 
-    static func delete<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
+    /// Creates a DELETE request with a JSON-encoded body.
+    /// - Throws: An encoding error when `body` cannot be encoded.
+    public static func delete<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
         let data = try JSONEncoder.assinafy.encode(body)
         return APIRequest(method: .delete, path: path, body: data)
     }
 
-    static func post<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
+    /// Creates a POST request with a JSON-encoded body.
+    /// - Throws: An encoding error when `body` cannot be encoded.
+    public static func post<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
         let data = try JSONEncoder.assinafy.encode(body)
         return APIRequest(method: .post, path: path, body: data)
     }
 
-    static func post(_ path: String) -> APIRequest {
+    /// Creates a POST request without a body.
+    public static func post(_ path: String) -> APIRequest {
         APIRequest(method: .post, path: path)
     }
 
-    static func put<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
+    /// Creates a PUT request with a JSON-encoded body.
+    /// - Throws: An encoding error when `body` cannot be encoded.
+    public static func put<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
         let data = try JSONEncoder.assinafy.encode(body)
         return APIRequest(method: .put, path: path, body: data)
     }
 
-    static func put(_ path: String) -> APIRequest {
+    /// Creates a PUT request without a body.
+    public static func put(_ path: String) -> APIRequest {
         APIRequest(method: .put, path: path)
     }
 
-    static func put<B: Encodable>(_ path: String, body: B, queryItems: [URLQueryItem]) throws -> APIRequest {
+    /// Creates a PUT request with a JSON body and query parameters.
+    /// - Throws: An encoding error when `body` cannot be encoded.
+    public static func put<B: Encodable>(_ path: String, body: B, queryItems: [URLQueryItem]) throws -> APIRequest {
         let data = try JSONEncoder.assinafy.encode(body)
         return APIRequest(method: .put, path: path, queryItems: queryItems, body: data)
     }
 
-    static func patch<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
+    /// Creates a PATCH request with a JSON-encoded body.
+    /// - Throws: An encoding error when `body` cannot be encoded.
+    public static func patch<B: Encodable>(_ path: String, body: B) throws -> APIRequest {
         let data = try JSONEncoder.assinafy.encode(body)
         return APIRequest(method: .patch, path: path, body: data)
     }
 
-    static func patch(_ path: String) -> APIRequest {
+    /// Creates a PATCH request without a body.
+    public static func patch(_ path: String) -> APIRequest {
         APIRequest(method: .patch, path: path)
     }
 }
@@ -93,13 +115,20 @@ public struct APIRequest {
 // MARK: - APIResponse
 
 /// Carries the raw body, headers, and status code of a successful HTTP response.
-public struct APIResponse {
+public struct APIResponse: @unchecked Sendable {
     /// Raw response body.
     public let data: Data
     /// All response headers, keyed by `AnyHashable`.
     public let headers: [AnyHashable: Any]
     /// HTTP status code (2xx when returned from the client).
     public let statusCode: Int
+
+    /// Creates a transport response. Primarily useful for custom transports and tests.
+    public init(data: Data, headers: [AnyHashable: Any] = [:], statusCode: Int) {
+        self.data = data
+        self.headers = headers
+        self.statusCode = statusCode
+    }
 }
 
 // MARK: - HTTPClientProtocol
@@ -118,21 +147,30 @@ public protocol HTTPClientProtocol: AnyObject {
 /// Production HTTP client backed by `URLSession`.
 ///
 /// Instantiated internally by ``AssinafyClient`` and not intended for direct use.
-public final class URLSessionHTTPClient: HTTPClientProtocol {
+public final class URLSessionHTTPClient: HTTPClientProtocol, @unchecked Sendable {
     private let session: URLSession
     private let baseURL: URL
     private let defaultHeaders: [String: String]
 
-    init(baseURL: URL, defaultHeaders: [String: String], timeout: TimeInterval = 30) {
-        self.baseURL = baseURL
-        self.defaultHeaders = defaultHeaders
+    /// Creates a URL-session transport.
+    /// - Parameters:
+    ///   - baseURL: Base URL against which request paths are resolved.
+    ///   - defaultHeaders: Headers included with every request.
+    ///   - timeout: Per-request timeout in seconds.
+    public convenience init(baseURL: URL, defaultHeaders: [String: String] = [:], timeout: TimeInterval = 30) {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        self.session = URLSession(configuration: config)
+        self.init(baseURL: baseURL, defaultHeaders: defaultHeaders, session: URLSession(configuration: config))
+    }
+
+    init(baseURL: URL, defaultHeaders: [String: String], session: URLSession) {
+        self.baseURL = baseURL
+        self.defaultHeaders = defaultHeaders
+        self.session = session
     }
 
     public func perform(_ request: APIRequest) async throws -> APIResponse {
@@ -151,7 +189,14 @@ public final class URLSessionHTTPClient: HTTPClientProtocol {
             throw NetworkError("Invalid response from server")
         }
         if httpResponse.statusCode < 200 || httpResponse.statusCode >= 300 {
-            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let parsed: Any?
+            if data.isEmpty {
+                parsed = nil
+            } else if let json = try? JSONSerialization.jsonObject(with: data) {
+                parsed = json
+            } else {
+                parsed = String(data: data, encoding: .utf8)
+            }
             throw APIError.from(statusCode: httpResponse.statusCode, responseData: parsed)
         }
         return APIResponse(
@@ -161,7 +206,7 @@ public final class URLSessionHTTPClient: HTTPClientProtocol {
         )
     }
 
-    private func buildURLRequest(from request: APIRequest) throws -> URLRequest {
+    func buildURLRequest(from request: APIRequest) throws -> URLRequest {
         let base = baseURL.absoluteString.hasSuffix("/")
             ? baseURL
             : URL(string: baseURL.absoluteString + "/")!

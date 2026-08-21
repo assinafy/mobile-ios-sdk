@@ -18,6 +18,7 @@ public extension AssignmentMethod {
         }
     }
 
+    /// Creates a signing method from its API string, defaulting unknown values to ``virtual``.
     init(string: String) {
         self = string == "collect" ? .collect : .virtual
     }
@@ -58,6 +59,59 @@ extension AssignmentSummary: Decodable {
     }
 }
 
+// MARK: - DisplaySettings
+
+/// Placement and presentation settings for a collect-assignment field.
+///
+/// Geometry is measured in Assinafy's 150-DPI page-image pixels from the
+/// upper-left corner. Width, height, and font size must be greater than zero.
+@objcMembers
+public final class DisplaySettings: NSObject, Codable {
+    /// Horizontal distance from the page's left edge.
+    public let left: Double
+    /// Vertical distance from the page's top edge.
+    public let top: Double
+    /// Placement rectangle width.
+    public let width: Double
+    /// Placement rectangle height.
+    public let height: Double
+    /// Optional CSS font-family metadata.
+    public let fontFamily: String?
+    /// Font size in page-image pixels.
+    public let fontSize: Double
+    /// Optional CSS-compatible background color.
+    public let backgroundColor: String?
+
+    /// Creates field placement geometry and presentation metadata.
+    /// - Parameters:
+    ///   - left: Horizontal offset in page-image pixels.
+    ///   - top: Vertical offset in page-image pixels.
+    ///   - width: Rectangle width in page-image pixels.
+    ///   - height: Rectangle height in page-image pixels.
+    ///   - fontFamily: Optional CSS font family.
+    ///   - fontSize: Font size in page-image pixels.
+    ///   - backgroundColor: Optional CSS-compatible background color.
+    public init(
+        left: Double,
+        top: Double,
+        width: Double,
+        height: Double,
+        fontFamily: String? = nil,
+        fontSize: Double,
+        backgroundColor: String? = nil
+    ) {
+        self.left = left
+        self.top = top
+        self.width = width
+        self.height = height
+        self.fontFamily = fontFamily
+        self.fontSize = fontSize
+        self.backgroundColor = backgroundColor
+    }
+}
+
+extension DisplaySettings: @unchecked Sendable {}
+
 // MARK: - AssignmentItem
 
 /// One field item that a signer must complete in a collect assignment.
@@ -67,18 +121,25 @@ public final class AssignmentItem: NSObject {
     public let page: DocumentPage?
     public let signer: Signer?
     public let field: FieldDefinition?
-    public let displaySettings: String?
+    /// Typed placement settings returned for collect-assignment items.
+    public let displaySettingsObject: DisplaySettings?
+    private let legacyDisplaySettings: String?
+    /// JSON compatibility view of ``displaySettingsObject``.
+    @available(*, deprecated, renamed: "displaySettingsObject")
+    public var displaySettings: String? { legacyDisplaySettings }
     public let value: String?
     public let completed: Bool
 
     init(id: String, page: DocumentPage? = nil, signer: Signer? = nil,
-         field: FieldDefinition? = nil, displaySettings: String? = nil,
+         field: FieldDefinition? = nil, displaySettingsObject: DisplaySettings? = nil,
+         displaySettings: String? = nil,
          value: String? = nil, completed: Bool = false) {
         self.id = id
         self.page = page
         self.signer = signer
         self.field = field
-        self.displaySettings = displaySettings
+        self.displaySettingsObject = displaySettingsObject
+        self.legacyDisplaySettings = displaySettings
         self.value = value
         self.completed = completed
     }
@@ -94,11 +155,13 @@ extension AssignmentItem: Decodable {
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let displaySettingsObject = try? c.decode(DisplaySettings.self, forKey: .displaySettings)
         self.init(
             id: try c.decode(String.self, forKey: .id),
             page: try c.decodeIfPresent(DocumentPage.self, forKey: .page),
             signer: try c.decodeIfPresent(Signer.self, forKey: .signer),
             field: try c.decodeIfPresent(FieldDefinition.self, forKey: .field),
+            displaySettingsObject: displaySettingsObject,
             displaySettings: try decodeFlexibleOptionalString(from: c, forKey: .displaySettings),
             value: try decodeFlexibleOptionalString(from: c, forKey: .value),
             completed: try c.decodeIfPresent(Bool.self, forKey: .completed) ?? false
@@ -142,6 +205,8 @@ extension AssignmentSigningURL: Decodable {
 /// A signing assignment linking a document to one or more signers.
 @objcMembers
 public final class Assignment: NSObject {
+    /// Resource discriminator returned by the API.
+    public let resource: String?
     public let id: String
     public let senderEmail: String?
     public let method: AssignmentMethod
@@ -162,10 +227,12 @@ public final class Assignment: NSObject {
     /// Direct signing URLs generated by the API for each signer.
     public let signingUrls: [AssignmentSigningURL]
 
-    init(id: String, senderEmail: String? = nil, method: AssignmentMethod, methodString: String,
+    init(resource: String? = nil, id: String, senderEmail: String? = nil,
+         method: AssignmentMethod, methodString: String,
          expiresAt: String? = nil, message: String? = nil, signers: [Signer] = [],
          copyReceivers: [Signer] = [], items: [AssignmentItem] = [],
          summary: AssignmentSummary? = nil, signingUrls: [AssignmentSigningURL] = []) {
+        self.resource = resource
         self.id = id; self.senderEmail = senderEmail
         self.method = method; self.methodString = methodString
         self.expiresAt = expiresAt; self.message = message
@@ -180,7 +247,7 @@ extension Assignment: @unchecked Sendable {}
 
 extension Assignment: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, method, message, signers, items, summary
+        case resource, id, method, message, signers, items, summary
         case senderEmail    = "sender_email"
         case expiresAt      = "expires_at"
         case expiration
@@ -198,6 +265,7 @@ extension Assignment: Decodable {
         let expiresAt = try decodeFlexibleOptionalString(from: c, forKey: .expiresAt)
             ?? decodeFlexibleOptionalString(from: c, forKey: .expiration)
         self.init(
+            resource:      try c.decodeIfPresent(String.self,         forKey: .resource),
             id:            try c.decode(String.self,                  forKey: .id),
             senderEmail:   try c.decodeIfPresent(String.self,         forKey: .senderEmail),
             method:        AssignmentMethod(string: methodString),
@@ -240,12 +308,41 @@ public enum SignerReference: Sendable {
 public struct AssignmentField: Sendable {
     public var signerId: String
     public var fieldId: String
-    public var displaySettings: String?
+    /// Typed placement settings encoded as the API's `display_settings` object.
+    public var displaySettingsObject: DisplaySettings?
+    private var legacyDisplaySettings: String?
+    /// Legacy JSON representation of `display_settings`.
+    @available(*, deprecated, renamed: "displaySettingsObject")
+    public var displaySettings: String? {
+        get { legacyDisplaySettings }
+        set { legacyDisplaySettings = newValue }
+    }
 
+    var legacyDisplaySettingsValue: String? { legacyDisplaySettings }
+
+    /// Creates a field placement without display settings.
+    public init(signerId: String, fieldId: String) {
+        self.signerId = signerId
+        self.fieldId = fieldId
+        self.displaySettingsObject = nil
+        self.legacyDisplaySettings = nil
+    }
+
+    /// Creates a field placement with typed display settings.
+    public init(signerId: String, fieldId: String, displaySettings: DisplaySettings) {
+        self.signerId = signerId
+        self.fieldId = fieldId
+        self.displaySettingsObject = displaySettings
+        self.legacyDisplaySettings = nil
+    }
+
+    /// Creates a field placement from a legacy JSON settings string.
+    @available(*, deprecated, message: "Pass a DisplaySettings value instead of a JSON string.")
     public init(signerId: String, fieldId: String, displaySettings: String? = nil) {
         self.signerId = signerId
         self.fieldId = fieldId
-        self.displaySettings = displaySettings
+        self.displaySettingsObject = nil
+        self.legacyDisplaySettings = displaySettings
     }
 }
 
@@ -256,6 +353,10 @@ public struct AssignmentEntry: Sendable {
     public var pageId: String
     public var fields: [AssignmentField]
 
+    /// Creates a collect-assignment entry for one document page.
+    /// - Parameters:
+    ///   - pageId: Target document page ID.
+    ///   - fields: Field placements on the page.
     public init(pageId: String, fields: [AssignmentField]) {
         self.pageId = pageId
         self.fields = fields
@@ -276,6 +377,14 @@ public struct CreateAssignmentPayload: Sendable {
     public var expiresAt: String?
     public var copyReceivers: [String]?
 
+    /// Creates an assignment request payload.
+    /// - Parameters:
+    ///   - method: Virtual or collect signing method.
+    ///   - signers: Signers participating in the assignment.
+    ///   - entries: Page field placements required for collect assignments.
+    ///   - message: Optional invitation message.
+    ///   - expiresAt: Optional ISO-8601 expiration time.
+    ///   - copyReceivers: Signer IDs that receive a completed copy only.
     public init(
         method: AssignmentMethod = .virtual,
         signers: [SignerReference],
@@ -314,7 +423,7 @@ public struct CreateAssignmentPayload: Sendable {
 struct AssignmentFieldBody: Encodable {
     let signerId: String
     let fieldId: String
-    let displaySettings: String?
+    let displaySettings: DisplaySettings?
 
     enum CodingKeys: String, CodingKey {
         case signerId = "signer_id"
@@ -361,15 +470,28 @@ struct AssignmentPayloadBody: Encodable {
     }
 }
 
-func buildAssignmentBody(
-    _ payload: CreateAssignmentPayload,
-    allowWithoutId: Bool = false
-) throws -> AssignmentPayloadBody {
+struct AssignmentEstimateSignerBody: Encodable {
+    let verificationMethod: String?
+    let notificationMethods: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case verificationMethod = "verification_method"
+        case notificationMethods = "notification_methods"
+    }
+}
+
+struct AssignmentEstimateBody: Encodable {
+    let method: String
+    let signers: [AssignmentEstimateSignerBody]?
+    let entries: [AssignmentEntryBody]?
+}
+
+func buildAssignmentBody(_ payload: CreateAssignmentPayload) throws -> AssignmentPayloadBody {
     guard !payload.signers.isEmpty else {
         throw ValidationError("At least one signer is required")
     }
     let signerBodies = try payload.signers.map { ref in
-        try buildSignerBody(ref, allowWithoutId: allowWithoutId)
+        try buildSignerBody(ref)
     }
     let entryBodies: [AssignmentEntryBody]? = try payload.entries?.map { try buildEntryBody($0) }
     if payload.method == .collect, entryBodies?.isEmpty != false {
@@ -385,27 +507,78 @@ func buildAssignmentBody(
     )
 }
 
-private func buildSignerBody(_ ref: SignerReference, allowWithoutId: Bool) throws -> AssignmentSignerBody {
+func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> AssignmentEstimateBody {
+    if payload.method == .virtual, payload.signers.isEmpty {
+        throw ValidationError("Virtual assignment estimates require at least one signer")
+    }
+    let signers = payload.signers.map { reference -> AssignmentEstimateSignerBody in
+        switch reference {
+        case .id:
+            return AssignmentEstimateSignerBody(verificationMethod: nil, notificationMethods: nil)
+        case .descriptor(_, let verificationMethod, let notificationMethods, _):
+            return AssignmentEstimateSignerBody(
+                verificationMethod: verificationMethod,
+                notificationMethods: notificationMethods
+            )
+        }
+    }
+    let entries = try payload.entries?.map(buildEntryBody)
+    if payload.method == .collect, entries?.isEmpty != false {
+        throw ValidationError("Collect assignment estimates require at least one entry")
+    }
+    return AssignmentEstimateBody(
+        method: payload.method.stringValue,
+        signers: signers.isEmpty ? nil : signers,
+        entries: entries
+    )
+}
+
+private func buildSignerBody(_ ref: SignerReference) throws -> AssignmentSignerBody {
     switch ref {
     case .id(let id):
         guard !id.isEmpty else { throw ValidationError("Signer ID cannot be empty") }
         return AssignmentSignerBody(id: id, verificationMethod: nil, notificationMethods: nil, step: nil)
     case .descriptor(let id, let vm, let nm, let step):
         let hasId = id?.isEmpty == false
-        if !hasId, vm == nil, nm == nil, !allowWithoutId {
-            throw ValidationError("Invalid signer reference: must provide id or verification_method")
-        }
+        guard hasId else { throw ValidationError("Signer ID is required when creating an assignment") }
         return AssignmentSignerBody(id: hasId ? id : nil, verificationMethod: vm, notificationMethods: nm, step: step)
     }
 }
 
 private func buildEntryBody(_ entry: AssignmentEntry) throws -> AssignmentEntryBody {
-    guard !entry.pageId.isEmpty else { throw ValidationError("Entry page ID cannot be empty") }
+    guard !entry.pageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw ValidationError("Entry page ID cannot be empty")
+    }
     guard !entry.fields.isEmpty else { throw ValidationError("Entry must contain at least one field") }
     let fields = try entry.fields.map { field in
-        guard !field.signerId.isEmpty else { throw ValidationError("Field signer ID cannot be empty") }
-        guard !field.fieldId.isEmpty else { throw ValidationError("Field ID cannot be empty") }
-        return AssignmentFieldBody(signerId: field.signerId, fieldId: field.fieldId, displaySettings: field.displaySettings)
+        guard !field.signerId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Field signer ID cannot be empty")
+        }
+        guard !field.fieldId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Field ID cannot be empty")
+        }
+        let settings: DisplaySettings?
+        if let typed = field.displaySettingsObject {
+            settings = typed
+        } else if let legacy = field.legacyDisplaySettingsValue {
+            guard let data = legacy.data(using: .utf8),
+                  let decoded = try? JSONDecoder.assinafy.decode(DisplaySettings.self, from: data) else {
+                throw ValidationError("Field display settings must be a valid DisplaySettings JSON object")
+            }
+            settings = decoded
+        } else {
+            settings = nil
+        }
+        if let settings {
+            guard settings.left.isFinite, settings.left >= 0,
+                  settings.top.isFinite, settings.top >= 0,
+                  settings.width.isFinite, settings.width > 0,
+                  settings.height.isFinite, settings.height > 0,
+                  settings.fontSize.isFinite, settings.fontSize > 0 else {
+                throw ValidationError("Field display settings contain invalid geometry")
+            }
+        }
+        return AssignmentFieldBody(signerId: field.signerId, fieldId: field.fieldId, displaySettings: settings)
     }
     return AssignmentEntryBody(pageId: entry.pageId, fields: fields)
 }
@@ -420,6 +593,12 @@ public final class SignAssignmentField: NSObject, Encodable {
     public let pageId: String?
     public let value: String
 
+    /// Creates a signed value for one assignment item.
+    /// - Parameters:
+    ///   - itemId: Assignment item ID.
+    ///   - fieldId: Associated field definition ID.
+    ///   - pageId: Document page ID; required by the signing endpoint.
+    ///   - value: String value to submit.
     @objc public init(itemId: String, fieldId: String, pageId: String? = nil, value: String) {
         self.itemId = itemId; self.fieldId = fieldId
         self.pageId = pageId; self.value = value
@@ -490,6 +669,7 @@ extension WhatsappNotification: Decodable {
 public final class DeclineAssignmentPayload: NSObject, Encodable {
     public let declineReason: String
 
+    /// Creates a rejection payload with the signer's reason.
     @objc public init(declineReason: String) {
         self.declineReason = declineReason
     }

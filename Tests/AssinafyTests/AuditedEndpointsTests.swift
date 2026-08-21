@@ -53,8 +53,12 @@ final class AuditedEndpointsTests: XCTestCase {
 
     // MARK: - Assignments
 
-    func testAssignmentListUsesAccountIdQueryParam() async throws {
-        let resource = AssignmentResource(http: mock, defaultAccountId: "acc")
+    func testAssignmentListPreservesSandboxAccountContext() async throws {
+        let resource = AssignmentResource(
+            http: mock,
+            defaultAccountId: "acc",
+            usesSandboxCompatibility: true
+        )
         mock.stubEnvelopeList([])
         _ = try await resource.list(params: ListParams(page: 2, perPage: 10))
         XCTAssertEqual(mock.lastRequest?.method, .get)
@@ -144,12 +148,72 @@ final class AuditedEndpointsTests: XCTestCase {
     func testWorkspaceStatsUsesStatsEndpoint() async throws {
         let resource = WorkspaceResource(http: mock, defaultAccountId: "acc")
         mock.stubEnvelopeList([[
-            "period": "2026-06", "documents_uploaded": 3, "documents_signed": 2,
+            "period": "2026-06",
+            "documents_uploaded": 3,
+            "documents_sent": 2,
+            "signature_requests": 5,
+            "signature_requests_notification_bypass": 1,
+            "signature_requests_notification_email": 4,
+            "signature_requests_notification_whatsapp": 2,
+            "signature_requests_verification_bypass": 1,
+            "signature_requests_verification_email": 2,
+            "signature_requests_verification_whatsapp": 1,
+            "signature_requests_verification_digital_certificate": 1,
+            "signature_requests_viewed": 4,
+            "signature_requests_completed": 3,
+            "documents_certified": 2,
         ]])
         let rows = try await resource.stats(params: AccountStatsParams(granularity: "monthly"))
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc/stats")
         XCTAssertEqual(rows.first?.period, "2026-06")
         XCTAssertEqual(rows.first?.documentsUploaded, 3)
+        XCTAssertEqual(rows.first?.signatureRequestsNotificationBypass, 1)
+        XCTAssertEqual(rows.first?.signatureRequestsNotificationEmail, 4)
+        XCTAssertEqual(rows.first?.signatureRequestsNotificationWhatsapp, 2)
+        XCTAssertEqual(rows.first?.signatureRequestsVerificationBypass, 1)
+        XCTAssertEqual(rows.first?.signatureRequestsVerificationEmail, 2)
+        XCTAssertEqual(rows.first?.signatureRequestsVerificationWhatsapp, 1)
+        XCTAssertEqual(rows.first?.signatureRequestsVerificationDigitalCertificate, 1)
+        XCTAssertEqual(rows.first?.signatureRequestsViewed, 4)
+        XCTAssertEqual(rows.first?.signatureRequestsCompleted, 3)
+        XCTAssertEqual(rows.first?.documentsCertified, 2)
+    }
+
+    func testCostEstimateDecodesDocumentedTypedBreakdown() throws {
+        let json: [String: Any] = [
+            "documents": 1,
+            "credits": 0.9,
+            "needs_extra_document": true,
+            "extra_document_cost": 1.0,
+            "total_credits": 1.9,
+            "breakdown": [[
+                "code": "NotificationWhatsapp",
+                "name": "Whatsapp Notification",
+                "cost": 0.9,
+                "quantity": 2,
+                "unit_cost": 0.45,
+            ]],
+            "document_balance": 0,
+            "credit_balance": 10,
+            "has_sufficient_resources": true,
+            "blocking_reason": NSNull(),
+            "message": "Resources available",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let estimate = try JSONDecoder.assinafy.decode(CostEstimate.self, from: data)
+        XCTAssertEqual(estimate.documents, 1)
+        XCTAssertEqual(estimate.totalCredits, 1.9)
+        XCTAssertEqual(estimate.breakdown.count, 1)
+        XCTAssertEqual(estimate.breakdown.first?.code, "NotificationWhatsapp")
+        XCTAssertEqual(estimate.breakdown.first?.quantity, 2)
+        XCTAssertEqual(estimate.breakdown.first?.unitCost, 0.45)
+        XCTAssertNil(estimate.blockingReason)
+        XCTAssertEqual(estimate.message, "Resources available")
+    }
+
+    func testCostEstimateRejectsUnrecognizedObject() throws {
+        let data = try JSONSerialization.data(withJSONObject: ["unexpected": 1])
+        XCTAssertThrowsError(try JSONDecoder.assinafy.decode(CostEstimate.self, from: data))
     }
 
     // MARK: - Signer

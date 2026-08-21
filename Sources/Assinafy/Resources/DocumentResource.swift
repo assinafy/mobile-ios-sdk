@@ -1,5 +1,11 @@
 import Foundation
 
+private struct SandboxSendTokenPayload: Encodable {
+    let email: String
+    let recipient: String
+    let channel: String
+}
+
 /// Manages document uploads, status, artifact downloads, and lifecycle operations.
 ///
 /// Access this resource through ``AssinafyClient/documents``.
@@ -92,10 +98,37 @@ public final class DocumentResource: BaseResource {
         status: String? = nil,
         accountId: String? = nil
     ) async throws -> PaginatedResult<DocumentListItem> {
+        try await self.search(
+            search: search,
+            status: status,
+            page: 0,
+            perPage: 0,
+            accountId: accountId
+        )
+    }
+
+    /// Searches documents in a workspace with explicit pagination.
+    ///
+    /// - Parameters:
+    ///   - search: Free-text search term.
+    ///   - status: Optional status filter.
+    ///   - page: One-based page number; values below `1` are omitted.
+    ///   - perPage: Page size; values below `1` are omitted.
+    ///   - accountId: Override the client's default account ID.
+    /// - Returns: A ``PaginatedResult`` of ``DocumentListItem`` objects.
+    public func search(
+        search: String? = nil,
+        status: String? = nil,
+        page: Int,
+        perPage: Int,
+        accountId: String? = nil
+    ) async throws -> PaginatedResult<DocumentListItem> {
         let id = try self.accountId(accountId)
         var items: [URLQueryItem] = []
         if let search { items.append(.init(name: "search", value: search)) }
         if let status { items.append(.init(name: "status", value: status)) }
+        if page > 0 { items.append(.init(name: "page", value: "\(page)")) }
+        if perPage > 0 { items.append(.init(name: "per-page", value: "\(perPage)")) }
         return try await callList("Failed to search documents",
                                   request: .get("/accounts/\(id)/documents/search",
                                                 queryItems: items.isEmpty ? nil : items))
@@ -123,8 +156,13 @@ public final class DocumentResource: BaseResource {
     @discardableResult
     public func rename(documentId: String, name: String) async throws -> DocumentDetails {
         let did = try requireId(documentId, name: "Document ID")
-        let newName = try requireId(name, name: "Document name")
-        let request = try APIRequest.patch("/documents/\(did)", body: ["name": newName])
+        guard !name.isEmpty else {
+            throw ValidationError("Document name is required")
+        }
+        guard name.count <= 255 else {
+            throw ValidationError("Document name must not exceed 255 characters")
+        }
+        let request = try APIRequest.patch("/documents/\(did)", body: ["name": name])
         return try await call("Failed to rename document", request: request)
     }
 
@@ -140,8 +178,20 @@ public final class DocumentResource: BaseResource {
         options: WaitUntilReadyOptions = WaitUntilReadyOptions()
     ) async throws -> DocumentUploadResponse {
         let did = try requireId(documentId, name: "Document ID")
-        let deadline = Date().addingTimeInterval(options.maxWaitSeconds)
-        let interval = UInt64(options.pollIntervalSeconds * 1_000_000_000)
+        let maxWaitSeconds = options.maxWaitSeconds
+        let pollIntervalSeconds = options.pollIntervalSeconds
+        let largestSleepSeconds = Double(UInt64.max) / 1_000_000_000
+        guard maxWaitSeconds.isFinite,
+              maxWaitSeconds > 0,
+              maxWaitSeconds <= largestSleepSeconds else {
+            throw ValidationError("Maximum wait must be a finite positive interval")
+        }
+        guard pollIntervalSeconds.isFinite,
+              pollIntervalSeconds > 0,
+              pollIntervalSeconds <= largestSleepSeconds else {
+            throw ValidationError("Poll interval must be a finite positive interval")
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + maxWaitSeconds
         while true {
             let doc: DocumentUploadResponse = try await call(
                 "Failed to fetch document",
@@ -156,13 +206,15 @@ public final class DocumentResource: BaseResource {
             default:
                 break
             }
-            guard Date() < deadline else {
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0 else {
                 throw AssinafySDKError(
-                    "Document did not become ready within \(Int(options.maxWaitSeconds))s",
+                    "Document did not become ready within \(Int(maxWaitSeconds))s",
                     context: ["documentId": did, "status": doc.statusString]
                 )
             }
-            try await Task.sleep(nanoseconds: interval)
+            let interval = min(pollIntervalSeconds, remaining)
+            try await Task.sleep(nanoseconds: max(1, UInt64(interval * 1_000_000_000)))
         }
     }
 
@@ -250,6 +302,7 @@ public final class DocumentResource: BaseResource {
     ) async throws -> DocumentUploadResponse {
         let id = try self.accountId(accountId)
         let tid = try requireId(templateId, name: "Template ID")
+        try signers.forEach { try $0.validateForDocumentCreation() }
         struct Body: Encodable {
             let signers: [TemplateSigner]
             let name: String?
@@ -288,8 +341,9 @@ public final class DocumentResource: BaseResource {
     ) async throws -> CostEstimate {
         let id = try self.accountId(accountId)
         let tid = try requireId(templateId, name: "Template ID")
-        struct Body: Encodable { let signers: [TemplateSigner] }
-        let body = Body(signers: signers)
+        let estimateSigners = try signers.map { try $0.costEstimatePayload() }
+        struct Body: Encodable { let signers: [TemplateSignerCostEstimatePayload] }
+        let body = Body(signers: estimateSigners)
         let request = try APIRequest.post(
             "/accounts/\(id)/templates/\(tid)/documents/estimate-cost", body: body
         )
@@ -303,12 +357,22 @@ public final class DocumentResource: BaseResource {
     /// - Returns: `true` when the document's cryptographic signatures are valid.
     @discardableResult
     public func verify(signatureHash: String) async throws -> Bool {
+        try await verifyDetails(signatureHash: signatureHash).isValid
+    }
+
+    /// Returns the full certification result for a signed document.
+    ///
+    /// Invalid or unknown hashes still return a result with ``DocumentVerification/isValid``
+    /// set to `false` and a human-readable message.
+    ///
+    /// - Parameter signatureHash: The signature hash printed on a signed document.
+    /// - Returns: Complete verification metadata from the API.
+    public func verifyDetails(signatureHash: String) async throws -> DocumentVerification {
         let hash = try requireId(signatureHash, name: "Signature hash")
-        let result: VerifyResponse = try await call(
+        return try await call(
             "Failed to verify signature",
             request: .get("/documents/\(hash)/verify")
         )
-        return result.isValid
     }
 
     /// Returns `true` when all signers on the document have signed.
@@ -361,15 +425,35 @@ public final class DocumentResource: BaseResource {
     /// Sends the 6-digit signing token to a signer via email or WhatsApp.
     ///
     /// Mirrors `PUT /public/documents/{id}/send-token`. No authentication is
-    /// required; the SDK forwards the request as-is.
+    /// required. Clients configured for the Assinafy sandbox add its live-required
+    /// `recipient` and `channel` compatibility fields.
     @discardableResult
     public func sendPublicSignToken(
         documentId: String,
         payload: SendTokenPayload
     ) async throws -> SendTokenResponse {
         let did = try requireId(documentId, name: "Document ID")
-        let request = try APIRequest.put("/public/documents/\(did)/send-token", body: payload)
-        return try await call("Failed to send signing token", request: request)
+        let path = "/public/documents/\(did)/send-token"
+        let request: APIRequest
+        if usesSandboxCompatibility {
+            request = try .put(
+                path,
+                body: SandboxSendTokenPayload(
+                    email: payload.recipient,
+                    recipient: payload.recipient,
+                    channel: payload.channel.stringValue
+                )
+            )
+        } else {
+            request = try .put(path, body: payload)
+        }
+        try await callVoid("Failed to send signing token", request: request)
+        let document = try await getPublicInfo(documentId: did)
+        return SendTokenResponse(
+            document: document,
+            channel: payload.channel.stringValue,
+            recipient: payload.recipient
+        )
     }
 
     /// Confirms a signer's data for a virtual assignment.

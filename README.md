@@ -7,8 +7,9 @@ Official API reference: https://api.assinafy.com.br/v1/docs
 ## Requirements
 
 - iOS 16.0+
-- Swift 5.9+
-- Xcode 15+
+- macOS 12.0+ (when used from a macOS target)
+- Swift 6.3+
+- Xcode 26.6+
 
 ## Installation
 
@@ -103,7 +104,7 @@ let tag = try await client.tags.create(
 
 _ = try await client.tags.appendDocumentTags(
     documentId: document.id,
-    tagNames: [tag.name]
+    tagIds: [tag.id]
 )
 ```
 
@@ -132,7 +133,11 @@ let doc = try await client.signers.getCurrentDocument(
 try await client.documents.confirmSignerData(
     documentId: doc.id,
     signerAccessCode: code,
-    payload: ConfirmSignerDataPayload(email: signer.email, hasAcceptedTerms: true)
+    payload: ConfirmSignerDataPayload(
+        fullName: signer.fullName,
+        email: signer.email,
+        governmentId: "00000000000"
+    )
 )
 
 // Sign or decline the assignment
@@ -162,16 +167,16 @@ print(result.success, result.errorMessage)
 
 ### Templates
 
-```swift
-let template = try await client.templates.create(
-    name: "Hiring contract",
-    pdfData: contractPDF
-)
+Production supports listing templates and creating documents from an existing
+template:
 
-_ = try await client.templates.update(
-    templateId: template.id,
-    payload: UpdateTemplatePayload(message: "Please sign within 7 days")
+```swift
+let templates = try await client.templates.list(
+    params: TemplateListParams(search: "Hiring contract")
 )
+guard let template = templates.data.first else {
+    throw AssinafySDKError("No matching template")
+}
 
 let generated = try await client.documents.createFromTemplate(
     templateId: template.id,
@@ -192,6 +197,23 @@ let generated = try await client.documents.createFromTemplate(
 )
 ```
 
+Template-definition `create`, `get`, `update`, and `delete` are sandbox
+compatibility extensions. They are not present in the current production
+OpenAPI contract:
+
+```swift
+let sandboxTemplate = try await client.templates.create(
+    name: "Hiring contract",
+    pdfData: contractPDF
+)
+_ = try await client.templates.get(templateId: sandboxTemplate.id)
+_ = try await client.templates.update(
+    templateId: sandboxTemplate.id,
+    payload: UpdateTemplatePayload(message: "Please sign within 7 days")
+)
+try await client.templates.delete(templateId: sandboxTemplate.id)
+```
+
 ## Resources
 
 The SDK exposes resource objects for the public API documented at https://api.assinafy.com.br/v1/docs:
@@ -200,11 +222,11 @@ The SDK exposes resource objects for the public API documented at https://api.as
 - `client.signers` - Signer CRUD, self-service flows, signer-facing document listing/search/sign-multiple/decline-multiple/download
 - `client.assignments` - Signing assignments: list, create, sign, decline, resend, cost estimation, reset expiration, ordered-signing steps, WhatsApp notification log
 - `client.webhooks` - Webhook subscriptions, event-type catalog, dispatch history, retry
-- `client.templates` - Document template CRUD (create, list, get, update, delete) and instantiation
+- `client.templates` - Document template listing and instantiation, plus live-verified sandbox CRUD extensions
 - `client.workspaces` - Workspace (account) CRUD, theme/branding, document KPI stats, and logo upload/download/delete
 - `client.tags` - Workspace tag CRUD and document tag listing/replacement/append/detach
 - `client.fields` - Field-definition CRUD, value validation (single and batch), field type catalog
-- `client.auth` - Login, social login (+ linking and authorization-URL builder), password reset, change password, API key management, current-user profile and cross-account KPIs
+- `client.auth` - Login, social login (+ linking and authorization-URL builder), password reset, change password, API key management, current-user profile, notification preferences, and cross-account KPIs
 
 For a per-method reference with full request/response payloads, see
 [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
@@ -220,13 +242,37 @@ swift test
 Live API checks are gated by environment variables and are skipped by default:
 
 ```bash
-ASSINAFY_API_KEY="..." ASSINAFY_ACCOUNT_ID="..." swift test --filter AssinafyLiveTests
+ASSINAFY_API_KEY="..." \
+ASSINAFY_ACCOUNT_ID="..." \
+ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1" \
+swift test --filter AssinafyLiveTests
 ```
 
-Set `ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1"` to run against the
-sandbox (sandbox keys do not authenticate against the production host).
+Live tests refuse to run against any host except
+`https://sandbox.assinafy.com.br/v1`. Sandbox and production expose different
+operation sets; the production OpenAPI document remains the SDK contract. The
+client applies the sandbox's live-required assignment-account and public-token
+request fields only when configured for the Assinafy sandbox host.
 
-The live suite exercises read-only catalog/list endpoints plus isolated tag and signer CRUD with cleanup. Add `ASSINAFY_RUN_DOCUMENT_LIVE_TESTS=1` to also run upload/get/download/delete and the full upload→assign signature flow against a generated test PDF. Do not commit live credentials.
+Mutation tests are additionally gated so normal test runs cannot create API
+resources or send notifications. To run the complete suite, provide two
+dedicated recipient addresses at runtime:
+
+```bash
+ASSINAFY_API_KEY="..." \
+ASSINAFY_ACCOUNT_ID="..." \
+ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1" \
+ASSINAFY_RUN_LIVE_MUTATIONS=1 \
+ASSINAFY_TEST_EMAIL_A="recipient-a@example.com" \
+ASSINAFY_TEST_EMAIL_B="recipient-b@example.com" \
+swift test --filter AssinafyLiveTests
+```
+
+The suite covers read-only catalogs plus reversible notification-preference,
+tag, signer, field, template, document, and assignment flows. Each mutation
+flow tracks the resources it creates and attempts to delete them; cleanup
+failures fail the test. Pre-existing assignment signers are reused and never
+deleted. Never commit live credentials or recipient addresses.
 
 ## Error Handling
 
@@ -247,13 +293,15 @@ do {
 
 ## Objective-C Support
 
-The SDK is fully compatible with Objective-C:
+Core models and resource operations expose Objective-C-compatible types and
+completion-handler wrappers. Swift-concurrency-only APIs are identified in the
+[method reference](docs/API_REFERENCE.md):
 
 ```objc
 ASFAssinafyClient *client = [[ASFAssinafyClient alloc] initWithApiKey:@"key"
                                                         defaultAccountId:@"acc"];
 
-[client.signers getSignerWithId:@"signer-id" accountId:nil completion:^(ASFSigner *signer, NSError *error) {
+[client.signers getSignerWithId:@"signer-id" accountId:nil completion:^(Signer *signer, NSError *error) {
     if (error) {
         NSLog(@"Error: %@", error);
         return;

@@ -13,6 +13,7 @@ final class FieldResourceTests: XCTestCase {
 
     private func fieldDict(id: String = "f1") -> [String: Any] {
         [
+            "resource": "field",
             "id": id,
             "name": "Custom Field",
             "type": "text",
@@ -33,7 +34,7 @@ final class FieldResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/fields")
     }
 
-    func testCreateEncodesAllFlags() async throws {
+    func testCreateEncodesOnlyDocumentedFields() async throws {
         mock.stubEnvelope(fieldDict())
         _ = try await resource.create(CreateFieldPayload(
             type: "text",
@@ -51,7 +52,17 @@ final class FieldResourceTests: XCTestCase {
         XCTAssertEqual(json["name"] as? String, "Custom")
         XCTAssertEqual(json["regex"] as? String, "/[0-9]{5}/")
         XCTAssertEqual(json["is_required"] as? Bool, false)
-        XCTAssertEqual(json["is_active"] as? Bool, true)
+        XCTAssertNil(json["is_active"])
+    }
+
+    func testCreatePreservesLiveIsActiveFalseExtension() async throws {
+        mock.stubEnvelope(fieldDict())
+        _ = try await resource.create(
+            CreateFieldPayload(type: "text", name: "Inactive", isActive: false)
+        )
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["is_active"] as? Bool, false)
     }
 
     func testListAppliesIncludeFlags() async throws {
@@ -70,7 +81,8 @@ final class FieldResourceTests: XCTestCase {
 
     func testGetUsesCorrectPath() async throws {
         mock.stubEnvelope(fieldDict())
-        _ = try await resource.get(fieldId: "f1")
+        let field = try await resource.get(fieldId: "f1")
+        XCTAssertEqual(field.resource, "field")
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/fields/f1")
     }
 
@@ -97,6 +109,34 @@ final class FieldResourceTests: XCTestCase {
         XCTAssertNil(json["regex"])
         XCTAssertNil(json["is_required"])
         XCTAssertNil(json["is_active"])
+    }
+
+    func testUpdatePreservesLiveCompatibleExtensionFields() async throws {
+        mock.stubEnvelope(fieldDict())
+        _ = try await resource.update(
+            fieldId: "f1",
+            payload: UpdateFieldPayload(
+                type: "date",
+                isRequired: NSNumber(value: true),
+                isActive: NSNumber(value: false)
+            )
+        )
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["type"] as? String, "date")
+        XCTAssertEqual(json["is_required"] as? Bool, true)
+        XCTAssertEqual(json["is_active"] as? Bool, false)
+    }
+
+    func testUpdateCanExplicitlyClearRegex() async throws {
+        mock.stubEnvelope(fieldDict())
+        _ = try await resource.update(
+            fieldId: "f1",
+            payload: UpdateFieldPayload(regex: "ignored", clearsRegex: true)
+        )
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertTrue(json["regex"] is NSNull)
     }
 
     func testDeleteUsesDeleteMethod() async throws {

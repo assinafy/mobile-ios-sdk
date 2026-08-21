@@ -3,6 +3,18 @@ import XCTest
 
 final class AssignmentPayloadTests: XCTestCase {
 
+    private var settings: DisplaySettings {
+        DisplaySettings(
+            left: 10,
+            top: 20,
+            width: 180,
+            height: 40,
+            fontFamily: "Arial",
+            fontSize: 16,
+            backgroundColor: "#D5EBFF"
+        )
+    }
+
     func testWithSignerIdsConvenienceMethod() {
         let payload = CreateAssignmentPayload.withSignerIds(["s1", "s2"], method: .virtual)
         XCTAssertEqual(payload.signers.count, 2)
@@ -49,13 +61,22 @@ final class AssignmentPayloadTests: XCTestCase {
     }
 
     func testCollectAssignmentsEncodeEntries() {
-        let field = AssignmentField(signerId: "s1", fieldId: "f1")
+        let field = AssignmentField(signerId: "s1", fieldId: "f1", displaySettings: settings)
         let entry = AssignmentEntry(pageId: "p1", fields: [field])
         let payload = CreateAssignmentPayload(method: .collect, signers: [.id("s1")], entries: [entry])
         let body = try! buildAssignmentBody(payload)
         XCTAssertEqual(body.entries?.count, 1)
         XCTAssertEqual(body.entries?[0].pageId, "p1")
         XCTAssertEqual(body.entries?[0].fields[0].signerId, "s1")
+        XCTAssertEqual(body.entries?[0].fields[0].displaySettings?.left, 10)
+
+        let data = try! JSONEncoder.assinafy.encode(body)
+        let json = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let entries = json["entries"] as! [[String: Any]]
+        let fields = entries[0]["fields"] as! [[String: Any]]
+        let encodedSettings = fields[0]["display_settings"] as? [String: Any]
+        XCTAssertEqual(encodedSettings?["fontSize"] as? Double, 16)
+        XCTAssertEqual(encodedSettings?["backgroundColor"] as? String, "#D5EBFF")
     }
 
     func testIncludesOptionalFieldsWhenProvided() {
@@ -89,17 +110,71 @@ final class AssignmentPayloadTests: XCTestCase {
         let payload = CreateAssignmentPayload(
             signers: [.descriptor(verificationMethod: "email")]
         )
-        let body = try! buildAssignmentBody(payload, allowWithoutId: true)
-        XCTAssertEqual(body.signers[0].verificationMethod, "email")
+        let body = try! buildAssignmentEstimateBody(payload)
+        XCTAssertEqual(body.signers?[0].verificationMethod, "email")
     }
 
     func testEstimateCostAcceptsSignerDescriptorsWithoutIDs() {
         let payload = CreateAssignmentPayload(
             signers: [.descriptor(verificationMethod: "email", notificationMethods: ["whatsapp"])]
         )
-        let body = try! buildAssignmentBody(payload, allowWithoutId: true)
-        XCTAssertEqual(body.signers[0].verificationMethod, "email")
-        XCTAssertEqual(body.signers[0].notificationMethods, ["whatsapp"])
+        let body = try! buildAssignmentEstimateBody(payload)
+        XCTAssertEqual(body.signers?[0].verificationMethod, "email")
+        XCTAssertEqual(body.signers?[0].notificationMethods, ["whatsapp"])
+    }
+
+    func testCreateRejectsDescriptorWithoutSignerID() {
+        let payload = CreateAssignmentPayload(
+            signers: [.descriptor(verificationMethod: "Email", notificationMethods: ["Email"])]
+        )
+        XCTAssertThrowsError(try buildAssignmentBody(payload)) { error in
+            XCTAssertTrue(error is ValidationError)
+        }
+    }
+
+    func testCollectEstimateDoesNotRequireSigners() throws {
+        let field = AssignmentField(signerId: "s1", fieldId: "f1", displaySettings: settings)
+        let payload = CreateAssignmentPayload(
+            method: .collect,
+            signers: [],
+            entries: [AssignmentEntry(pageId: "p1", fields: [field])]
+        )
+        let body = try buildAssignmentEstimateBody(payload)
+        XCTAssertNil(body.signers)
+        XCTAssertEqual(body.entries?.count, 1)
+    }
+
+    func testRejectsInvalidDisplaySettingsGeometry() {
+        let invalid = DisplaySettings(left: 0, top: 0, width: 0, height: 20, fontSize: 12)
+        let field = AssignmentField(signerId: "s1", fieldId: "f1", displaySettings: invalid)
+        let payload = CreateAssignmentPayload(
+            method: .collect,
+            signers: [.id("s1")],
+            entries: [AssignmentEntry(pageId: "p1", fields: [field])]
+        )
+        XCTAssertThrowsError(try buildAssignmentBody(payload)) { error in
+            XCTAssertTrue(error is ValidationError)
+        }
+    }
+
+    func testRejectsWhitespaceCollectIdentifiers() {
+        let blankPage = CreateAssignmentPayload(
+            method: .collect,
+            signers: [.id("s1")],
+            entries: [AssignmentEntry(pageId: "  ", fields: [
+                AssignmentField(signerId: "s1", fieldId: "f1")
+            ])]
+        )
+        XCTAssertThrowsError(try buildAssignmentBody(blankPage))
+
+        let blankSigner = CreateAssignmentPayload(
+            method: .collect,
+            signers: [.id("s1")],
+            entries: [AssignmentEntry(pageId: "p1", fields: [
+                AssignmentField(signerId: "\n", fieldId: "f1")
+            ])]
+        )
+        XCTAssertThrowsError(try buildAssignmentBody(blankSigner))
     }
 }
 
@@ -114,12 +189,38 @@ final class AssignmentResourceTests: XCTestCase {
     }
 
     private func assignmentDict(id: String = "a1") -> [String: Any] {
-        ["id": id, "method": "virtual", "signers": []]
+        ["resource": "assignment", "id": id, "method": "virtual", "signers": []]
+    }
+
+    func testListUsesOnlyDocumentedPaginationWithoutRequiringAccount() async throws {
+        mock.stubEnvelopeList([])
+        _ = try await resource.list(params: ListParams(page: 2, perPage: 25))
+        XCTAssertEqual(mock.lastRequest?.path, "/assignments")
+        let query = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) {
+            if let value = $1.value { $0[$1.name] = value }
+        }
+        XCTAssertEqual(query["page"], "2")
+        XCTAssertEqual(query["per-page"], "25")
+        XCTAssertNil(query["accountId"])
+        XCTAssertNil(query["account_id"])
+    }
+
+    func testListPreservesLegacyDefaultArguments() async throws {
+        let accountlessResource = AssignmentResource(http: mock)
+        mock.stubEnvelopeList([])
+        _ = try await accountlessResource.list()
+        XCTAssertNil(mock.lastRequest?.queryItems)
+
+        mock.stubEnvelopeList([])
+        _ = try await accountlessResource.list(accountId: "account-1")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.name, "accountId")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "account-1")
     }
 
     func testCreatePostsToCorrectURL() async throws {
         mock.stubEnvelope(assignmentDict())
-        _ = try await resource.create(documentId: "doc1", payload: .withSignerIds(["s1"]))
+        let assignment = try await resource.create(documentId: "doc1", payload: .withSignerIds(["s1"]))
+        XCTAssertEqual(assignment.resource, "assignment")
         XCTAssertEqual(mock.lastRequest?.path, "/documents/doc1/assignments")
         XCTAssertEqual(mock.lastRequest?.method, .post)
     }
@@ -135,6 +236,18 @@ final class AssignmentResourceTests: XCTestCase {
         }
         XCTAssertEqual(signers[0]["id"] as? String, "s1")
         XCTAssertEqual(signers[1]["id"] as? String, "s2")
+    }
+
+    func testCreateRejectsDescriptorWithoutSignerIDBeforeRequest() async {
+        await assertThrowsValidationError {
+            _ = try await self.resource.create(
+                documentId: "doc1",
+                payload: CreateAssignmentPayload(
+                    signers: [.descriptor(verificationMethod: "Email")]
+                )
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
     }
 
     func testResetExpirationCallsPutMethod() async throws {
@@ -172,6 +285,35 @@ final class AssignmentResourceTests: XCTestCase {
         )
         _ = try await resource.estimateCost(documentId: "doc1", payload: payload)
         XCTAssertEqual(mock.lastRequest?.method, .post)
+    }
+
+    func testEstimateCostSendsOnlyEstimateContractFields() async throws {
+        mock.stubEnvelope(["total_credits": 0])
+        let payload = CreateAssignmentPayload(
+            method: .virtual,
+            signers: [
+                .descriptor(
+                    id: "signer-id-must-not-be-sent",
+                    verificationMethod: "Whatsapp",
+                    notificationMethods: ["Email", "Whatsapp"],
+                    step: 2
+                )
+            ],
+            message: "creation-only",
+            expiresAt: "2027-01-01T00:00:00Z",
+            copyReceivers: ["copy-id"]
+        )
+        _ = try await resource.estimateCost(documentId: "doc1", payload: payload)
+        let body = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["method", "signers"])
+        let signer = try XCTUnwrap((json["signers"] as? [[String: Any]])?.first)
+        XCTAssertEqual(Set(signer.keys), ["verification_method", "notification_methods"])
+        XCTAssertNil(signer["id"])
+        XCTAssertNil(signer["step"])
+        XCTAssertNil(json["message"])
+        XCTAssertNil(json["expires_at"])
+        XCTAssertNil(json["copy_receivers"])
     }
 
     func testEstimateCostReturnsTypedCostEstimate() async throws {
@@ -319,6 +461,30 @@ final class AssignmentResourceTests: XCTestCase {
         await assertThrowsValidationError {
             try await self.resource.sign(documentId: "doc1", assignmentId: "a1", signerAccessCode: "")
         }
+    }
+
+    func testSignValidatesEveryRequiredFieldBeforeRequest() async {
+        let invalidFields = [
+            SignAssignmentField(itemId: "", fieldId: "field", pageId: "page", value: "value"),
+            SignAssignmentField(itemId: "item", fieldId: "", pageId: "page", value: "value"),
+            SignAssignmentField(itemId: "item", fieldId: "field", pageId: nil, value: "value"),
+            SignAssignmentField(itemId: "item", fieldId: "field", pageId: "", value: "value"),
+        ]
+        for field in invalidFields {
+            do {
+                try await resource.sign(
+                    documentId: "doc1",
+                    assignmentId: "a1",
+                    signerAccessCode: "code",
+                    fields: [field]
+                )
+                XCTFail("Expected ValidationError")
+            } catch is ValidationError {
+            } catch {
+                XCTFail("Expected ValidationError, got \(type(of: error))")
+            }
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
     }
 
     func testDeclineSendsRejectEndpoint() async throws {

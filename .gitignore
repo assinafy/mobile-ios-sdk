@@ -1,7 +1,11 @@
-.build/
+.build*/
 .swiftpm/
 *.xcodeproj
 *.xcworkspace
 xcuserdata/
 DerivedData/
 .DS_Store
+.env
+.env.*
+!.env.example
+*.xcresult

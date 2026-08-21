@@ -40,6 +40,7 @@ public extension DocumentStatus {
         }
     }
 
+    /// Creates a status from its API string, returning ``unknown`` for unrecognized values.
     init(string: String) {
         switch string {
         case "uploading":           self = .uploading
@@ -70,6 +71,8 @@ public extension DocumentStatus {
     case certificatePage = 2
     /// A bundle ZIP containing all artifacts.
     case bundle = 3
+    /// The PAdES PDF containing ICP-Brasil signer signatures.
+    case pades = 4
 }
 
 public extension DocumentArtifactName {
@@ -78,6 +81,7 @@ public extension DocumentArtifactName {
         case .original:        return "original"
         case .certificated:    return "certificated"
         case .certificatePage: return "certificate-page"
+        case .pades:           return "pades"
         case .bundle:          return "bundle"
         }
     }
@@ -96,14 +100,16 @@ public final class DocumentArtifacts: NSObject {
     public let thumbnail: String?
     public let certificated: String?
     public let certificatePage: String?
+    public let pades: String?
     public let bundle: String?
 
     init(original: String, thumbnail: String? = nil, certificated: String? = nil,
-         certificatePage: String? = nil, bundle: String? = nil) {
+         certificatePage: String? = nil, pades: String? = nil, bundle: String? = nil) {
         self.original = original
         self.thumbnail = thumbnail
         self.certificated = certificated
         self.certificatePage = certificatePage
+        self.pades = pades
         self.bundle = bundle
     }
 }
@@ -112,7 +118,7 @@ extension DocumentArtifacts: @unchecked Sendable {}
 
 extension DocumentArtifacts: Decodable {
     enum CodingKeys: String, CodingKey {
-        case original, thumbnail, certificated, bundle
+        case original, thumbnail, certificated, pades, bundle
         case certificatePage = "certificate-page"
     }
 
@@ -123,6 +129,7 @@ extension DocumentArtifacts: Decodable {
             thumbnail:       try c.decodeIfPresent(String.self, forKey: .thumbnail),
             certificated:    try c.decodeIfPresent(String.self, forKey: .certificated),
             certificatePage: try c.decodeIfPresent(String.self, forKey: .certificatePage),
+            pades:           try c.decodeIfPresent(String.self, forKey: .pades),
             bundle:          try c.decodeIfPresent(String.self, forKey: .bundle)
         )
     }
@@ -173,6 +180,8 @@ extension DocumentPage: Decodable {
 /// A summary item in a paginated documents list.
 @objcMembers
 public final class DocumentListItem: NSObject {
+    /// Resource discriminator returned by the API when present.
+    public let resource: String?
     public let id: String
     public let name: String
     public let status: DocumentStatus
@@ -187,15 +196,19 @@ public final class DocumentListItem: NSObject {
     public let updatedAt: String?
     public let isClosed: Bool
     public let declineReason: String?
+    public let declinedBy: Signer?
     /// Hosted signing URL for the document, when the API provides one.
     public let signingUrl: String?
 
-    init(id: String, name: String, status: DocumentStatus, statusString: String,
+    init(resource: String? = nil, id: String, name: String,
+         status: DocumentStatus, statusString: String,
          accountId: String? = nil, templateId: String? = nil,
          assignment: Assignment? = nil, artifacts: DocumentArtifacts? = nil,
          pages: [DocumentPage] = [], tags: [Tag] = [],
          createdAt: String, updatedAt: String? = nil, isClosed: Bool = false,
-         declineReason: String? = nil, signingUrl: String? = nil) {
+         declineReason: String? = nil, declinedBy: Signer? = nil,
+         signingUrl: String? = nil) {
+        self.resource = resource
         self.id = id
         self.name = name
         self.status = status
@@ -210,6 +223,7 @@ public final class DocumentListItem: NSObject {
         self.updatedAt = updatedAt
         self.isClosed = isClosed
         self.declineReason = declineReason
+        self.declinedBy = declinedBy
         self.signingUrl = signingUrl
     }
 }
@@ -218,13 +232,14 @@ extension DocumentListItem: @unchecked Sendable {}
 
 extension DocumentListItem: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, status, assignment, artifacts, pages, tags
+        case resource, id, name, status, assignment, artifacts, pages, tags
         case accountId = "account_id"
         case templateId = "template_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case isClosed = "is_closed"
         case declineReason = "decline_reason"
+        case declinedBy = "declined_by"
         case signingUrl = "signing_url"
     }
 
@@ -232,6 +247,7 @@ extension DocumentListItem: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let statusString = try c.decode(String.self, forKey: .status)
         self.init(
+            resource:      try c.decodeIfPresent(String.self, forKey: .resource),
             id:            try c.decode(String.self,        forKey: .id),
             name:          try c.decode(String.self,        forKey: .name),
             status:        DocumentStatus(string: statusString),
@@ -246,6 +262,7 @@ extension DocumentListItem: Decodable {
             updatedAt:     try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
             isClosed:      try c.decodeIfPresent(Bool.self,   forKey: .isClosed) ?? false,
             declineReason: try c.decodeIfPresent(String.self, forKey: .declineReason),
+            declinedBy:    try c.decodeIfPresent(Signer.self, forKey: .declinedBy),
             signingUrl:    try c.decodeIfPresent(String.self, forKey: .signingUrl)
         )
     }
@@ -264,6 +281,7 @@ public struct DeclinedBySigner: Decodable {
         case email
     }
 
+    /// Creates a compact signer identity for a declined document.
     public init(id: String, fullName: String, email: String?) {
         self.id = id
         self.fullName = fullName
@@ -285,6 +303,8 @@ public struct DeclinedBySigner: Decodable {
 /// The response returned immediately after a successful document upload.
 @objcMembers
 public final class DocumentUploadResponse: NSObject {
+    /// Resource discriminator returned by the API.
+    public let resource: String?
     public let id: String
     public let accountId: String?
     public let templateId: String?
@@ -296,23 +316,33 @@ public final class DocumentUploadResponse: NSObject {
     public let createdAt: String
     public let updatedAt: String
     public let isClosed: Bool
+    public let signingUrl: String?
     public let declineReason: String?
+    /// Full documented signer representation for `declined_by`.
+    public let declinedBySigner: Signer?
+    /// Compatibility representation retained for existing integrations.
     public let declinedBy: DeclinedBySigner?
     public let tags: [Tag]
+    public let assignment: Assignment?
 
-    init(id: String, accountId: String?, templateId: String? = nil,
+    init(resource: String? = nil, id: String, accountId: String?, templateId: String? = nil,
          name: String, status: DocumentStatus, statusString: String,
          artifacts: DocumentArtifacts, pages: [DocumentPage],
          createdAt: String, updatedAt: String, isClosed: Bool = false,
-         declineReason: String? = nil, declinedBy: DeclinedBySigner? = nil,
-         tags: [Tag] = []) {
+         signingUrl: String? = nil, declineReason: String? = nil,
+         declinedBySigner: Signer? = nil, declinedBy: DeclinedBySigner? = nil,
+         tags: [Tag] = [], assignment: Assignment? = nil) {
+        self.resource = resource
         self.id = id; self.accountId = accountId; self.templateId = templateId
         self.name = name; self.status = status; self.statusString = statusString
         self.artifacts = artifacts; self.pages = pages
         self.createdAt = createdAt; self.updatedAt = updatedAt
-        self.isClosed = isClosed; self.declineReason = declineReason
+        self.isClosed = isClosed; self.signingUrl = signingUrl
+        self.declineReason = declineReason
+        self.declinedBySigner = declinedBySigner
         self.declinedBy = declinedBy
         self.tags = tags
+        self.assignment = assignment
     }
 }
 
@@ -320,12 +350,13 @@ extension DocumentUploadResponse: @unchecked Sendable {}
 
 extension DocumentUploadResponse: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, status, artifacts, pages, tags
+        case resource, id, name, status, artifacts, pages, tags, assignment
         case accountId    = "account_id"
         case templateId   = "template_id"
         case createdAt    = "created_at"
         case updatedAt    = "updated_at"
         case isClosed     = "is_closed"
+        case signingUrl   = "signing_url"
         case declineReason = "decline_reason"
         case declinedBy   = "declined_by"
     }
@@ -333,7 +364,9 @@ extension DocumentUploadResponse: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let statusString = try c.decode(String.self, forKey: .status)
+        let declinedBySigner = try c.decodeIfPresent(Signer.self, forKey: .declinedBy)
         self.init(
+            resource:      try c.decodeIfPresent(String.self, forKey: .resource),
             id:            try c.decode(String.self,             forKey: .id),
             accountId:     try c.decodeIfPresent(String.self,    forKey: .accountId),
             templateId:    try c.decodeIfPresent(String.self,    forKey: .templateId),
@@ -345,9 +378,14 @@ extension DocumentUploadResponse: Decodable {
             createdAt:     try decodeFlexibleString(from: c, forKey: .createdAt),
             updatedAt:     try decodeFlexibleString(from: c, forKey: .updatedAt),
             isClosed:      try c.decodeIfPresent(Bool.self,      forKey: .isClosed) ?? false,
+            signingUrl:    try c.decodeIfPresent(String.self,    forKey: .signingUrl),
             declineReason: try c.decodeIfPresent(String.self,    forKey: .declineReason),
-            declinedBy:    try c.decodeIfPresent(DeclinedBySigner.self, forKey: .declinedBy),
-            tags:          (try? c.decode([Tag].self, forKey: .tags)) ?? []
+            declinedBySigner: declinedBySigner,
+            declinedBy: declinedBySigner.map {
+                DeclinedBySigner(id: $0.id, fullName: $0.fullName, email: $0.email)
+            },
+            tags:          (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            assignment:    try c.decodeIfPresent(Assignment.self, forKey: .assignment)
         )
     }
 }
@@ -396,8 +434,11 @@ extension DocumentActivity: Decodable {
 /// Full details of a document, including assignment and activities.
 @objcMembers
 public final class DocumentDetails: NSObject {
+    /// Resource discriminator returned by the API.
+    public let resource: String?
     public let id: String
     public let accountId: String?
+    public let templateId: String?
     public let name: String
     public let status: DocumentStatus
     public let statusString: String
@@ -412,17 +453,23 @@ public final class DocumentDetails: NSObject {
     public let updatedAt: String
     public let isClosed: Bool
     public let declineReason: String?
+    /// Full documented signer representation for `declined_by`.
+    public let declinedBySigner: Signer?
+    /// Compatibility representation retained for existing integrations.
     public let declinedBy: DeclinedBySigner?
     public let activities: [DocumentActivity]?
 
-    init(id: String, accountId: String?, name: String, status: DocumentStatus, statusString: String,
+    init(resource: String? = nil, id: String, accountId: String?, templateId: String? = nil,
+         name: String, status: DocumentStatus, statusString: String,
          assignment: Assignment? = nil, downloadUrl: String? = nil, downloadFinalUrl: String? = nil,
          signingUrl: String? = nil, artifacts: DocumentArtifacts? = nil, pages: [DocumentPage] = [],
          tags: [Tag] = [],
          createdAt: String, updatedAt: String, isClosed: Bool = false,
-         declineReason: String? = nil, declinedBy: DeclinedBySigner? = nil,
+         declineReason: String? = nil, declinedBySigner: Signer? = nil,
+         declinedBy: DeclinedBySigner? = nil,
          activities: [DocumentActivity]? = nil) {
-        self.id = id; self.accountId = accountId; self.name = name
+        self.resource = resource
+        self.id = id; self.accountId = accountId; self.templateId = templateId; self.name = name
         self.status = status; self.statusString = statusString
         self.assignment = assignment; self.downloadUrl = downloadUrl
         self.downloadFinalUrl = downloadFinalUrl
@@ -430,6 +477,7 @@ public final class DocumentDetails: NSObject {
         self.artifacts = artifacts; self.pages = pages; self.tags = tags
         self.createdAt = createdAt; self.updatedAt = updatedAt
         self.isClosed = isClosed; self.declineReason = declineReason
+        self.declinedBySigner = declinedBySigner
         self.declinedBy = declinedBy; self.activities = activities
     }
 }
@@ -438,8 +486,9 @@ extension DocumentDetails: @unchecked Sendable {}
 
 extension DocumentDetails: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, status, assignment, artifacts, pages, activities
+        case resource, id, name, status, assignment, artifacts, pages, activities
         case accountId       = "account_id"
+        case templateId      = "template_id"
         case downloadUrl     = "download_url"
         case downloadFinalUrl = "download_final_url"
         case signingUrl      = "signing_url"
@@ -454,9 +503,12 @@ extension DocumentDetails: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let statusString = try c.decode(String.self, forKey: .status)
+        let declinedBySigner = try c.decodeIfPresent(Signer.self, forKey: .declinedBy)
         self.init(
+            resource:         try c.decodeIfPresent(String.self, forKey: .resource),
             id:               try c.decode(String.self,                  forKey: .id),
             accountId:        try c.decodeIfPresent(String.self,         forKey: .accountId),
+            templateId:       try c.decodeIfPresent(String.self,         forKey: .templateId),
             name:             try c.decode(String.self,                  forKey: .name),
             status:           DocumentStatus(string: statusString),
             statusString:     statusString,
@@ -471,7 +523,10 @@ extension DocumentDetails: Decodable {
             updatedAt:        try decodeFlexibleString(from: c, forKey: .updatedAt),
             isClosed:         try c.decodeIfPresent(Bool.self,           forKey: .isClosed) ?? false,
             declineReason:    try c.decodeIfPresent(String.self,         forKey: .declineReason),
-            declinedBy:       try c.decodeIfPresent(DeclinedBySigner.self, forKey: .declinedBy),
+            declinedBySigner: declinedBySigner,
+            declinedBy: declinedBySigner.map {
+                DeclinedBySigner(id: $0.id, fullName: $0.fullName, email: $0.email)
+            },
             activities:       try c.decodeIfPresent([DocumentActivity].self, forKey: .activities)
         )
     }
@@ -491,6 +546,7 @@ public final class SigningProgress: NSObject {
     /// A value between `0.0` and `100.0` representing completion.
     public let percentage: Double
 
+    /// Creates a signing-progress summary from signer counts and completion percentage.
     public init(signed: Int, total: Int, pending: Int, percentage: Double) {
         self.signed = signed; self.total = total
         self.pending = pending; self.percentage = percentage
@@ -507,6 +563,7 @@ public final class DocumentUploadOptions: NSObject {
     /// Override the client's default account ID.
     public var accountId: String?
 
+    /// Creates upload options with an optional account override.
     @objc public init(accountId: String? = nil) {
         self.accountId = accountId
     }
@@ -527,6 +584,15 @@ public final class DocumentListParams: NSObject {
     public var page: Int
     public var perPage: Int
 
+    /// Creates document-list filters and pagination options.
+    /// - Parameters:
+    ///   - status: Optional document status filter.
+    ///   - method: Optional assignment-method filter.
+    ///   - search: Optional free-text search term.
+    ///   - tagIds: Tag IDs that documents must match.
+    ///   - sort: Optional API sort expression.
+    ///   - page: One-based page number; zero omits the parameter.
+    ///   - perPage: Page size; zero omits the parameter.
     @objc public init(
         status: String? = nil,
         method: String? = nil,
@@ -560,21 +626,103 @@ public final class DocumentListParams: NSObject {
 
 extension DocumentListParams: @unchecked Sendable {}
 
-// MARK: - VerifyResponse
+// MARK: - DocumentVerification
 
-struct VerifyResponse: Decodable {
-    let isValid: Bool
+/// Certification details returned by `GET /documents/{signatureHash}/verify`.
+///
+/// When the hash does not identify a certificated document, ``isValid`` is
+/// `false` and the nullable certification fields are absent.
+@objcMembers
+public final class DocumentVerification: NSObject {
+    /// Signature hash that was checked.
+    public let signatureHash: String?
+    /// Matching document ID, when found.
+    public let id: String?
+    /// Raw document status, when found.
+    public let status: String?
+    /// Number of pages, represented as a string by the API.
+    public let pageCount: String?
+    /// Number of required signers, represented as a string by the API.
+    public let signerCount: String?
+    /// Number of completed signers.
+    public let completedCount: Int?
+    /// ISO-8601 time at which signing completed.
+    public let completedAt: String?
+    /// ISO-8601 time at which verification was performed.
+    public let verifiedAt: String?
+    /// Whether the document and its certification are valid.
+    public let isValid: Bool
+    /// Human-readable explanation, especially when ``isValid`` is `false`.
+    public let message: String?
 
+    /// Creates a document-verification result.
+    /// - Parameters:
+    ///   - signatureHash: Hash checked by the verification endpoint.
+    ///   - id: Matching document ID.
+    ///   - status: Matching document status.
+    ///   - pageCount: Page count returned by the API.
+    ///   - signerCount: Required signer count returned by the API.
+    ///   - completedCount: Number of completed signers.
+    ///   - completedAt: ISO-8601 signing completion time.
+    ///   - verifiedAt: ISO-8601 verification time.
+    ///   - isValid: Whether certification is valid.
+    ///   - message: Verification explanation.
+    public init(
+        signatureHash: String? = nil,
+        id: String? = nil,
+        status: String? = nil,
+        pageCount: String? = nil,
+        signerCount: String? = nil,
+        completedCount: Int? = nil,
+        completedAt: String? = nil,
+        verifiedAt: String? = nil,
+        isValid: Bool,
+        message: String? = nil
+    ) {
+        self.signatureHash = signatureHash
+        self.id = id
+        self.status = status
+        self.pageCount = pageCount
+        self.signerCount = signerCount
+        self.completedCount = completedCount
+        self.completedAt = completedAt
+        self.verifiedAt = verifiedAt
+        self.isValid = isValid
+        self.message = message
+    }
+}
+
+extension DocumentVerification: @unchecked Sendable {}
+
+extension DocumentVerification: Decodable {
     enum CodingKeys: String, CodingKey {
-        case isValid  = "is_valid"
-        case verified
+        case signatureHash = "hash"
+        case id, status, message, verified
+        case pageCount = "page_count"
+        case signerCount = "signer_count"
+        case completedCount = "completed_count"
+        case completedAt = "completed_at"
+        case verifiedAt = "verified_at"
+        case isValid = "is_valid"
     }
 
-    init(from decoder: Decoder) throws {
+    public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let valid = try c.decodeIfPresent(Bool.self, forKey: .isValid)
+        let isValid = try c.decodeIfPresent(Bool.self, forKey: .isValid)
             ?? c.decodeIfPresent(Bool.self, forKey: .verified)
-        self.isValid = valid ?? false
+            ?? false
+        self.init(
+            signatureHash: try c.decodeIfPresent(String.self, forKey: .signatureHash),
+            id: try c.decodeIfPresent(String.self, forKey: .id),
+            status: try c.decodeIfPresent(String.self, forKey: .status),
+            pageCount: try decodeFlexibleOptionalString(from: c, forKey: .pageCount),
+            signerCount: try decodeFlexibleOptionalString(from: c, forKey: .signerCount),
+            completedCount: try c.decodeIfPresent(Int.self, forKey: .completedCount),
+            completedAt: try decodeFlexibleOptionalString(from: c, forKey: .completedAt),
+            verifiedAt: try decodeFlexibleOptionalString(from: c, forKey: .verifiedAt),
+            isValid: isValid,
+            message: try c.decodeIfPresent(String.self, forKey: .message)
+        )
     }
 }
 
@@ -586,6 +734,10 @@ public final class WaitUntilReadyOptions: NSObject {
     /// Interval between status poll requests. Defaults to `2` seconds.
     public var pollIntervalSeconds: TimeInterval
 
+    /// Creates polling options.
+    /// - Parameters:
+    ///   - maxWaitSeconds: Maximum total wait in seconds.
+    ///   - pollIntervalSeconds: Delay between status requests in seconds.
     @objc public init(maxWaitSeconds: TimeInterval = 30, pollIntervalSeconds: TimeInterval = 2) {
         self.maxWaitSeconds = maxWaitSeconds
         self.pollIntervalSeconds = pollIntervalSeconds
@@ -625,18 +777,78 @@ extension DocumentStatusInfo: Decodable {
 
 // MARK: - PublicDocumentInfo
 
-/// The unauthenticated public view of a document returned by
+/// The complete unauthenticated document returned by
 /// `GET /public/documents/{document_id}`.
+///
+/// The legacy ``pageCount`` and ``createdBy`` properties remain available for
+/// older integrations. Current responses populate the same document fields as
+/// authenticated document endpoints.
 @objcMembers
 public final class PublicDocumentInfo: NSObject {
+    /// Resource discriminator returned for single-resource responses.
+    public let resource: String?
     public let id: String
+    public let accountId: String?
+    public let templateId: String?
     public let name: String
+    public let status: DocumentStatus
+    public let statusString: String
+    public let artifacts: DocumentArtifacts?
+    public let isClosed: Bool
+    public let signingUrl: String?
+    public let declineReason: String?
+    public let declinedBy: Signer?
+    public let tags: [Tag]
+    public let assignment: Assignment?
+    public let pages: [DocumentPage]
+    public let createdAt: String?
+    public let updatedAt: String?
+
+    /// Legacy page-count field. Current responses derive this from ``pages``.
     public let pageCount: Int
+    /// Legacy creator display name, when an older API response supplies it.
     public let createdBy: String?
 
-    init(id: String, name: String, pageCount: Int, createdBy: String? = nil) {
-        self.id = id; self.name = name
-        self.pageCount = pageCount; self.createdBy = createdBy
+    init(
+        resource: String? = nil,
+        id: String,
+        accountId: String? = nil,
+        templateId: String? = nil,
+        name: String,
+        status: DocumentStatus = .unknown,
+        statusString: String = "unknown",
+        artifacts: DocumentArtifacts? = nil,
+        isClosed: Bool = false,
+        signingUrl: String? = nil,
+        declineReason: String? = nil,
+        declinedBy: Signer? = nil,
+        tags: [Tag] = [],
+        assignment: Assignment? = nil,
+        pages: [DocumentPage] = [],
+        createdAt: String? = nil,
+        updatedAt: String? = nil,
+        pageCount: Int? = nil,
+        createdBy: String? = nil
+    ) {
+        self.resource = resource
+        self.id = id
+        self.accountId = accountId
+        self.templateId = templateId
+        self.name = name
+        self.status = status
+        self.statusString = statusString
+        self.artifacts = artifacts
+        self.isClosed = isClosed
+        self.signingUrl = signingUrl
+        self.declineReason = declineReason
+        self.declinedBy = declinedBy
+        self.tags = tags
+        self.assignment = assignment
+        self.pages = pages
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.pageCount = pageCount ?? pages.count
+        self.createdBy = createdBy
     }
 }
 
@@ -644,29 +856,51 @@ extension PublicDocumentInfo: @unchecked Sendable {}
 
 extension PublicDocumentInfo: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name
+        case resource, id, name, status, artifacts, tags, assignment, pages
+        case accountId = "account_id"
+        case templateId = "template_id"
+        case isClosed = "is_closed"
+        case signingUrl = "signing_url"
+        case declineReason = "decline_reason"
+        case declinedBy = "declined_by"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
         case pageCount = "page_count"
         case createdBy = "created_by"
     }
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let count: Int
-        if let n = try? c.decode(Int.self, forKey: .pageCount) {
-            count = n
-        } else if let s = try? c.decode(String.self, forKey: .pageCount), let n = Int(s) {
-            count = n
-        } else {
-            count = 0
-        }
+        let pages = (try? c.decode([DocumentPage].self, forKey: .pages)) ?? []
+        let count = (try? c.decode(Int.self, forKey: .pageCount))
+            ?? (try? c.decode(String.self, forKey: .pageCount)).flatMap(Int.init)
+        let statusString = try c.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
         self.init(
+            resource: try c.decodeIfPresent(String.self, forKey: .resource),
             id: try c.decode(String.self, forKey: .id),
+            accountId: try c.decodeIfPresent(String.self, forKey: .accountId),
+            templateId: try c.decodeIfPresent(String.self, forKey: .templateId),
             name: try c.decode(String.self, forKey: .name),
+            status: DocumentStatus(string: statusString),
+            statusString: statusString,
+            artifacts: try c.decodeIfPresent(DocumentArtifacts.self, forKey: .artifacts),
+            isClosed: try c.decodeIfPresent(Bool.self, forKey: .isClosed) ?? false,
+            signingUrl: try c.decodeIfPresent(String.self, forKey: .signingUrl),
+            declineReason: try c.decodeIfPresent(String.self, forKey: .declineReason),
+            declinedBy: try c.decodeIfPresent(Signer.self, forKey: .declinedBy),
+            tags: (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            assignment: try c.decodeIfPresent(Assignment.self, forKey: .assignment),
+            pages: pages,
+            createdAt: try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
+            updatedAt: try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
             pageCount: count,
             createdBy: try c.decodeIfPresent(String.self, forKey: .createdBy)
         )
     }
 }
+
+/// Preferred Swift name for the public document response model.
+public typealias PublicDocument = PublicDocumentInfo
 
 // MARK: - SendTokenChannel
 
@@ -685,9 +919,8 @@ extension PublicDocumentInfo: Decodable {
 
 /// Payload for `PUT /public/documents/{id}/send-token`.
 ///
-/// The documented request body is `{ "email": "..." }`. For the default email
-/// channel the SDK encodes exactly that; when ``channel`` is `.whatsapp` it also
-/// sends a `channel` field so the token is delivered over WhatsApp.
+/// Production documents `{ "email": "..." }`. When ``channel`` is `.whatsapp`,
+/// the SDK also sends the compatibility `channel` field.
 @objcMembers
 public final class SendTokenPayload: NSObject, Encodable {
     /// The recipient address (email address, or phone number for WhatsApp).
@@ -695,6 +928,10 @@ public final class SendTokenPayload: NSObject, Encodable {
     /// The delivery channel.
     public let channel: SendTokenChannel
 
+    /// Creates a public signing-token delivery payload.
+    /// - Parameters:
+    ///   - recipient: Email address or WhatsApp number receiving the token.
+    ///   - channel: Delivery channel.
     @objc public init(recipient: String, channel: SendTokenChannel = .email) {
         self.recipient = recipient
         self.channel = channel
@@ -706,7 +943,6 @@ public final class SendTokenPayload: NSObject, Encodable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         // The documented field is `email`; carry the recipient there.
         try c.encode(recipient, forKey: .email)
-        // Only signal a non-default channel to keep the email case docs-exact.
         if channel != .email {
             try c.encode(channel.stringValue, forKey: .channel)
         }

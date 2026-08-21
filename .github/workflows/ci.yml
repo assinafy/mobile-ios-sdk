@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main, develop]
+    tags: ['v*']
   pull_request:
     branches: [main, develop]
 
@@ -16,20 +17,30 @@ concurrency:
 jobs:
   test:
     name: Test
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Show Swift version
         run: swift --version
 
-      - name: Build (debug)
-        run: swift build
+      - name: Test with Swift 6 concurrency and warnings enforced
+        run: swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
-      - name: Run tests
-        run: swift test
+      - name: Build release
+        run: swift build -c release -Xswiftc -warnings-as-errors
 
-      - name: Build (release)
-        run: swift build -c release
+      - name: Build for iOS Simulator
+        run: >-
+          xcodebuild -scheme Assinafy
+          -destination 'generic/platform=iOS Simulator'
+          -configuration Release
+          -derivedDataPath "$RUNNER_TEMP/AssinafyDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          build

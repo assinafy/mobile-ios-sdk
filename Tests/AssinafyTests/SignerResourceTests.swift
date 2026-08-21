@@ -70,9 +70,20 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertEqual(json["whatsapp_phone_number"] as? String, "+5548999990000")
     }
 
-    func testCreateRequiresEmailOrWhatsapp() async {
-        await assertThrowsValidationError {
-            _ = try await self.resource.create(CreateSignerPayload(fullName: "Test"))
+    func testCreateAllowsDocumentedFullNameOnlyPayload() async throws {
+        mock.stubEnvelope(signerDict())
+
+        _ = try await resource.create(CreateSignerPayload(fullName: "Test"))
+
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body.count, 1)
+        XCTAssertEqual(body["full_name"] as? String, "Test")
+    }
+
+    func testValidateCreatePayloadRejectsBlankFullNameSynchronously() {
+        XCTAssertThrowsError(try resource.validateCreatePayload(CreateSignerPayload(fullName: "  \n"))) { error in
+            XCTAssertTrue(error is ValidationError)
         }
     }
 
@@ -185,6 +196,20 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.method, .put)
     }
 
+    func testUpdateEncodesGovernmentId() async throws {
+        mock.stubEnvelope(signerDict(id: "s1"))
+
+        _ = try await resource.update(
+            signerId: "s1",
+            payload: UpdateSignerPayload(governmentId: "39053344705")
+        )
+
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body.count, 1)
+        XCTAssertEqual(body["government_id"] as? String, "39053344705")
+    }
+
     func testDeleteUsesCorrectPath() async throws {
         mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 204))
         try await resource.delete(signerId: "s1")
@@ -197,29 +222,124 @@ final class SignerResourceTests: XCTestCase {
     func testSignerDescriptionIsReadable() {
         let signer = Signer(id: "1", fullName: "Test", email: "t@t.com")
         XCTAssertFalse(signer.description.isEmpty)
+        XCTAssertFalse(signer.description.contains("t@t.com"))
     }
 
     func testSignerDecodesDocumentAssignmentFields() throws {
         let data = try JSONSerialization.data(withJSONObject: [
+            "resource": "signer",
             "id": "s1",
             "full_name": "Test",
             "email": NSNull(),
             "verification_method": "Whatsapp",
             "notification_methods": ["Whatsapp"],
+            "notified": true,
             "completed": true,
             "notification_history": [
                 ["event": "signature_requested", "status": "sent", "sent_at": "2026-05-04T15:00:00Z"]
             ],
         ])
         let signer = try JSONDecoder.assinafy.decode(Signer.self, from: data)
+        XCTAssertEqual(signer.resource, "signer")
         XCTAssertNil(signer.email)
         XCTAssertEqual(signer.verificationMethod, "Whatsapp")
         XCTAssertEqual(signer.notificationMethods, ["Whatsapp"])
+        XCTAssertEqual(signer.notified?.boolValue, true)
         XCTAssertTrue(signer.completed)
         XCTAssertEqual(signer.notificationHistory.first?.event, "signature_requested")
     }
 
     // MARK: - Signer-facing document endpoints
+
+    func testGetSelfDecodesSignatureReuseFlag() async throws {
+        mock.stubEnvelope([
+            "resource": "signer",
+            "id": "s1",
+            "full_name": "Signer",
+            "has_signature": true,
+            "has_initial": false,
+            "is_signature_reusable": true,
+        ])
+
+        let result = try await resource.getSelf(signerAccessCode: "code")
+
+        XCTAssertEqual(result.resource, "signer")
+        XCTAssertTrue(result.hasSignature)
+        XCTAssertTrue(result.isSignatureReusable)
+        XCTAssertEqual(mock.lastRequest?.queryItems, [
+            URLQueryItem(name: "signer-access-code", value: "code")
+        ])
+    }
+
+    func testAcceptTermsUsesQueryAndHandlesBareEnvelope() async throws {
+        mock.stubJSON(["status": 200, "message": "Accepted"])
+
+        let result = try await resource.acceptTerms(signerAccessCode: "code")
+
+        XCTAssertTrue(result.hasAcceptedTerms)
+        XCTAssertEqual(result.fullName, "")
+        XCTAssertEqual(mock.lastRequest?.method, .put)
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/accept-terms")
+        XCTAssertNil(mock.lastRequest?.body)
+        XCTAssertEqual(mock.lastRequest?.queryItems, [
+            URLQueryItem(name: "signer-access-code", value: "code")
+        ])
+    }
+
+    func testAcceptTermsStillDecodesLegacyResponseData() async throws {
+        mock.stubEnvelope([
+            "full_name": "Signer",
+            "email": "signer@example.com",
+            "has_accepted_terms": true,
+        ])
+
+        let result = try await resource.acceptTerms(signerAccessCode: "code")
+
+        XCTAssertEqual(result.fullName, "Signer")
+        XCTAssertEqual(result.email, "signer@example.com")
+    }
+
+    func testAcceptTermsStillDecodesLegacyDirectResponse() async throws {
+        mock.stubJSON([
+            "full_name": "Signer",
+            "email": "signer@example.com",
+            "has_accepted_terms": true,
+        ])
+
+        let result = try await resource.acceptTerms(signerAccessCode: "code")
+
+        XCTAssertEqual(result.fullName, "Signer")
+        XCTAssertTrue(result.hasAcceptedTerms)
+    }
+
+    func testVerifyEmailUsesQueryAndExactBody() async throws {
+        mock.stubJSON(["status": 200, "message": "Verified"])
+
+        try await resource.verifyEmail(
+            payload: VerifyEmailPayload(verificationCode: "123456", signerAccessCode: "code")
+        )
+
+        XCTAssertEqual(mock.lastRequest?.method, .post)
+        XCTAssertEqual(mock.lastRequest?.path, "/verify")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [
+            URLQueryItem(name: "signer-access-code", value: "code")
+        ])
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body.count, 1)
+        XCTAssertEqual(body["verification-code"] as? String, "123456")
+    }
+
+    func testDownloadSignatureDoesNotRepeatTypeAsQuery() async throws {
+        mock.stub(response: APIResponse(data: Data([0x89]), headers: [:], statusCode: 200))
+
+        _ = try await resource.downloadSignature(signerAccessCode: "code", type: .initial)
+
+        XCTAssertEqual(mock.lastRequest?.path, "/signature/initial")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [
+            URLQueryItem(name: "signer-access-code", value: "code")
+        ])
+    }
 
     func testGetCurrentDocumentUsesSignerEndpoint() async throws {
         mock.stubEnvelope([
@@ -237,21 +357,48 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code")
     }
 
-    func testListSignerDocumentsForwardsFilters() async throws {
+    func testListSignerDocumentsPreservesLegacyFiltersWithPagination() async throws {
         mock.stubEnvelopeList([])
+        let params = SignerDocumentListParams(
+            status: "pending_signature",
+            method: "virtual",
+            search: "legacy",
+            sort: "name"
+        )
+        params.page = 2
+        params.perPage = 25
         _ = try await resource.listSignerDocuments(
             signerId: "s1",
             signerAccessCode: "code",
-            params: SignerDocumentListParams(status: "pending_signature", method: "virtual", search: "abc", sort: "name")
+            params: params
         )
         let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { acc, item in
             acc[item.name] = item.value
         }
         XCTAssertEqual(pairs["status"], "pending_signature")
         XCTAssertEqual(pairs["method"], "virtual")
-        XCTAssertEqual(pairs["search"], "abc")
+        XCTAssertEqual(pairs["search"], "legacy")
         XCTAssertEqual(pairs["sort"], "name")
+        XCTAssertEqual(pairs["page"], "2")
+        XCTAssertEqual(pairs["per-page"], "25")
         XCTAssertEqual(pairs["signer-access-code"], "code")
+    }
+
+    func testSearchSignerDocumentsPreservesLegacyStatus() async throws {
+        mock.stubEnvelopeList([])
+
+        _ = try await resource.searchSignerDocuments(
+            signerId: "s1",
+            signerAccessCode: "code",
+            search: "contract",
+            status: "pending_signature"
+        )
+
+        let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { result, item in
+            result[item.name] = item.value
+        }
+        XCTAssertEqual(pairs["search"], "contract")
+        XCTAssertEqual(pairs["status"], "pending_signature")
     }
 
     func testSignMultipleSendsArrayOfIDs() async throws {
@@ -298,11 +445,23 @@ final class SignerResourceTests: XCTestCase {
         _ = try await resource.downloadSignerDocumentArtifact(
             signerId: "s1",
             documentId: "d1",
-            artifact: .certificated,
-            signerAccessCode: "code"
+            artifact: .certificated
         )
         XCTAssertEqual(mock.lastRequest?.path, "/signers/s1/documents/d1/download/certificated")
-        XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code")
+        XCTAssertNil(mock.lastRequest?.queryItems)
+    }
+
+    func testLegacySignerArtifactAccessCodeIsNotSent() async throws {
+        mock.stub(response: APIResponse(data: Data([0xFF]), headers: [:], statusCode: 200))
+
+        _ = try await resource.downloadSignerDocumentArtifact(
+            signerId: "s1",
+            documentId: "d1",
+            artifact: .original,
+            signerAccessCode: "legacy-code"
+        )
+
+        XCTAssertNil(mock.lastRequest?.queryItems)
     }
 
     func testGetSigningDocumentUsesGenericSignEndpoint() async throws {

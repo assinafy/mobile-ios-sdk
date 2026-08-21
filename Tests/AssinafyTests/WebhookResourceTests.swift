@@ -23,9 +23,11 @@ final class WebhookResourceTests: XCTestCase {
 
     private func dispatchDict(id: String = "d1") -> [String: Any] {
         [
+            "resource": "activity_dispatching_history",
             "id": id,
             "event": "document_ready",
             "activity_id": 1,
+            "payload": ["document": ["id": "doc1"], "attempt": 1],
             "delivered": true,
             "http_status": 200,
             "created_at": "2026-07-20T19:03:13Z",
@@ -47,6 +49,7 @@ final class WebhookResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.method, .get)
     }
 
+    @available(*, deprecated, message: "Exercises the deprecated source-compatible alias.")
     func testDeleteForwardsToInactivate() async throws {
         // The API has no destructive DELETE for subscriptions; the deprecated
         // delete() forwards to the documented inactivate endpoint.
@@ -60,7 +63,10 @@ final class WebhookResourceTests: XCTestCase {
         mock.stubEnvelope(dispatchDict())
         let dispatch = try await resource.retryDispatch(dispatchId: "d1")
         XCTAssertEqual(dispatch.createdAt, "2026-07-20T19:03:13Z")
-        XCTAssertEqual(dispatch.httpStatus, 200)
+        XCTAssertEqual(dispatch.httpStatusCode?.intValue, 200)
+        XCTAssertEqual(dispatch.resource, "activity_dispatching_history")
+        XCTAssertEqual(dispatch.payload?["attempt"] as? Int, 1)
+        XCTAssertEqual((dispatch.payload?["document"] as? [String: Any])?["id"] as? String, "doc1")
     }
 
     func testInactivateHitsDocumentedEndpoint() async throws {
@@ -68,6 +74,25 @@ final class WebhookResourceTests: XCTestCase {
         try await resource.inactivate()
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/webhooks/inactivate")
         XCTAssertEqual(mock.lastRequest?.method, .put)
+    }
+
+    func testInactivateAndReturnDecodesUpdatedSubscription() async throws {
+        var subscription = subscriptionDict()
+        subscription["is_active"] = false
+        mock.stubEnvelope(subscription)
+        let result = try await resource.inactivateAndReturn()
+        XCTAssertFalse(result.isActive)
+        XCTAssertEqual(result.url, "https://example.com/hook")
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/webhooks/inactivate")
+        XCTAssertEqual(mock.lastRequest?.method, .put)
+    }
+
+    func testDispatchPreservesNullHTTPStatus() async throws {
+        var dispatch = dispatchDict()
+        dispatch["http_status"] = NSNull()
+        mock.stubEnvelope(dispatch)
+        let result = try await resource.retryDispatch(dispatchId: "d1")
+        XCTAssertNil(result.httpStatusCode)
     }
 
     func testListEventTypesCallsGlobalEndpoint() async throws {

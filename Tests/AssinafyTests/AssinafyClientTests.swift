@@ -48,4 +48,80 @@ final class AssinafyClientTests: XCTestCase {
         let client = AssinafyClient(configuration: config)
         XCTAssertNotNil(client)
     }
+
+    func testSandboxHostEnablesOnlyKnownRequestCompatibility() {
+        let sandbox = AssinafyClient(
+            apiKey: "test-key",
+            defaultAccountId: "account-id",
+            baseURL: "https://sandbox.assinafy.com.br/v1"
+        )
+        let production = AssinafyClient(apiKey: "test-key", defaultAccountId: "account-id")
+
+        XCTAssertTrue(sandbox.documents.usesSandboxCompatibility)
+        XCTAssertTrue(sandbox.assignments.usesSandboxCompatibility)
+        XCTAssertFalse(production.documents.usesSandboxCompatibility)
+        XCTAssertFalse(production.assignments.usesSandboxCompatibility)
+    }
+
+    func testUploadWorkflowValidatesBeforeCreatingDocument() async {
+        let mock = MockHTTPClient()
+        let client = AssinafyClient(http: mock, defaultAccountId: "acc")
+        let options = AssinafyClient.UploadOptions(signers: [])
+
+        await assertThrowsValidationError {
+            _ = try await client.uploadAndRequestSignatures(
+                documentData: Data("%PDF-1.4\n".utf8),
+                options: options
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+
+    func testUploadWorkflowCompletesAllSteps() async throws {
+        let mock = MockHTTPClient()
+        let client = AssinafyClient(http: mock, defaultAccountId: "acc")
+        let document: [String: Any] = [
+            "id": "doc-1",
+            "account_id": "acc",
+            "name": "document.pdf",
+            "status": "metadata_ready",
+            "artifacts": ["original": "https://example.com/original.pdf"],
+            "pages": [],
+            "created_at": "2026-08-21T12:00:00Z",
+            "updated_at": "2026-08-21T12:00:00Z"
+        ]
+        mock.stubEnvelope(document)
+        mock.stubEnvelope(document)
+        mock.stubEnvelopeList([])
+        mock.stubEnvelope([
+            "id": "signer-1",
+            "full_name": "Example Signer",
+            "email": "signer@example.com"
+        ])
+        mock.stubEnvelope([
+            "id": "assignment-1",
+            "method": "virtual",
+            "signers": []
+        ])
+
+        let result = try await client.uploadAndRequestSignatures(
+            documentData: Data("%PDF-1.4\n".utf8),
+            options: AssinafyClient.UploadOptions(signers: [
+                .init(name: "Example Signer", email: "signer@example.com")
+            ])
+        )
+
+        XCTAssertEqual(result.document.id, "doc-1")
+        XCTAssertEqual(result.assignment.id, "assignment-1")
+        XCTAssertEqual(
+            mock.allRequests.map(\.path),
+            [
+                "/accounts/acc/documents",
+                "/documents/doc-1",
+                "/accounts/acc/signers",
+                "/accounts/acc/signers",
+                "/documents/doc-1/assignments"
+            ]
+        )
+    }
 }

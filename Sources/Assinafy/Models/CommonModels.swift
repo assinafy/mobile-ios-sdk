@@ -36,6 +36,10 @@ public struct PaginatedResult<T: Sendable>: Sendable {
     /// Pagination metadata, or `nil` when not provided by the server.
     public let meta: PaginationMeta?
 
+    /// Creates a page of results.
+    /// - Parameters:
+    ///   - data: Items on the current page.
+    ///   - meta: Optional pagination metadata from response headers.
     public init(data: [T], meta: PaginationMeta? = nil) {
         self.data = data
         self.meta = meta
@@ -49,25 +53,38 @@ public struct PaginatedResult<T: Sendable>: Sendable {
 /// The SDK ships with a ``NoopLogger`` that silently discards all messages.
 /// Provide your own conforming type to capture internal SDK events.
 public protocol Logger: Sendable {
+    /// Records a debug-level message with structured context.
     func debug(_ message: String, context: [String: Any])
+    /// Records an informational message with structured context.
     func info(_ message: String, context: [String: Any])
+    /// Records a warning message with structured context.
     func warn(_ message: String, context: [String: Any])
+    /// Records an error message with structured context.
     func error(_ message: String, context: [String: Any])
 }
 
 public extension Logger {
+    /// Records a debug-level message without additional context.
     func debug(_ message: String) { debug(message, context: [:]) }
+    /// Records an informational message without additional context.
     func info(_ message: String)  { info(message, context: [:])  }
+    /// Records a warning message without additional context.
     func warn(_ message: String)  { warn(message, context: [:])  }
+    /// Records an error message without additional context.
     func error(_ message: String) { error(message, context: [:]) }
 }
 
 /// A logger that discards all messages. Used when no logger is configured.
 public struct NoopLogger: Logger {
+    /// Creates a logger that discards every message.
     public init() {}
+    /// Discards a debug-level message and its context.
     public func debug(_ message: String, context: [String: Any]) {}
+    /// Discards an informational message and its context.
     public func info(_ message: String, context: [String: Any])  {}
+    /// Discards a warning message and its context.
     public func warn(_ message: String, context: [String: Any])  {}
+    /// Discards an error message and its context.
     public func error(_ message: String, context: [String: Any]) {}
 }
 
@@ -193,9 +210,11 @@ extension String {
 
 func parsePaginationMeta(from headers: [AnyHashable: Any]) -> PaginationMeta? {
     func int(_ key: String) -> Int? {
-        let v = headers[key] ?? headers[key.lowercased()]
-        guard let s = v as? String, let n = Int(s) else { return nil }
-        return n
+        guard let value = headers.first(where: {
+            String(describing: $0.key).caseInsensitiveCompare(key) == .orderedSame
+        })?.value else { return nil }
+        if let number = value as? NSNumber { return number.intValue }
+        return Int(String(describing: value))
     }
     let cp = int("X-Pagination-Current-Page")
     let pp = int("X-Pagination-Per-Page")
@@ -220,6 +239,13 @@ public struct ListParams: Sendable {
     public var sort: String?
     public var extra: [String: String]
 
+    /// Creates pagination, search, sorting, and endpoint-specific query options.
+    /// - Parameters:
+    ///   - page: One-based page number.
+    ///   - perPage: Maximum items per page.
+    ///   - search: Optional free-text search term.
+    ///   - sort: Optional API sort expression.
+    ///   - extra: Additional endpoint-specific query parameters.
     public init(
         page: Int? = nil,
         perPage: Int? = nil,
@@ -236,11 +262,13 @@ public struct ListParams: Sendable {
 
     func toQueryItems() -> [URLQueryItem] {
         var items: [URLQueryItem] = []
-        if let p = page     { items.append(.init(name: "page",     value: "\(p)")) }
-        if let p = perPage  { items.append(.init(name: "per-page", value: "\(p)")) }
-        if let s = search   { items.append(.init(name: "search",   value: s))     }
-        if let s = sort     { items.append(.init(name: "sort",     value: s))     }
-        for (k, v) in extra { items.append(.init(name: k, value: v)) }
+        if let p = page, p > 0     { items.append(.init(name: "page",     value: "\(p)")) }
+        if let p = perPage, p > 0  { items.append(.init(name: "per-page", value: "\(p)")) }
+        if let s = search, !s.isEmpty { items.append(.init(name: "search", value: s)) }
+        if let s = sort, !s.isEmpty   { items.append(.init(name: "sort", value: s)) }
+        for (k, v) in extra.sorted(by: { $0.key < $1.key }) {
+            items.append(.init(name: k, value: v))
+        }
         return items
     }
 }

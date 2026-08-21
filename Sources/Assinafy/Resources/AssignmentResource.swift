@@ -16,25 +16,32 @@ public final class AssignmentResource: BaseResource {
 
     // MARK: - Swift async API
 
-    /// Lists the assignments belonging to an account.
+    /// Lists assignments for the authenticated user's current account.
     ///
-    /// Mirrors `GET /assignments`. The account context is supplied via the
-    /// `accountId` query parameter (using the client's default account when not
-    /// overridden).
+    /// Mirrors `GET /assignments`. Production derives account context from the
+    /// credentials. An explicitly supplied `accountId` is retained for legacy
+    /// deployments; clients configured for the Assinafy sandbox add their default
+    /// account because that host requires the compatibility query.
     ///
     /// - Parameters:
     ///   - params: Pagination parameters (`page`, `per-page`).
-    ///   - accountId: Override the client's default account ID.
+    ///   - accountId: Explicit account identifier for deployments that require it.
     /// - Returns: A ``PaginatedResult`` of ``Assignment`` objects.
     public func list(
         params: ListParams = ListParams(),
         accountId: String? = nil
     ) async throws -> PaginatedResult<Assignment> {
-        let id = try self.accountId(accountId)
         var items = params.toQueryItems()
-        items.append(URLQueryItem(name: "accountId", value: id))
-        return try await callList("Failed to list assignments",
-                                  request: .get("/assignments", queryItems: items))
+        if let accountId = accountId ?? (usesSandboxCompatibility ? defaultAccountId : nil) {
+            items.append(URLQueryItem(
+                name: "accountId",
+                value: try requireId(accountId, name: "Account ID")
+            ))
+        }
+        return try await callList(
+            "Failed to list assignments",
+            request: .get("/assignments", queryItems: items.isEmpty ? nil : items)
+        )
     }
 
     /// Creates a signing assignment for a document.
@@ -66,7 +73,7 @@ public final class AssignmentResource: BaseResource {
         payload: CreateAssignmentPayload
     ) async throws -> CostEstimate {
         let did = try requireId(documentId, name: "Document ID")
-        let body = try buildAssignmentBody(payload, allowWithoutId: true)
+        let body = try buildAssignmentEstimateBody(payload)
         let request = try APIRequest.post("/documents/\(did)/assignments/estimate-cost", body: body)
         return try await callCostEstimate("Failed to estimate assignment cost", request: request)
     }
@@ -157,6 +164,11 @@ public final class AssignmentResource: BaseResource {
         let did = try requireId(documentId, name: "Document ID")
         let aid = try requireId(assignmentId, name: "Assignment ID")
         let code = try requireId(signerAccessCode, name: "Signer access code")
+        for field in fields {
+            _ = try requireId(field.itemId, name: "Assignment item ID")
+            _ = try requireId(field.fieldId, name: "Field ID")
+            _ = try requireId(field.pageId, name: "Page ID")
+        }
         let body = try JSONEncoder.assinafy.encode(fields)
         let request = APIRequest(
             method: .post,

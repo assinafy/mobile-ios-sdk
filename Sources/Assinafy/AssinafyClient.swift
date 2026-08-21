@@ -86,7 +86,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 /// ```objc
 /// ASFAssinafyClient *client = [[ASFAssinafyClient alloc] initWithApiKey:@"key"
 ///                                                         defaultAccountId:@"acc"];
-/// [client.signers getSignerWithId:@"sig_id" accountId:nil completion:^(ASFSigner *s, NSError *e) {
+/// [client.signers getSignerWithId:@"sig_id" accountId:nil completion:^(Signer *s, NSError *e) {
 ///     NSLog(@"%@", s.fullName);
 /// }];
 /// ```
@@ -146,9 +146,20 @@ public final class AssinafyClient: NSObject {
         self.config = configuration
         let accountId = configuration.defaultAccountId
         let logger    = configuration.logger
-        documents   = DocumentResource(http: http, defaultAccountId: accountId, logger: logger)
+        let sandboxCompatibility = baseURL.host?.caseInsensitiveCompare("sandbox.assinafy.com.br") == .orderedSame
+        documents   = DocumentResource(
+            http: http,
+            defaultAccountId: accountId,
+            logger: logger,
+            usesSandboxCompatibility: sandboxCompatibility
+        )
         signers     = SignerResource(http: http, defaultAccountId: accountId, logger: logger)
-        assignments = AssignmentResource(http: http, defaultAccountId: accountId, logger: logger)
+        assignments = AssignmentResource(
+            http: http,
+            defaultAccountId: accountId,
+            logger: logger,
+            usesSandboxCompatibility: sandboxCompatibility
+        )
         webhooks    = WebhookResource(http: http, defaultAccountId: accountId, logger: logger)
         templates   = TemplateResource(http: http, defaultAccountId: accountId, logger: logger)
         tags        = TagResource(http: http, defaultAccountId: accountId, logger: logger)
@@ -225,6 +236,8 @@ public final class AssinafyClient: NSObject {
         /// Override the client's default account ID.
         public var accountId: String?
 
+        /// Creates workflow options for the signers that should receive the document.
+        /// - Parameter signers: Signers to create or reuse before requesting signatures.
         @objc public init(signers: [SignerInput]) {
             self.signers = signers
         }
@@ -237,6 +250,10 @@ public final class AssinafyClient: NSObject {
         public var email: String
         public var whatsappPhoneNumber: String?
 
+        /// Creates a signer descriptor.
+        /// - Parameters:
+        ///   - name: Signer's full name.
+        ///   - email: Signer's email address.
         @objc public init(name: String, email: String) {
             self.name = name
             self.email = email
@@ -263,32 +280,36 @@ public final class AssinafyClient: NSObject {
         accountId: String? = nil
     ) async throws -> (document: DocumentUploadResponse, assignment: Assignment) {
         let acct = accountId ?? options.accountId
+        let message = options.message
+        let expiresAt = options.expiresAt
+        let signerPayloads = options.signers.map {
+            CreateSignerPayload(
+                fullName: $0.name,
+                email: $0.email,
+                whatsappPhoneNumber: $0.whatsappPhoneNumber
+            )
+        }
+        guard !signerPayloads.isEmpty else {
+            throw ValidationError("At least one signer is required")
+        }
+        for payload in signerPayloads {
+            try signers.validateCreatePayload(payload)
+        }
+
         let uploadOpts = DocumentUploadOptions(accountId: acct)
         let document = try await documents.upload(documentData, options: uploadOpts)
         _ = try await documents.waitUntilReady(documentId: document.id)
 
-        let signerObjects: [Signer] = try await withThrowingTaskGroup(of: Signer.self) { group in
-            for input in options.signers {
-                let payload = CreateSignerPayload(
-                    fullName: input.name,
-                    email: input.email,
-                    whatsappPhoneNumber: input.whatsappPhoneNumber
-                )
-                group.addTask { [weak self] in
-                    guard let self else { throw AssinafySDKError("Client deallocated") }
-                    return try await self.signers.create(payload, accountId: acct)
-                }
-            }
-            var result: [Signer] = []
-            for try await s in group { result.append(s) }
-            return result
+        var signerObjects: [Signer] = []
+        for payload in signerPayloads {
+            signerObjects.append(try await signers.create(payload, accountId: acct))
         }
 
         let payload = CreateAssignmentPayload.withSignerIds(
             signerObjects.map(\.id),
             method: .virtual,
-            message: options.message,
-            expiresAt: options.expiresAt
+            message: message,
+            expiresAt: expiresAt
         )
         let assignment = try await assignments.create(
             documentId: document.id,

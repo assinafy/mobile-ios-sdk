@@ -31,11 +31,37 @@ public final class AuthResource: BaseResource {
         try await callVoid("Failed to link social login", request: request)
     }
 
-    /// Fetches the authenticated user's profile and the accounts they belong to.
+    /// Fetches the authenticated user's profile.
     ///
     /// Mirrors `GET /users/self`.
     public func currentUser() async throws -> SelfResponse {
         return try await call("Failed to fetch current user", request: .get("/users/self"))
+    }
+
+    /// Fetches all owner-notification preferences for the authenticated user.
+    ///
+    /// Mirrors `GET /users/self/notification-preferences`.
+    public func getNotificationPreferences() async throws -> NotificationPreferences {
+        try await call(
+            "Failed to fetch notification preferences",
+            request: .get("/users/self/notification-preferences")
+        )
+    }
+
+    /// Updates selected owner-notification preferences and returns the full map.
+    ///
+    /// Mirrors `PUT /users/self/notification-preferences`. At least one field
+    /// must be supplied; omitted fields retain their current server value.
+    public func updateNotificationPreferences(
+        _ payload: UpdateNotificationPreferencesPayload
+    ) async throws -> NotificationPreferences {
+        guard !payload.isEmpty else {
+            throw ValidationError("At least one notification preference is required")
+        }
+        return try await call(
+            "Failed to update notification preferences",
+            request: try APIRequest.put("/users/self/notification-preferences", body: payload)
+        )
     }
 
     /// Fetches the authenticated user's document-funnel KPIs, summed across all
@@ -131,6 +157,23 @@ public final class AuthResource: BaseResource {
     @objc(currentUserWithCompletion:)
     public func currentUser(completion: @escaping (SelfResponse?, Error?) -> Void) {
         withCompletion({ try await self.currentUser() }, completion: completion)
+    }
+
+    /// Fetches notification preferences and delivers them on the **main queue**.
+    @objc(getNotificationPreferencesWithCompletion:)
+    public func getNotificationPreferences(
+        completion: @escaping (NotificationPreferences?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.getNotificationPreferences() }, completion: completion)
+    }
+
+    /// Updates notification preferences and delivers the full map on the **main queue**.
+    @objc(updateNotificationPreferences:completion:)
+    public func updateNotificationPreferences(
+        _ payload: UpdateNotificationPreferencesPayload,
+        completion: @escaping (NotificationPreferences?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.updateNotificationPreferences(payload) }, completion: completion)
     }
 
     /// Fetches the user's KPIs and delivers the result on the **main queue**.

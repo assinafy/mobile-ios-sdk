@@ -13,6 +13,7 @@ final class TemplateResourceTests: XCTestCase {
 
     private func templateDict(id: String = "t1") -> [String: Any] {
         [
+            "resource": "template",
             "id": id,
             "name": "My Template",
             "status": "Ready",
@@ -25,26 +26,31 @@ final class TemplateResourceTests: XCTestCase {
     }
 
     func testListUsesTemplatesEndpoint() async throws {
-        mock.stubEnvelopeList([])
-        _ = try await resource.list()
+        mock.stubEnvelopeList([templateDict()])
+        let result = try await resource.list()
+        XCTAssertEqual(result.data.first?.resource, "template")
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/templates")
     }
 
-    func testListSupportsTemplateSpecificFilters() async throws {
+    func testListSendsDocumentedParametersAndLiveVerifiedExtensions() async throws {
         mock.stubEnvelopeList([])
         _ = try await resource.list(
             params: TemplateListParams(
                 status: "ready",
                 search: "contract",
                 tagIds: ["tag1", "tag2"],
-                sort: "updated_at"
+                sort: "updated_at",
+                page: 2,
+                perPage: 25
             )
         )
         let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { acc, item in
             acc[item.name] = item.value
         }
-        XCTAssertEqual(pairs["status"], "ready")
         XCTAssertEqual(pairs["search"], "contract")
+        XCTAssertEqual(pairs["page"], "2")
+        XCTAssertEqual(pairs["per-page"], "25")
+        XCTAssertEqual(pairs["status"], "ready")
         XCTAssertEqual(pairs["tags"], "tag1,tag2")
         XCTAssertEqual(pairs["sort"], "updated_at")
     }
@@ -84,6 +90,7 @@ final class TemplateResourceTests: XCTestCase {
         dict["default_document_tags"] = [["id": "tag2", "name": "Contracts"]]
         mock.stubEnvelope(dict)
         let details = try await resource.get(templateId: "t1")
+        XCTAssertEqual(details.resource, "template")
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/templates/t1")
         XCTAssertEqual(details.documentName, "doc.pdf")
         XCTAssertEqual(details.message, "Sign please")
@@ -148,5 +155,33 @@ final class TemplateResourceTests: XCTestCase {
         await assertThrowsValidationError {
             try await self.resource.delete(templateId: "")
         }
+    }
+
+    func testTemplateCreationSignerRequiresExistingSignerID() {
+        XCTAssertThrowsError(
+            try TemplateSigner(roleId: "role1").validateForDocumentCreation()
+        )
+        XCTAssertNoThrow(
+            try TemplateSigner(roleId: "role1", id: "signer1").validateForDocumentCreation()
+        )
+    }
+
+    func testTemplateCostSignerRequiresRoleAndOmitsCreateOnlyFields() throws {
+        XCTAssertThrowsError(
+            try TemplateSigner(roleId: " ").costEstimatePayload()
+        )
+        let signer = TemplateSigner(
+            roleId: "role1",
+            id: "signer1",
+            verificationMethod: "Email",
+            notificationMethods: ["Email"],
+            step: NSNumber(value: 2)
+        )
+        let data = try JSONEncoder.assinafy.encode(try signer.costEstimatePayload())
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["role_id"] as? String, "role1")
+        XCTAssertEqual(json["verification_method"] as? String, "Email")
+        XCTAssertNil(json["id"])
+        XCTAssertNil(json["step"])
     }
 }

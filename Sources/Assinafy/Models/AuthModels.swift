@@ -150,8 +150,10 @@ extension LoginResponse: Decodable {
 
 // MARK: - SelfResponse
 
-/// The authenticated user's profile and the accounts they belong to,
-/// returned by `GET /users/self`.
+/// The authenticated user's profile returned by `GET /users/self`.
+///
+/// The current API returns the user directly. ``accounts`` is retained for
+/// source compatibility with older responses that wrapped `{ user, accounts }`.
 @objcMembers
 public final class SelfResponse: NSObject {
     public let user: User
@@ -172,12 +174,160 @@ extension SelfResponse: Decodable {
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let user = try c.decodeIfPresent(User.self, forKey: .user) {
+            self.init(
+                user: user,
+                accounts: (try? c.decode([Account].self, forKey: .accounts)) ?? []
+            )
+            return
+        }
         self.init(
-            user: try c.decode(User.self, forKey: .user),
-            accounts: (try? c.decode([Account].self, forKey: .accounts)) ?? []
+            user: try User(from: decoder),
+            accounts: []
         )
     }
 }
+
+// MARK: - Notification Preferences
+
+private enum NotificationPreferenceCodingKeys: String, CodingKey {
+    case documentCompleted = "DocumentCompleted"
+    case signerDeclined = "SignerDeclined"
+    case documentCancelled = "DocumentCancelled"
+    case documentAboutToExpire = "DocumentAboutToExpire"
+    case documentExpired = "DocumentExpired"
+    case documentExpirationReset = "DocumentExpirationReset"
+    case documentProcessingFailed = "DocumentProcessingFailed"
+    case templateProcessingFailed = "TemplateProcessingFailed"
+    case signerWhatsappFailed = "SignerWhatsappFailed"
+}
+
+/// The authenticated user's owner-notification preferences.
+///
+/// All nine fields are returned by `GET /users/self/notification-preferences`.
+@objcMembers
+public final class NotificationPreferences: NSObject, Decodable {
+    public let documentCompleted: Bool
+    public let signerDeclined: Bool
+    public let documentCancelled: Bool
+    public let documentAboutToExpire: Bool
+    public let documentExpired: Bool
+    public let documentExpirationReset: Bool
+    public let documentProcessingFailed: Bool
+    public let templateProcessingFailed: Bool
+    public let signerWhatsappFailed: Bool
+
+    /// Creates a complete owner-notification preference value.
+    /// - Parameters:
+    ///   - documentCompleted: Notify when a document completes.
+    ///   - signerDeclined: Notify when a signer declines.
+    ///   - documentCancelled: Notify when a document is cancelled.
+    ///   - documentAboutToExpire: Notify shortly before expiration.
+    ///   - documentExpired: Notify when a document expires.
+    ///   - documentExpirationReset: Notify when expiration is reset.
+    ///   - documentProcessingFailed: Notify when document processing fails.
+    ///   - templateProcessingFailed: Notify when template processing fails.
+    ///   - signerWhatsappFailed: Notify when signer WhatsApp delivery fails.
+    public init(
+        documentCompleted: Bool,
+        signerDeclined: Bool,
+        documentCancelled: Bool,
+        documentAboutToExpire: Bool,
+        documentExpired: Bool,
+        documentExpirationReset: Bool,
+        documentProcessingFailed: Bool,
+        templateProcessingFailed: Bool,
+        signerWhatsappFailed: Bool
+    ) {
+        self.documentCompleted = documentCompleted
+        self.signerDeclined = signerDeclined
+        self.documentCancelled = documentCancelled
+        self.documentAboutToExpire = documentAboutToExpire
+        self.documentExpired = documentExpired
+        self.documentExpirationReset = documentExpirationReset
+        self.documentProcessingFailed = documentProcessingFailed
+        self.templateProcessingFailed = templateProcessingFailed
+        self.signerWhatsappFailed = signerWhatsappFailed
+    }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: NotificationPreferenceCodingKeys.self)
+        self.init(
+            documentCompleted: try c.decode(Bool.self, forKey: .documentCompleted),
+            signerDeclined: try c.decode(Bool.self, forKey: .signerDeclined),
+            documentCancelled: try c.decode(Bool.self, forKey: .documentCancelled),
+            documentAboutToExpire: try c.decode(Bool.self, forKey: .documentAboutToExpire),
+            documentExpired: try c.decode(Bool.self, forKey: .documentExpired),
+            documentExpirationReset: try c.decode(Bool.self, forKey: .documentExpirationReset),
+            documentProcessingFailed: try c.decode(Bool.self, forKey: .documentProcessingFailed),
+            templateProcessingFailed: try c.decode(Bool.self, forKey: .templateProcessingFailed),
+            signerWhatsappFailed: try c.decode(Bool.self, forKey: .signerWhatsappFailed)
+        )
+    }
+}
+
+extension NotificationPreferences: @unchecked Sendable {}
+
+/// Partial update for `PUT /users/self/notification-preferences`.
+///
+/// Set only the preferences to change; omitted fields retain their server value.
+@objcMembers
+public final class UpdateNotificationPreferencesPayload: NSObject, Encodable {
+    public let documentCompleted: NSNumber?
+    public let signerDeclined: NSNumber?
+    public let documentCancelled: NSNumber?
+    public let documentAboutToExpire: NSNumber?
+    public let documentExpired: NSNumber?
+    public let documentExpirationReset: NSNumber?
+    public let documentProcessingFailed: NSNumber?
+    public let templateProcessingFailed: NSNumber?
+    public let signerWhatsappFailed: NSNumber?
+
+    /// Creates a partial notification-preference update; `nil` values are omitted.
+    public init(
+        documentCompleted: NSNumber? = nil,
+        signerDeclined: NSNumber? = nil,
+        documentCancelled: NSNumber? = nil,
+        documentAboutToExpire: NSNumber? = nil,
+        documentExpired: NSNumber? = nil,
+        documentExpirationReset: NSNumber? = nil,
+        documentProcessingFailed: NSNumber? = nil,
+        templateProcessingFailed: NSNumber? = nil,
+        signerWhatsappFailed: NSNumber? = nil
+    ) {
+        self.documentCompleted = documentCompleted
+        self.signerDeclined = signerDeclined
+        self.documentCancelled = documentCancelled
+        self.documentAboutToExpire = documentAboutToExpire
+        self.documentExpired = documentExpired
+        self.documentExpirationReset = documentExpirationReset
+        self.documentProcessingFailed = documentProcessingFailed
+        self.templateProcessingFailed = templateProcessingFailed
+        self.signerWhatsappFailed = signerWhatsappFailed
+    }
+
+    var isEmpty: Bool {
+        documentCompleted == nil && signerDeclined == nil && documentCancelled == nil
+            && documentAboutToExpire == nil && documentExpired == nil
+            && documentExpirationReset == nil && documentProcessingFailed == nil
+            && templateProcessingFailed == nil && signerWhatsappFailed == nil
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: NotificationPreferenceCodingKeys.self)
+        if let value = documentCompleted { try c.encode(value.boolValue, forKey: .documentCompleted) }
+        if let value = signerDeclined { try c.encode(value.boolValue, forKey: .signerDeclined) }
+        if let value = documentCancelled { try c.encode(value.boolValue, forKey: .documentCancelled) }
+        if let value = documentAboutToExpire { try c.encode(value.boolValue, forKey: .documentAboutToExpire) }
+        if let value = documentExpired { try c.encode(value.boolValue, forKey: .documentExpired) }
+        if let value = documentExpirationReset { try c.encode(value.boolValue, forKey: .documentExpirationReset) }
+        if let value = documentProcessingFailed { try c.encode(value.boolValue, forKey: .documentProcessingFailed) }
+        if let value = templateProcessingFailed { try c.encode(value.boolValue, forKey: .templateProcessingFailed) }
+        if let value = signerWhatsappFailed { try c.encode(value.boolValue, forKey: .signerWhatsappFailed) }
+    }
+}
+
+extension UpdateNotificationPreferencesPayload: @unchecked Sendable {}
 
 // MARK: - Payloads
 
@@ -187,6 +337,7 @@ public final class LoginPayload: NSObject, Encodable {
     public let email: String
     public let password: String
 
+    /// Creates an email-and-password login payload.
     @objc public init(email: String, password: String) {
         self.email = email
         self.password = password
@@ -202,6 +353,11 @@ public final class SocialLoginPayload: NSObject, Encodable {
     public let token: String
     public let hasAcceptedTerms: Bool
 
+    /// Creates a social-login payload.
+    /// - Parameters:
+    ///   - provider: Social identity provider; currently `google`.
+    ///   - token: Provider-issued identity token.
+    ///   - hasAcceptedTerms: Whether the user accepted Assinafy's terms.
     @objc public init(provider: String = "google", token: String, hasAcceptedTerms: Bool) {
         self.provider = provider
         self.token = token
@@ -223,6 +379,7 @@ public final class ChangePasswordPayload: NSObject, Encodable {
     public let password: String
     public let newPassword: String
 
+    /// Creates a password-change payload with current and replacement credentials.
     @objc public init(email: String, password: String, newPassword: String) {
         self.email = email
         self.password = password
@@ -242,6 +399,7 @@ extension ChangePasswordPayload: @unchecked Sendable {}
 public final class RequestPasswordResetPayload: NSObject, Encodable {
     public let email: String
 
+    /// Creates a password-reset request for an email address.
     @objc public init(email: String) {
         self.email = email
     }
@@ -256,6 +414,11 @@ public final class ResetPasswordPayload: NSObject, Encodable {
     public let token: String?
     public let newPassword: String
 
+    /// Creates a password-reset completion payload.
+    /// - Parameters:
+    ///   - email: Account email address.
+    ///   - token: Optional reset token supplied by the reset flow.
+    ///   - newPassword: Replacement password.
     @objc public init(email: String, token: String? = nil, newPassword: String) {
         self.email = email
         self.token = token
@@ -275,6 +438,7 @@ extension ResetPasswordPayload: @unchecked Sendable {}
 public final class CreateAPIKeyPayload: NSObject, Encodable {
     public let password: String
 
+    /// Creates an API-key request authenticated with the user's password.
     @objc public init(password: String) {
         self.password = password
     }
@@ -290,6 +454,7 @@ public final class LinkSocialLoginPayload: NSObject, Encodable {
     /// The provider-issued token to link to the authenticated account.
     public let token: String
 
+    /// Creates a request to link a provider-issued identity token.
     @objc public init(provider: String = "google", token: String) {
         self.provider = provider
         self.token = token

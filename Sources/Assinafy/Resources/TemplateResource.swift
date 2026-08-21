@@ -88,10 +88,11 @@ public final class TemplateResource: BaseResource {
                                                 queryItems: items.isEmpty ? nil : items))
     }
 
-    /// Lists templates in a workspace using the documented template filters.
+    /// Lists templates in a workspace using documented search and pagination parameters.
     ///
-    /// Mirrors `GET /accounts/{account_id}/templates` with `status`,
-    /// `search`, `tags`, and `sort` filters.
+    /// Mirrors `GET /accounts/{accountId}/templates` with `search`, `page`,
+    /// and `per-page`. The SDK also forwards the sandbox-supported `status` and
+    /// `tags` filters plus the legacy `sort` compatibility query when supplied.
     public func list(
         params: TemplateListParams,
         accountId: String? = nil

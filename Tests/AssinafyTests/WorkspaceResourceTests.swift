@@ -13,8 +13,12 @@ final class WorkspaceResourceTests: XCTestCase {
 
     private func workspaceDict(id: String = "ws1", name: String = "Test Workspace") -> [String: Any] {
         [
+            "resource": "account",
             "id": id,
             "name": name,
+            "primary_color": "aabbcc",
+            "secondary_color": "112233",
+            "notification_sender_type": "Account",
             "created_at": "2024-01-01",
             "is_delete_allowed": true,
             "roles": ["owner"],
@@ -62,9 +66,27 @@ final class WorkspaceResourceTests: XCTestCase {
 
     func testListUsesAccountsEndpoint() async throws {
         mock.stubEnvelopeList([])
-        _ = try await resource.list()
+        _ = try await resource.list(params: ListParams(
+            page: 999,
+            perPage: 1,
+            search: "ignored",
+            sort: "-created_at"
+        ))
         XCTAssertEqual(mock.lastRequest?.path, "/accounts")
         XCTAssertEqual(mock.lastRequest?.method, .get)
+        XCTAssertNil(mock.lastRequest?.queryItems)
+    }
+
+    func testListDecodesCompleteAccountFields() async throws {
+        mock.stubEnvelopeList([workspaceDict()])
+        let result = try await resource.list()
+        let workspace = try XCTUnwrap(result.data.first)
+        XCTAssertEqual(workspace.resource, "account")
+        XCTAssertEqual(workspace.primaryColor, "aabbcc")
+        XCTAssertEqual(workspace.secondaryColor, "112233")
+        XCTAssertEqual(workspace.notificationSenderType, "Account")
+        XCTAssertEqual(workspace.roles, ["owner"])
+        XCTAssertTrue(workspace.isDeleteAllowed)
     }
 
     func testListReturnsPaginationMeta() async throws {
@@ -77,9 +99,15 @@ final class WorkspaceResourceTests: XCTestCase {
 
     func testGetUsesCorrectPath() async throws {
         mock.stubEnvelope(workspaceDict())
-        _ = try await resource.get(workspaceId: "ws1")
+        let workspace = try await resource.get(workspaceId: "ws1")
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/ws1")
         XCTAssertEqual(mock.lastRequest?.method, .get)
+        XCTAssertEqual(workspace.resource, "account")
+        XCTAssertEqual(workspace.primaryColor, "aabbcc")
+        XCTAssertEqual(workspace.secondaryColor, "112233")
+        XCTAssertEqual(workspace.notificationSenderType, "Account")
+        XCTAssertEqual(workspace.roles, ["owner"])
+        XCTAssertTrue(workspace.isDeleteAllowed)
     }
 
     func testGetThrowsForEmptyWorkspaceID() async {

@@ -1,9 +1,6 @@
 import Foundation
 
-private let emailPredicate = NSPredicate(
-    format: "SELF MATCHES %@",
-    "[A-Z0-9a-z._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}"
-)
+private let emailPattern = "^[A-Z0-9a-z._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$"
 
 /// Manages signer records within a workspace.
 ///
@@ -35,29 +32,24 @@ public final class SignerResource: BaseResource {
         _ payload: CreateSignerPayload,
         accountId: String? = nil
     ) async throws -> Signer {
-        if let email = payload.email {
-            try assertValidEmail(email)
-        }
-        guard payload.email?.isEmpty == false || payload.whatsappPhoneNumber?.isEmpty == false else {
-            throw ValidationError("Signer email or WhatsApp phone number is required")
-        }
+        try validateCreatePayload(payload)
         let id = try self.accountId(accountId)
 
         if let email = payload.email {
             if let existing = try await findByEmail(email, accountId: id) {
-                logger.info("Using existing signer", context: ["email": email])
+                logger.info("Using existing signer", context: ["signerId": existing.id])
                 return existing
             }
         }
 
-        logger.info("Creating signer", context: ["email": payload.email as Any])
+        logger.info("Creating signer")
         do {
             let request = try APIRequest.post("/accounts/\(id)/signers", body: payload)
             return try await call("Failed to create signer", request: request)
         } catch let error as APIError where error.statusCode == 409 {
             if let email = payload.email {
                 if let duplicate = try await findByEmail(email, accountId: id) {
-                    logger.info("Signer already exists, reusing", context: ["email": email])
+                    logger.info("Signer already exists, reusing", context: ["signerId": duplicate.id])
                     return duplicate
                 }
             }
@@ -161,17 +153,33 @@ public final class SignerResource: BaseResource {
     /// Allows a signer to accept the terms of use.
     ///
     /// - Parameter signerAccessCode: The signer access code from the signing URL.
-    /// - Returns: ``AcceptTermsResponse`` confirming acceptance.
+    /// - Returns: ``AcceptTermsResponse`` confirming acceptance. The current
+    ///   API returns no profile data, so legacy `fullName` and `email` values
+    ///   are empty unless an older server includes them.
     public func acceptTerms(signerAccessCode: String) async throws -> AcceptTermsResponse {
         let code = try requireId(signerAccessCode, name: "Signer access code")
-        struct Body: Encodable {
-            let signerAccessCode: String
-            enum CodingKeys: String, CodingKey {
-                case signerAccessCode = "signer-access-code"
-            }
+        let request = APIRequest(
+            method: .put,
+            path: "/signers/accept-terms",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
+        )
+        let data = try await callData("Failed to accept terms", request: request)
+        guard !data.isEmpty else {
+            return AcceptTermsResponse(fullName: "", email: "", hasAcceptedTerms: true)
         }
-        let request = try APIRequest.put("/signers/accept-terms", body: Body(signerAccessCode: code))
-        return try await call("Failed to accept terms", request: request)
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["status"] != nil || object["message"] != nil || object["data"] != nil,
+           let envelope = try? JSONDecoder.assinafy.decode(
+               AssinafyEnvelope<AcceptTermsResponse>.self,
+               from: data
+           ) {
+            if let status = envelope.status, !(200..<300).contains(status) {
+                throw APIError.from(statusCode: status, responseData: object)
+            }
+            return envelope.data
+                ?? AcceptTermsResponse(fullName: "", email: "", hasAcceptedTerms: true)
+        }
+        return try JSONDecoder.assinafy.decode(AcceptTermsResponse.self, from: data)
     }
 
     /// Verifies a signer's email using a verification code.
@@ -179,7 +187,13 @@ public final class SignerResource: BaseResource {
     /// - Parameter payload: The verification code and signer access code.
     /// - Throws: ``APIError`` if verification fails.
     public func verifyEmail(payload: VerifyEmailPayload) async throws {
-        let request = try APIRequest.post("/verify", body: payload)
+        let code = try requireId(payload.signerAccessCode, name: "Signer access code")
+        let request = APIRequest(
+            method: .post,
+            path: "/verify",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            body: try JSONEncoder.assinafy.encode(payload)
+        )
         try await callVoid("Failed to verify email", request: request)
     }
 
@@ -188,7 +202,7 @@ public final class SignerResource: BaseResource {
     /// - Parameters:
     ///   - signerAccessCode: The signer access code from the signing URL.
     ///   - type: The type of image to upload (signature or initial).
-    ///   - imageData: The PNG or JPEG image data.
+    ///   - imageData: PNG image data.
     ///   - reuse: When `true`, marks the uploaded image to be reused for future
     ///     documents (sends `reuse=true`). Defaults to `false`.
     public func uploadSignature(
@@ -224,10 +238,7 @@ public final class SignerResource: BaseResource {
         type: SignatureType
     ) async throws -> Data {
         let code = try requireId(signerAccessCode, name: "Signer access code")
-        let items = [
-            URLQueryItem(name: "signer-access-code", value: code),
-            URLQueryItem(name: "type", value: type.stringValue)
-        ]
+        let items = [URLQueryItem(name: "signer-access-code", value: code)]
         return try await callData("Failed to download signature",
                                   request: .get("/signature/\(type.stringValue)", queryItems: items))
     }
@@ -277,7 +288,7 @@ public final class SignerResource: BaseResource {
     ///   - signerId: The signer identifier.
     ///   - signerAccessCode: The signer access code from the signing URL.
     ///   - search: Free-text search term.
-    ///   - status: Optional status filter.
+    ///   - status: Legacy server extension retained for compatibility.
     public func searchSignerDocuments(
         signerId: String,
         signerAccessCode: String,
@@ -287,8 +298,8 @@ public final class SignerResource: BaseResource {
         let sid = try requireId(signerId, name: "Signer ID")
         let code = try requireId(signerAccessCode, name: "Signer access code")
         var items = [URLQueryItem(name: "signer-access-code", value: code)]
-        if let search { items.append(.init(name: "search", value: search)) }
-        if let status { items.append(.init(name: "status", value: status)) }
+        if let search, !search.isEmpty { items.append(.init(name: "search", value: search)) }
+        if let status, !status.isEmpty { items.append(.init(name: "status", value: status)) }
         return try await callList(
             "Failed to search signer documents",
             request: .get("/signers/\(sid)/documents/search", queryItems: items)
@@ -340,24 +351,35 @@ public final class SignerResource: BaseResource {
         try await callVoid("Failed to decline multiple documents", request: request)
     }
 
-    /// Downloads a signed document artifact using the signer's access code.
+    /// Downloads a signer document artifact from the documented public endpoint.
     ///
     /// Mirrors `GET /signers/{signer_id}/documents/{document_id}/download/{artifact}`.
+    public func downloadSignerDocumentArtifact(
+        signerId: String,
+        documentId: String,
+        artifact: DocumentArtifactName
+    ) async throws -> Data {
+        let sid = try requireId(signerId, name: "Signer ID")
+        let did = try requireId(documentId, name: "Document ID")
+        return try await callData(
+            "Failed to download signer document artifact",
+            request: .get("/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)")
+        )
+    }
+
+    /// Compatibility overload. The access code is no longer sent because this
+    /// endpoint is unauthenticated in the current API contract.
     public func downloadSignerDocumentArtifact(
         signerId: String,
         documentId: String,
         artifact: DocumentArtifactName,
         signerAccessCode: String
     ) async throws -> Data {
-        let sid = try requireId(signerId, name: "Signer ID")
-        let did = try requireId(documentId, name: "Document ID")
-        let code = try requireId(signerAccessCode, name: "Signer access code")
-        return try await callData(
-            "Failed to download signer document artifact",
-            request: .get(
-                "/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)",
-                queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
-            )
+        _ = signerAccessCode
+        return try await downloadSignerDocumentArtifact(
+            signerId: signerId,
+            documentId: documentId,
+            artifact: artifact
         )
     }
 
@@ -386,7 +408,7 @@ public final class SignerResource: BaseResource {
     ///
     /// ```objc
     /// [client.signers createWithPayload:payload accountId:nil
-    ///     completion:^(ASFSigner *signer, NSError *error) {
+    ///     completion:^(Signer *signer, NSError *error) {
     ///         // runs on main thread
     /// }];
     /// ```
@@ -442,8 +464,23 @@ public final class SignerResource: BaseResource {
 
     // MARK: - Private
 
+    /// Validates signer input without performing network I/O.
+    ///
+    /// Internal workflows use this before creating prerequisite resources so
+    /// invalid signer input cannot leave those resources orphaned.
+    func validateCreatePayload(_ payload: CreateSignerPayload) throws {
+        guard !payload.fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Signer full name is required")
+        }
+        if let email = payload.email {
+            try assertValidEmail(email)
+        }
+    }
+
     private func assertValidEmail(_ email: String) throws {
-        guard !email.isEmpty, emailPredicate.evaluate(with: email) else {
+        guard !email.isEmpty,
+              email.range(of: emailPattern, options: .regularExpression)
+                == email.startIndex..<email.endIndex else {
             throw ValidationError("Invalid email address", errors: ["email": email])
         }
     }

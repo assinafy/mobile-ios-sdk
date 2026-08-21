@@ -33,6 +33,7 @@ public struct AssinafySDKError: AssinafyErrorProtocol, LocalizedError {
     public let context: [String: Any]
     public let underlyingError: Error?
 
+    /// Creates an SDK error with optional diagnostic context and underlying cause.
     public init(_ message: String, context: [String: Any] = [:], underlyingError: Error? = nil) {
         self.message = message
         self.context = context
@@ -41,6 +42,8 @@ public struct AssinafySDKError: AssinafyErrorProtocol, LocalizedError {
 
     public var errorDescription: String? { message }
 }
+
+extension AssinafySDKError: @unchecked Sendable {}
 
 extension AssinafySDKError: CustomNSError {
     public static var errorDomain: String { ASFErrorDomain.sdk }
@@ -71,6 +74,7 @@ public struct APIError: AssinafyErrorProtocol, LocalizedError {
         ["statusCode": statusCode, "responseData": responseData as Any]
     }
 
+    /// Creates an API error from an HTTP status, message, and optional response payload.
     public init(statusCode: Int, message: String, responseData: Any? = nil) {
         self.statusCode = statusCode
         self.message = message
@@ -79,16 +83,23 @@ public struct APIError: AssinafyErrorProtocol, LocalizedError {
 
     /// Construct an ``APIError`` from a raw HTTP status code and response body.
     static func from(statusCode: Int, responseData: Any?) -> APIError {
-        let data = responseData as? [String: Any] ?? [:]
         let msg: String
-        if let m = data["message"] as? String, !m.isEmpty { msg = m }
-        else if let e = data["error"] as? String { msg = e }
-        else { msg = "API request failed" }
+        if let data = responseData as? [String: Any],
+           let value = (data["message"] as? String) ?? (data["error"] as? String),
+           !value.isEmpty {
+            msg = value
+        } else if let value = responseData as? String, !value.isEmpty {
+            msg = value
+        } else {
+            msg = "API request failed"
+        }
         return APIError(statusCode: statusCode, message: msg, responseData: responseData)
     }
 
     public var errorDescription: String? { message }
 }
+
+extension APIError: @unchecked Sendable {}
 
 extension APIError: CustomNSError {
     public static var errorDomain: String { ASFErrorDomain.api }
@@ -111,6 +122,7 @@ public struct ValidationError: AssinafyErrorProtocol, LocalizedError {
     public let errors: [String: Any]
     public var context: [String: Any] { ["errors": errors] }
 
+    /// Creates a validation error with optional field-level details.
     public init(_ message: String = "Validation failed", errors: [String: Any] = [:]) {
         self.message = message
         self.errors = errors
@@ -118,6 +130,8 @@ public struct ValidationError: AssinafyErrorProtocol, LocalizedError {
 
     public var errorDescription: String? { message }
 }
+
+extension ValidationError: @unchecked Sendable {}
 
 extension ValidationError: CustomNSError {
     public static var errorDomain: String { ASFErrorDomain.validation }
@@ -136,6 +150,7 @@ public struct NetworkError: AssinafyErrorProtocol, LocalizedError {
     public let underlyingError: Error?
     public var context: [String: Any] { [:] }
 
+    /// Creates a transport error with an optional underlying system error.
     public init(_ message: String, underlyingError: Error? = nil) {
         self.message = message
         self.underlyingError = underlyingError
@@ -143,6 +158,8 @@ public struct NetworkError: AssinafyErrorProtocol, LocalizedError {
 
     public var errorDescription: String? { message }
 }
+
+extension NetworkError: @unchecked Sendable {}
 
 extension NetworkError: CustomNSError {
     public static var errorDomain: String { ASFErrorDomain.network }

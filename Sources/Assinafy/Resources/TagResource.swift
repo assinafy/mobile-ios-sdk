@@ -119,22 +119,14 @@ public final class TagResource: BaseResource, @unchecked Sendable {
         tagIds: [String],
         accountId: String? = nil
     ) async throws -> [Tag] {
-        let id = try self.accountId(accountId)
-        let did = try requireId(documentId, name: "Document ID")
-        try validateTagIds(tagIds, allowEmpty: true)
-        let requestValues = try await tagRequestValues(tagIds, accountId: id)
-        let request = try APIRequest.put(
-            "/accounts/\(id)/documents/\(did)/tags",
-            body: TagNamesPayload(tags: requestValues)
+        try await writeDocumentTags(
+            documentId: documentId,
+            tagIds: tagIds,
+            method: .put,
+            allowEmpty: true,
+            label: "Failed to replace document tags",
+            accountId: accountId
         )
-        let result: PaginatedResult<Tag> = try await callList(
-            "Failed to replace document tags",
-            request: request
-        )
-        if usesSandboxCompatibility, !tagIds.isEmpty, result.data.isEmpty {
-            return try await listDocumentTags(documentId: did, accountId: id)
-        }
-        return result.data
     }
 
     /// Compatibility overload for the former, incorrectly named `tagNames`
@@ -156,22 +148,14 @@ public final class TagResource: BaseResource, @unchecked Sendable {
         tagIds: [String],
         accountId: String? = nil
     ) async throws -> [Tag] {
-        let id = try self.accountId(accountId)
-        let did = try requireId(documentId, name: "Document ID")
-        try validateTagIds(tagIds, allowEmpty: false)
-        let requestValues = try await tagRequestValues(tagIds, accountId: id)
-        let request = try APIRequest.post(
-            "/accounts/\(id)/documents/\(did)/tags",
-            body: TagNamesPayload(tags: requestValues)
+        try await writeDocumentTags(
+            documentId: documentId,
+            tagIds: tagIds,
+            method: .post,
+            allowEmpty: false,
+            label: "Failed to append document tags",
+            accountId: accountId
         )
-        let result: PaginatedResult<Tag> = try await callList(
-            "Failed to append document tags",
-            request: request
-        )
-        if usesSandboxCompatibility, result.data.isEmpty {
-            return try await listDocumentTags(documentId: did, accountId: id)
-        }
-        return result.data
     }
 
     /// Compatibility overload for the former, incorrectly named `tagNames`
@@ -261,6 +245,35 @@ public final class TagResource: BaseResource, @unchecked Sendable {
     }
 
     // MARK: - Private
+
+    /// Shared body for the replace (`PUT`) and append (`POST`) document-tag routes,
+    /// which differ only in verb and whether an empty list is meaningful.
+    ///
+    /// The sandbox host answers both with an empty array instead of the updated
+    /// tag list, so a follow-up read supplies the documented response there.
+    private func writeDocumentTags(
+        documentId: String,
+        tagIds: [String],
+        method: HTTPMethod,
+        allowEmpty: Bool,
+        label: String,
+        accountId: String?
+    ) async throws -> [Tag] {
+        let id = try self.accountId(accountId)
+        let did = try requireId(documentId, name: "Document ID")
+        try validateTagIds(tagIds, allowEmpty: allowEmpty)
+        let requestValues = try await tagRequestValues(tagIds, accountId: id)
+        let request = APIRequest(
+            method: method,
+            path: "/accounts/\(id)/documents/\(did)/tags",
+            body: try JSONEncoder.assinafy.encode(TagNamesPayload(tags: requestValues))
+        )
+        let result: PaginatedResult<Tag> = try await callList(label, request: request)
+        if usesSandboxCompatibility, !tagIds.isEmpty, result.data.isEmpty {
+            return try await listDocumentTags(documentId: did, accountId: id)
+        }
+        return result.data
+    }
 
     private func validateTagName(_ name: String) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

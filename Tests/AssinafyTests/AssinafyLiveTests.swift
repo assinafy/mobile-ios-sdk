@@ -164,6 +164,14 @@ final class AssinafyLiveTests: XCTestCase {
         _ = try await allowingSandboxNotFound {
             try await client.auth.getNotificationPreferences()
         }
+
+        // Routes documented as public or signer-access-code scoped must work
+        // from an API-key client, which proves the SDK withholds the workspace
+        // credential rather than relying on the server to ignore it.
+        let verification = try await client.documents.verifyDetails(
+            signatureHash: "deadbeefdeadbeefdeadbeef"
+        )
+        XCTAssertFalse(verification.isValid)
     }
 
     func testLiveNotificationPreferencesRoundTripWhenAvailable() async throws {
@@ -779,17 +787,25 @@ final class AssinafyLiveTests: XCTestCase {
                 assignmentId: assignment.id
             )
 
+            // A credential-free client reaches every public route.
             let publicDocument = try await publicClient.documents.getPublicInfo(documentId: uploaded.id)
             XCTAssertEqual(publicDocument.id, uploaded.id)
 
-            let signerArtifact = try await publicClient.signers.downloadSignerDocumentArtifact(
+            // The API-key client reaches the same routes because the SDK
+            // withholds the workspace credential from them.
+            let credentialedPublicDocument = try await client.documents.getPublicInfo(
+                documentId: uploaded.id
+            )
+            XCTAssertEqual(credentialedPublicDocument.id, uploaded.id)
+
+            let signerArtifact = try await client.signers.downloadSignerDocumentArtifact(
                 signerId: signerA.id,
                 documentId: uploaded.id,
                 artifact: .original
             )
             XCTAssertTrue(signerArtifact.starts(with: Data("%PDF".utf8)))
 
-            try await publicClient.documents.sendPublicSignToken(
+            try await client.documents.sendPublicSignToken(
                 documentId: uploaded.id,
                 email: recipients.0
             )

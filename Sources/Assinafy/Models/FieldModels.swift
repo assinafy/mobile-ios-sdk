@@ -258,6 +258,12 @@ extension FieldValidationResult: Decodable {
 
 // MARK: - FieldValidateMultipleItem
 
+/// The shape shared by every batch field-validation item, so ``FieldResource``
+/// can build the request once regardless of how the value is typed.
+protocol FieldBatchValidationItem: Encodable {
+    var fieldId: String { get }
+}
+
 /// One entry in the body for `POST /accounts/{accountId}/fields/validate-multiple`.
 @objcMembers
 public final class FieldValidateMultipleItem: NSObject, Encodable {
@@ -277,8 +283,10 @@ public final class FieldValidateMultipleItem: NSObject, Encodable {
 
 extension FieldValidateMultipleItem: @unchecked Sendable {}
 
+extension FieldValidateMultipleItem: FieldBatchValidationItem {}
+
 /// A batch field-validation item whose value retains its JSON type.
-public struct FieldJSONValidationItem: Encodable, Sendable {
+public struct FieldJSONValidationItem: Encodable, Sendable, FieldBatchValidationItem {
     /// Field definition ID.
     public let fieldId: String
     /// String, number, boolean, object, array, or null value to validate.

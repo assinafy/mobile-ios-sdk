@@ -11,7 +11,7 @@ final class SignerResourceTests: XCTestCase {
         resource = SignerResource(http: mock, defaultAccountId: "test-account")
     }
 
-    private func signerDict(id: String = "1", name: String = "Test", email: String = "test@test.com") -> [String: Any] {
+    private func signerDict(id: String = "1", name: String = "Test", email: String = "test@example.invalid") -> [String: Any] {
         ["id": id, "full_name": name, "email": email]
     }
 
@@ -33,7 +33,7 @@ final class SignerResourceTests: XCTestCase {
         let noAccount = SignerResource(http: mock, defaultAccountId: nil)
         await assertThrowsValidationError {
             _ = try await noAccount.create(
-                CreateSignerPayload(fullName: "Test", email: "test@test.com")
+                CreateSignerPayload(fullName: "Test", email: "test@example.invalid")
             )
         }
     }
@@ -99,7 +99,7 @@ final class SignerResourceTests: XCTestCase {
         mock.stubEnvelopeList([])
         mock.stubEnvelope(signerDict(id: "123"))
         _ = try await resource.create(
-            CreateSignerPayload(fullName: "Test", email: "test@test.com"),
+            CreateSignerPayload(fullName: "Test", email: "test@example.invalid"),
             accountId: "custom-account"
         )
         XCTAssertTrue(mock.allRequests.contains { $0.path == "/accounts/custom-account/signers" })
@@ -226,9 +226,9 @@ final class SignerResourceTests: XCTestCase {
     // MARK: - Display
 
     func testSignerDescriptionIsReadable() {
-        let signer = Signer(id: "1", fullName: "Test", email: "t@t.com")
+        let signer = Signer(id: "1", fullName: "Test", email: "signer@example.invalid")
         XCTAssertFalse(signer.description.isEmpty)
-        XCTAssertFalse(signer.description.contains("t@t.com"))
+        XCTAssertFalse(signer.description.contains("signer@example.invalid"))
     }
 
     func testSignerDecodesDocumentAssignmentFields() throws {

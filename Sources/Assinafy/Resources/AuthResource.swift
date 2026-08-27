@@ -13,13 +13,14 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
 
     /// Logs in with email and password and returns an access token plus user accounts.
     public func login(_ payload: LoginPayload) async throws -> LoginResponse {
-        let request = try APIRequest.post("/login", body: payload)
+        let request = try APIRequest.post("/login", body: payload).withoutWorkspaceCredential()
         return try await call("Failed to login", request: request)
     }
 
     /// Exchanges a supported social-login token for an Assinafy access token.
     public func socialLogin(_ payload: SocialLoginPayload) async throws -> LoginResponse {
         let request = try APIRequest.post("/authentication/social-login", body: payload)
+            .withoutWorkspaceCredential()
         return try await call("Failed to complete social login", request: request)
     }
 
@@ -113,6 +114,7 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
     /// Sends a password reset email.
     public func requestPasswordReset(_ payload: RequestPasswordResetPayload) async throws {
         let request = try APIRequest.put("/authentication/request-password-reset", body: payload)
+            .withoutWorkspaceCredential()
         try await callVoid("Failed to request password reset", request: request)
     }
 
@@ -123,12 +125,14 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
         try await call(
             "Failed to request password reset",
             request: try APIRequest.put("/authentication/request-password-reset", body: payload)
+                .withoutWorkspaceCredential()
         )
     }
 
     /// Resets a password using the emailed token.
     public func resetPassword(_ payload: ResetPasswordPayload) async throws {
         let request = try APIRequest.put("/authentication/reset-password", body: payload)
+            .withoutWorkspaceCredential()
         try await callVoid("Failed to reset password", request: request)
     }
 
@@ -139,6 +143,7 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
         try await call(
             "Failed to reset password",
             request: try APIRequest.put("/authentication/reset-password", body: payload)
+                .withoutWorkspaceCredential()
         )
     }
 

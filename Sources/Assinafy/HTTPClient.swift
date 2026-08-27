@@ -24,11 +24,27 @@ import Foundation
 /// Construct instances using the static factory methods
 /// (`get(_:)`, `post(_:body:)`, `put(_:body:)`, `patch(_:body:)`, `delete(_:)`).
 public struct APIRequest: Sendable {
+    /// The credential a request is allowed to carry.
+    ///
+    /// The Assinafy API splits its routes into three authentication classes.
+    /// Most routes accept a workspace credential (`X-Api-Key` or
+    /// `Authorization: Bearer`). The remainder are either public or
+    /// authenticated solely by the `signer-access-code` query parameter, and
+    /// must not receive the workspace credential.
+    public enum Credential: Sendable {
+        /// Send the client's configured workspace credential.
+        case workspace
+        /// Send no workspace credential.
+        case withheld
+    }
+
     public let method: HTTPMethod
     public let path: String
     public let queryItems: [URLQueryItem]?
     public let body: Data?
     public let contentType: String
+    /// The credential class of this request. Defaults to ``Credential/workspace``.
+    public let credential: Credential
 
     /// Creates an HTTP request.
     /// - Parameters:
@@ -44,11 +60,54 @@ public struct APIRequest: Sendable {
         body: Data? = nil,
         contentType: String = "application/json"
     ) {
+        self.init(
+            method: method,
+            path: path,
+            queryItems: queryItems,
+            body: body,
+            contentType: contentType,
+            credential: .workspace
+        )
+    }
+
+    /// Creates an HTTP request with an explicit credential class.
+    /// - Parameters:
+    ///   - method: HTTP verb.
+    ///   - path: API-relative path.
+    ///   - queryItems: Optional URL query parameters.
+    ///   - body: Optional encoded request body.
+    ///   - contentType: Request body media type.
+    ///   - credential: Whether the transport may attach the workspace credential.
+    public init(
+        method: HTTPMethod,
+        path: String,
+        queryItems: [URLQueryItem]? = nil,
+        body: Data? = nil,
+        contentType: String = "application/json",
+        credential: Credential
+    ) {
         self.method = method
         self.path = path
         self.queryItems = queryItems
         self.body = body
         self.contentType = contentType
+        self.credential = credential
+    }
+
+    /// Returns a copy of the request that carries no workspace credential.
+    ///
+    /// Apply this to every route the API documents with `security: []` or
+    /// `security: [signerAccessCode]`, so a client configured with an API key
+    /// or bearer token never transmits it to a route that cannot use it.
+    public func withoutWorkspaceCredential() -> APIRequest {
+        APIRequest(
+            method: method,
+            path: path,
+            queryItems: queryItems,
+            body: body,
+            contentType: contentType,
+            credential: .withheld
+        )
     }
 
     /// Creates a GET request for `path` with optional query parameters.
@@ -220,6 +279,16 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         super.init()
     }
 
+    /// Sends `request` over `URLSession` and returns the raw response.
+    ///
+    /// The workspace credential headers are attached only when
+    /// ``APIRequest/credential`` is ``APIRequest/Credential/workspace``.
+    ///
+    /// - Parameter request: The request to send.
+    /// - Returns: The response body, headers, and 2xx status code.
+    /// - Throws: ``ValidationError`` when the client was built from an invalid
+    ///   configuration, ``APIError`` for non-2xx statuses, ``NetworkError`` for
+    ///   transport failures, and `CancellationError` when the task is cancelled.
     public func perform(_ request: APIRequest) async throws -> APIResponse {
         if let configurationError { throw configurationError }
         let urlRequest = try buildURLRequest(from: request)
@@ -283,7 +352,8 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         urlRequest.httpMethod = request.method.httpValue
         urlRequest.httpBody   = request.body
 
-        for (key, value) in defaultHeaders {
+        for (key, value) in defaultHeaders
+        where request.credential == .workspace || !Self.isCredentialHeader(key) {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
         if request.body != nil || request.method != .get {
@@ -291,6 +361,16 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         }
 
         return urlRequest
+    }
+
+    /// Header names that carry an Assinafy workspace credential.
+    ///
+    /// These are omitted from any request whose ``APIRequest/credential`` is
+    /// ``APIRequest/Credential/withheld``. Cross-origin redirects drop them
+    /// too, via the stricter allowlist in ``redirectedRequest(_:)``.
+    static func isCredentialHeader(_ name: String) -> Bool {
+        name.caseInsensitiveCompare("Authorization") == .orderedSame
+            || name.caseInsensitiveCompare("X-Api-Key") == .orderedSame
     }
 
     /// Allows safe download redirects without forwarding Assinafy credentials

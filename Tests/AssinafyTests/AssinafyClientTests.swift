@@ -22,7 +22,7 @@ final class AssinafyClientTests: XCTestCase {
             AssinafyClientConfiguration(apiKey: " "),
             AssinafyClientConfiguration(token: "token\nvalue"),
             AssinafyClientConfiguration(baseURL: "http://api.test.com/v1"),
-            AssinafyClientConfiguration(baseURL: "https://user:pass@api.test.com/v1"),
+            AssinafyClientConfiguration(baseURL: "https://user:pass@api.example.invalid/v1"),
             AssinafyClientConfiguration(baseURL: "https://api.test.com/v1?key=value"),
             AssinafyClientConfiguration(defaultAccountId: ".."),
             AssinafyClientConfiguration(defaultAccountId: "account\nvalue"),
@@ -57,7 +57,13 @@ final class AssinafyClientTests: XCTestCase {
             _ = client.documents
             return AssinafyClient.sdkVersion
         }.value
-        XCTAssertEqual(version, "1.3.1")
+        // The release version itself is pinned by CI against the changelog and
+        // README; this test only needs the value to survive the hop.
+        XCTAssertEqual(version, AssinafyClient.sdkVersion)
+        XCTAssertEqual(
+            version.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression)?.upperBound,
+            version.endIndex
+        )
     }
 
     func testConfigurationValidationAcceptsPublicAndAuthenticatedClients() throws {

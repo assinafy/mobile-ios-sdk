@@ -385,7 +385,7 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         let hash = try requireId(signatureHash, name: "Signature hash")
         return try await call(
             "Failed to verify signature",
-            request: .get("/documents/\(hash)/verify")
+            request: APIRequest.get("/documents/\(hash)/verify").withoutWorkspaceCredential()
         )
     }
 
@@ -433,7 +433,8 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
     public func getPublicInfo(documentId: String) async throws -> PublicDocumentInfo {
         let did = try requireId(documentId, name: "Document ID")
         return try await call("Failed to fetch public document info",
-                              request: .get("/public/documents/\(did)"))
+                              request: APIRequest.get("/public/documents/\(did)")
+                                  .withoutWorkspaceCredential())
     }
 
     /// Sends the 6-digit signing token to a signer via email or WhatsApp.
@@ -499,7 +500,7 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
             "/documents/\(did)/signers/confirm-data",
             body: payload,
             queryItems: items
-        )
+        ).withoutWorkspaceCredential()
         try await callVoid("Failed to confirm signer data", request: request)
     }
 
@@ -515,7 +516,7 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
             "/documents/\(did)/signers/confirm-data",
             body: payload,
             queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
-        )
+        ).withoutWorkspaceCredential()
         return try await call("Failed to confirm signer data", request: request)
     }
 
@@ -526,16 +527,16 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         let path = "/public/documents/\(documentId)/send-token"
         let request: APIRequest
         if usesSandboxCompatibility {
-            request = try .put(
+            request = try APIRequest.put(
                 path,
                 body: SandboxSendTokenPayload(
                     email: payload.recipient,
                     recipient: payload.recipient,
                     channel: payload.channel.stringValue
                 )
-            )
+            ).withoutWorkspaceCredential()
         } else {
-            request = try .put(path, body: payload)
+            request = try APIRequest.put(path, body: payload).withoutWorkspaceCredential()
         }
         try await callVoid("Failed to send signing token", request: request)
     }

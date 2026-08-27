@@ -2,6 +2,7 @@ name: Live Sandbox
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -23,10 +24,9 @@ concurrency:
 jobs:
   sandbox:
     name: Sandbox API
-    if: ${{ github.ref == 'refs/heads/main' || github.ref_type == 'tag' }}
     runs-on: macos-26
     timeout-minutes: 30
-    environment: live-sandbox
+    environment: sandbox
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       ASSINAFY_BASE_URL: https://sandbox.assinafy.com.br/v1
@@ -36,33 +36,43 @@ jobs:
         with:
           persist-credentials: false
 
+      # Mutation runs create sandbox resources and send real notifications, so
+      # they are limited to release tags and explicit manual requests. Every
+      # other trigger runs the read-only suite. Exactly one suite always runs:
+      # the workflow never reports success without exercising the live API.
+      - name: Select suite
+        id: suite
+        env:
+          RUN_MUTATIONS: >-
+            ${{ github.ref_type == 'tag'
+                || (github.event_name == 'workflow_dispatch' && inputs.run_mutations) }}
+        run: |
+          if [[ "$RUN_MUTATIONS" == "true" ]]; then
+            echo "mutations=true" >> "$GITHUB_OUTPUT"
+            echo "filter=AssinafyTests.AssinafyLiveTests" >> "$GITHUB_OUTPUT"
+          else
+            echo "mutations=false" >> "$GITHUB_OUTPUT"
+            echo "filter=AssinafyTests.AssinafyLiveTests/(testLiveReadOnlyCatalogAndListEndpoints|testLiveContractReadEndpoints)" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check sandbox credentials
         env:
           ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
           ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
         run: |
           if [[ -z "$ASSINAFY_API_KEY" || -z "$ASSINAFY_ACCOUNT_ID" ]]; then
-            echo "::error::Configure ASSINAFY_API_KEY and ASSINAFY_ACCOUNT_ID in the live-sandbox environment."
+            echo "::error::Configure ASSINAFY_API_KEY and ASSINAFY_ACCOUNT_ID in the sandbox environment."
             exit 1
           fi
 
-      - name: Run read-only sandbox tests
-        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.run_mutations) }}
-        env:
-          ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
-          ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
-        run: >-
-          swift test
-          --filter 'AssinafyTests.AssinafyLiveTests/(testLiveReadOnlyCatalogAndListEndpoints|testLiveContractReadEndpoints)'
-
       - name: Check mutation recipients
-        if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.run_mutations) }}
+        if: ${{ steps.suite.outputs.mutations == 'true' }}
         env:
           ASSINAFY_TEST_EMAIL_A: ${{ secrets.ASSINAFY_TEST_EMAIL_A }}
           ASSINAFY_TEST_EMAIL_B: ${{ secrets.ASSINAFY_TEST_EMAIL_B }}
         run: |
           if [[ -z "$ASSINAFY_TEST_EMAIL_A" || -z "$ASSINAFY_TEST_EMAIL_B" ]]; then
-            echo "::error::Configure ASSINAFY_TEST_EMAIL_A and ASSINAFY_TEST_EMAIL_B in the live-sandbox environment."
+            echo "::error::Configure ASSINAFY_TEST_EMAIL_A and ASSINAFY_TEST_EMAIL_B in the sandbox environment."
             exit 1
           fi
           shopt -s nocasematch
@@ -71,13 +81,41 @@ jobs:
             exit 1
           fi
 
-      - name: Run complete sandbox suite
-        if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.run_mutations) }}
+      # Live tests skip themselves when credentials are missing or the host is
+      # not the sandbox, and an all-skipped XCTest run still exits 0 — a green
+      # job that never touched the API. The steps above turn every
+      # configuration-driven skip into a hard failure; this step additionally
+      # requires that at least one live test actually ran, and surfaces any
+      # remaining skip (an endpoint not deployed on the sandbox host) as a
+      # warning rather than hiding it.
+      - name: Run sandbox suite
         env:
           ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
           ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
-          ASSINAFY_RUN_LIVE_MUTATIONS: '1'
-          ASSINAFY_REQUIRE_LIVE_ASSIGNMENT: '1'
+          ASSINAFY_RUN_LIVE_MUTATIONS: ${{ steps.suite.outputs.mutations == 'true' && '1' || '' }}
+          ASSINAFY_REQUIRE_LIVE_ASSIGNMENT: ${{ steps.suite.outputs.mutations == 'true' && '1' || '' }}
           ASSINAFY_TEST_EMAIL_A: ${{ secrets.ASSINAFY_TEST_EMAIL_A }}
           ASSINAFY_TEST_EMAIL_B: ${{ secrets.ASSINAFY_TEST_EMAIL_B }}
-        run: swift test --filter AssinafyTests.AssinafyLiveTests
+          SUITE_FILTER: ${{ steps.suite.outputs.filter }}
+        run: |
+          set -o pipefail
+          swift test --filter "$SUITE_FILTER" 2>&1 | tee "$RUNNER_TEMP/live.log"
+
+          summary=$(grep -oE "Executed [0-9]+ tests?, with ([0-9]+ tests? skipped and )?[0-9]+ failures?" \
+            "$RUNNER_TEMP/live.log" | tail -n 1)
+          if [[ -z "$summary" ]]; then
+            echo "::error::No XCTest summary found; the live suite did not run."
+            exit 1
+          fi
+          executed=$(sed -E 's/^Executed ([0-9]+).*/\1/' <<< "$summary")
+          skipped=$(sed -nE 's/.*with ([0-9]+) tests? skipped.*/\1/p' <<< "$summary")
+          skipped=${skipped:-0}
+          echo "Live suite: $summary"
+          if (( skipped > 0 )); then
+            echo "::warning::${skipped} live test(s) skipped."
+          fi
+          if (( executed - skipped == 0 )); then
+            echo "::error::No live test ran; the sandbox API was never exercised."
+            exit 1
+          fi
+          echo "Live tests actually run: $(( executed - skipped ))"

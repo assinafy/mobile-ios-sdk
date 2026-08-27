@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.4.0] - 2026-08-27
+
+### Security
+- The workspace credential (`Authorization` / `X-Api-Key`) is now sent only to operations
+  that accept it. Every operation the v1 API declares as public or as authenticated by the
+  `signer-access-code` query parameter is issued without it, so an API-key or bearer-token
+  client cannot transmit its credential to a route that has no use for one.
+
+### Added
+- `APIRequest.Credential`, the `APIRequest(method:path:queryItems:body:contentType:credential:)`
+  initializer, and `APIRequest.withoutWorkspaceCredential()` for custom transports and
+  callers that build requests directly.
+
+### Changed
+- The `Live Sandbox` workflow runs on every push to `main` in addition to release tags,
+  scheduled runs, and manual dispatch. It always runs exactly one suite and fails when no
+  live test actually ran, so a run that never reached the API can no longer report success.
+
 ## [1.3.1] - 2026-08-27
 
 ### Security

@@ -102,23 +102,7 @@ open class BaseResource: NSObject {
         _ block: @escaping () async throws -> T,
         completion: @escaping (T?, Error?) -> Void
     ) {
-        let work = UncheckedSendable(block)
-        let callback = UncheckedSendable(completion)
-        Task { [work, callback] in
-            let result: Result<T, Error>
-            do {
-                result = .success(try await work.value())
-            } catch {
-                result = .failure(error)
-            }
-            let delivery = UncheckedSendable(result)
-            DispatchQueue.main.async { [callback, delivery] in
-                switch delivery.value {
-                case .success(let value): callback.value(value, nil)
-                case .failure(let error): callback.value(nil, error)
-                }
-            }
-        }
+        withOptionalCompletion({ try await block() }, completion: completion)
     }
 
     func withVoidCompletion(
@@ -151,8 +135,9 @@ open class BaseResource: NSObject {
         withCompletion({ try await block().data }, completion: completion)
     }
 
-    /// Like ``withCompletion(_:completion:)`` but for blocks that return an
-    /// already-optional value, avoiding double-optional wrapping.
+    /// The primitive completion bridge: runs `block` in a `Task` and delivers
+    /// its already-optional result on the **main queue**. ``withCompletion(_:completion:)``
+    /// forwards here, so a non-optional result never becomes a double optional.
     func withOptionalCompletion<T>(
         _ block: @escaping () async throws -> T?,
         completion: @escaping (T?, Error?) -> Void

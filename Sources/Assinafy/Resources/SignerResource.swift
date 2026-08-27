@@ -145,7 +145,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         let code = try requireId(signerAccessCode, name: "Signer access code")
         let items = [URLQueryItem(name: "signer-access-code", value: code)]
         return try await call("Failed to fetch signer self info",
-                              request: .get("/signers/self", queryItems: items))
+                              request: APIRequest.get("/signers/self", queryItems: items)
+                                  .withoutWorkspaceCredential())
     }
 
     /// Allows a signer to accept the terms of use.
@@ -193,7 +194,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
             method: .post,
             path: "/verify",
             queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
-            body: try JSONEncoder.assinafy.encode(payload)
+            body: try JSONEncoder.assinafy.encode(payload),
+            credential: .withheld
         )
         try await callVoid("Failed to verify email", request: request)
     }
@@ -226,7 +228,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
             path: "/signature",
             queryItems: items,
             body: imageData,
-            contentType: "image/png"
+            contentType: "image/png",
+            credential: .withheld
         )
         try await callVoid("Failed to upload signature", request: request)
     }
@@ -244,7 +247,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         let code = try requireId(signerAccessCode, name: "Signer access code")
         let items = [URLQueryItem(name: "signer-access-code", value: code)]
         return try await callData("Failed to download signature",
-                                  request: .get("/signature/\(type.stringValue)", queryItems: items))
+                                  request: APIRequest.get("/signature/\(type.stringValue)", queryItems: items)
+                                      .withoutWorkspaceCredential())
     }
 
     // MARK: - Signer-facing document endpoints
@@ -262,8 +266,9 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         let sid = try requireId(signerId, name: "Signer ID")
         let code = try requireId(signerAccessCode, name: "Signer access code")
         return try await call("Failed to fetch signer's current document",
-                              request: .get("/signers/\(sid)/document",
-                                            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]))
+                              request: APIRequest.get("/signers/\(sid)/document",
+                                                      queryItems: [URLQueryItem(name: "signer-access-code", value: code)])
+                                  .withoutWorkspaceCredential())
     }
 
     /// Lists every document the signer has access to with the given access code.
@@ -280,7 +285,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         items.append(URLQueryItem(name: "signer-access-code", value: code))
         return try await callList(
             "Failed to list signer documents",
-            request: .get("/signers/\(sid)/documents", queryItems: items)
+            request: APIRequest.get("/signers/\(sid)/documents", queryItems: items)
+                .withoutWorkspaceCredential()
         )
     }
 
@@ -306,7 +312,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         if let status, !status.isEmpty { items.append(.init(name: "status", value: status)) }
         return try await callList(
             "Failed to search signer documents",
-            request: .get("/signers/\(sid)/documents/search", queryItems: items)
+            request: APIRequest.get("/signers/\(sid)/documents/search", queryItems: items)
+                .withoutWorkspaceCredential()
         )
     }
 
@@ -330,7 +337,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
             method: .put,
             path: "/signers/documents/sign-multiple",
             queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
-            body: body
+            body: body,
+            credential: .withheld
         )
         try await callVoid("Failed to sign multiple documents", request: request)
     }
@@ -359,7 +367,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
             method: .put,
             path: "/signers/documents/decline-multiple",
             queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
-            body: body
+            body: body,
+            credential: .withheld
         )
         try await callVoid("Failed to decline multiple documents", request: request)
     }
@@ -376,7 +385,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         let did = try requireId(documentId, name: "Document ID")
         return try await callData(
             "Failed to download signer document artifact",
-            request: .get("/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)")
+            request: APIRequest.get("/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)")
+                .withoutWorkspaceCredential()
         )
     }
 
@@ -411,7 +421,7 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         }
         return try await call(
             "Failed to fetch signing document",
-            request: .get("/sign", queryItems: items)
+            request: APIRequest.get("/sign", queryItems: items).withoutWorkspaceCredential()
         )
     }
 
@@ -482,7 +492,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         return APIRequest(
             method: .put,
             path: "/signers/accept-terms",
-            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            credential: .withheld
         )
     }
 

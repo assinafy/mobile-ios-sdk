@@ -128,26 +128,11 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
         signerAccessCode: String? = nil,
         accountId: String? = nil
     ) async throws -> [FieldValidationResult] {
-        let id = try self.accountId(accountId)
-        guard !items.isEmpty else { throw ValidationError("items must not be empty") }
-        for item in items {
-            _ = try requireId(item.fieldId, name: "Field ID")
-        }
-        let queryItems: [URLQueryItem]? = signerAccessCode.flatMap {
-            $0.isEmpty ? nil : [URLQueryItem(name: "signer-access-code", value: $0)]
-        }
-        let bodyData = try JSONEncoder.assinafy.encode(items)
-        let request = APIRequest(
-            method: .post,
-            path: "/accounts/\(id)/fields/validate-multiple",
-            queryItems: queryItems,
-            body: bodyData
+        try await validateBatch(
+            items: items,
+            signerAccessCode: signerAccessCode,
+            accountId: accountId
         )
-        let result: PaginatedResult<FieldValidationResult> = try await callList(
-            "Failed to validate fields",
-            request: request
-        )
-        return result.data
     }
 
     /// Validates multiple values while preserving each value's JSON type.
@@ -156,25 +141,11 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
         signerAccessCode: String? = nil,
         accountId: String? = nil
     ) async throws -> [FieldValidationResult] {
-        let id = try self.accountId(accountId)
-        guard !items.isEmpty else { throw ValidationError("items must not be empty") }
-        for item in items {
-            _ = try requireId(item.fieldId, name: "Field ID")
-        }
-        let queryItems: [URLQueryItem]? = signerAccessCode.flatMap {
-            $0.isEmpty ? nil : [URLQueryItem(name: "signer-access-code", value: $0)]
-        }
-        let request = APIRequest(
-            method: .post,
-            path: "/accounts/\(id)/fields/validate-multiple",
-            queryItems: queryItems,
-            body: try JSONEncoder.assinafy.encode(items)
+        try await validateBatch(
+            items: items,
+            signerAccessCode: signerAccessCode,
+            accountId: accountId
         )
-        let result: PaginatedResult<FieldValidationResult> = try await callList(
-            "Failed to validate fields",
-            request: request
-        )
-        return result.data
     }
 
     /// Lists all supported field type codes and their display names.
@@ -188,6 +159,36 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
         return result.data
     }
 
+    private func validateBatch<Item: FieldBatchValidationItem>(
+        items: [Item],
+        signerAccessCode: String?,
+        accountId: String?
+    ) async throws -> [FieldValidationResult] {
+        let id = try self.accountId(accountId)
+        guard !items.isEmpty else { throw ValidationError("items must not be empty") }
+        for item in items {
+            _ = try requireId(item.fieldId, name: "Field ID")
+        }
+        let request = APIRequest(
+            method: .post,
+            path: "/accounts/\(id)/fields/validate-multiple",
+            queryItems: signerAccessCodeQuery(signerAccessCode),
+            body: try JSONEncoder.assinafy.encode(items)
+        )
+        let result: PaginatedResult<FieldValidationResult> = try await callList(
+            "Failed to validate fields",
+            request: request
+        )
+        return result.data
+    }
+
+    /// Field validation is documented as workspace-authenticated, and additionally
+    /// accepts a signer access code so a signer can validate their own input.
+    private func signerAccessCodeQuery(_ code: String?) -> [URLQueryItem]? {
+        guard let code, !code.isEmpty else { return nil }
+        return [URLQueryItem(name: "signer-access-code", value: code)]
+    }
+
     private func validateValue<Value: Encodable>(
         fieldId: String,
         value: Value,
@@ -196,13 +197,10 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
     ) async throws -> FieldValidationResult {
         let id = try self.accountId(accountId)
         let fid = try requireId(fieldId, name: "Field ID")
-        let queryItems: [URLQueryItem]? = signerAccessCode.flatMap {
-            $0.isEmpty ? nil : [URLQueryItem(name: "signer-access-code", value: $0)]
-        }
         let request = APIRequest(
             method: .post,
             path: "/accounts/\(id)/fields/\(fid)/validate",
-            queryItems: queryItems,
+            queryItems: signerAccessCodeQuery(signerAccessCode),
             body: try JSONEncoder.assinafy.encode(FieldValidationBody(value: value))
         )
         return try await call("Failed to validate field", request: request)

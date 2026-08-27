@@ -22,6 +22,11 @@ Paths below are relative to the SDK's default production base URL,
   `signer-access-code={signer-access-code}`. It is not sent in a JSON body or a
   header.
 - **Public** means the v1 OpenAPI operation declares no authentication.
+- The **Auth** column is enforced, not merely descriptive. The transport
+  attaches `Authorization` and `X-Api-Key` only to **Account** operations. A
+  client configured with a bearer token or API key never transmits it to a
+  **Signer** or **Public** operation, so a workspace credential cannot reach a
+  route that has no use for it.
 - JSON responses normally use
   `{ "status": integer, "message": string, "data": value }`. The SDK unwraps
   `data`. A **bare envelope** has no documented result model; `Void` methods
@@ -832,7 +837,8 @@ payload catalog above.
 
 | Constructor | Result |
 | --- | --- |
-| `init(method:path:queryItems:body:contentType:)` | Raw request descriptor; defaults to no query/body and `application/json`. |
+| `init(method:path:queryItems:body:contentType:)` | Raw request descriptor; defaults to no query/body, `application/json`, and `credential: .workspace`. |
+| `init(method:path:queryItems:body:contentType:credential:)` | Same, with an explicit `APIRequest.Credential`. |
 | `get(_:queryItems:)` | `GET` with optional query and no body. |
 | `delete(_:queryItems:)` | `DELETE` with optional query and no body. |
 | `delete(_:body:)` | `DELETE` with a JSON-encoded `Encodable` body. |
@@ -845,14 +851,29 @@ The generic body factories throw the underlying encoding error. JSON keys are
 sorted for deterministic output. `APIResponse(data:headers:statusCode:)` stores
 raw bytes, all response headers, and the HTTP status.
 
+Every `APIRequest` carries an `APIRequest.Credential`, which decides whether the
+transport may attach the workspace credential:
+
+| Value | Meaning |
+| --- | --- |
+| `.workspace` | Send the configured `Authorization` or `X-Api-Key` header. The default for every constructor and factory. |
+| `.withheld` | Send no workspace credential. |
+
+`withoutWorkspaceCredential()` returns a copy with `.withheld` and every other field
+unchanged. The SDK applies it to each operation the v1 OpenAPI document declares
+as **Public** (`security: []`) or **Signer** (`security: [signerAccessCode]`) —
+the operations marked Public or Signer in the tables above.
+
 `HTTPClientProtocol.perform(_:)` is the public transport seam. The built-in
 `URLSessionHTTPClient(baseURL:defaultHeaders:timeout:)` uses an ephemeral
 session with cookies and URL caching disabled. Its initializer validates an
 absolute HTTPS base URL without credentials/query/fragment and a finite,
 positive timeout. `perform(_:)` resolves the request path against that base,
-applies default headers, returns only 2xx responses, maps non-2xx responses to
-`APIError`, maps `URLError` failures to `NetworkError`, and preserves transport
-cancellation as `CancellationError`.
+applies the default headers — withholding `Authorization` and `X-Api-Key`
+(matched case-insensitively) when the request's credential is `.withheld` — returns
+only 2xx responses, maps non-2xx responses to `APIError`, maps `URLError`
+failures to `NetworkError`, and preserves transport cancellation as
+`CancellationError`.
 
 ### Redirect policy
 

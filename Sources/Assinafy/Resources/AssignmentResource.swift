@@ -190,7 +190,8 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
             method: .post,
             path: "/documents/\(did)/assignments/\(aid)",
             queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
-            body: body
+            body: body,
+            credential: .withheld
         )
         try await callVoid("Failed to sign assignment", request: request)
     }
@@ -222,7 +223,8 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
             method: .put,
             path: "/documents/\(did)/assignments/\(aid)/reject",
             queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
-            body: body
+            body: body,
+            credential: .withheld
         )
         try await callVoid("Failed to decline assignment", request: request)
     }

@@ -68,6 +68,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           version="${RELEASE_TAG#v}"
           grep -Fq "public static let sdkVersion = \"$version\"" Sources/Assinafy/AssinafyClient.swift
           grep -Fq "## [$version]" CHANGELOG.md
+          grep -Fq "from: \"$version\"" README.md

@@ -44,6 +44,12 @@ final class SignerResourceTests: XCTestCase {
                 CreateSignerPayload(fullName: "Test", email: "not-an-email")
             )
         }
+        await assertThrowsValidationError {
+            _ = try await self.resource.create(
+                CreateSignerPayload(fullName: "Test", email: " test@example.com ")
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
     }
 
     func testRejectsEmptyEmail() async {
@@ -438,6 +444,44 @@ final class SignerResourceTests: XCTestCase {
         }
         XCTAssertEqual(json["document_ids"] as? [String], ["d1"])
         XCTAssertEqual(json["decline_reason"] as? String, "Bad terms")
+    }
+
+    func testBatchOperationsValidateEveryDocumentIDAndDeclineReason() async {
+        await assertThrowsValidationError {
+            try await self.resource.signMultipleDocuments(
+                signerAccessCode: "code",
+                documentIds: ["valid", "../invalid"]
+            )
+        }
+        await assertThrowsValidationError {
+            try await self.resource.declineMultipleDocuments(
+                signerAccessCode: "code",
+                documentIds: ["valid"],
+                reason: "  "
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+
+    func testUploadSignatureRejectsNonPNGDataBeforeRequest() async {
+        await assertThrowsValidationError {
+            try await self.resource.uploadSignature(
+                signerAccessCode: "code",
+                type: .signature,
+                imageData: Data("not-png".utf8)
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+
+    func testAcceptTermsWithoutResponseUsesBareEnvelope() async throws {
+        mock.stubJSON(["status": 200, "message": "Accepted"])
+        try await resource.acceptTermsWithoutResponse(signerAccessCode: "code")
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/accept-terms")
+        XCTAssertEqual(
+            mock.lastRequest?.queryItems,
+            [URLQueryItem(name: "signer-access-code", value: "code")]
+        )
     }
 
     func testDownloadSignerArtifactBuildsCorrectPath() async throws {

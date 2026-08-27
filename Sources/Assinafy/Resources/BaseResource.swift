@@ -3,7 +3,7 @@ import Foundation
 /// Abstract base class shared by all Assinafy resource objects.
 ///
 /// Provides:
-/// - ``accountId(_:)`` / ``requireId(_:name:)`` argument guards
+/// - `accountId(_:)` / `requireId(_:name:)` argument guards
 /// - Type-safe HTTP helpers (`call`, `callVoid`, `callData`, `callList`)
 /// - Automatic API response-envelope unwrapping
 /// - Pagination metadata extraction from `X-Pagination-*` headers
@@ -42,14 +42,7 @@ open class BaseResource: NSObject {
         guard let value else {
             throw ValidationError("\(name) is required")
         }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              !trimmed.contains("/"),
-              !trimmed.contains("?"),
-              !trimmed.contains("#") else {
-            throw ValidationError("\(name) is invalid")
-        }
-        return trimmed
+        return try AssinafyClientConfiguration.validateIdentifier(value, name: name)
     }
 
     // MARK: HTTP helpers
@@ -79,6 +72,7 @@ open class BaseResource: NSObject {
     func callData(_ label: String, request: APIRequest) async throws -> Data {
         do {
             let response = try await http.perform(request)
+            if let error = embeddedAPIError(in: response.data) { throw error }
             return response.data
         } catch let error as AssinafyErrorProtocol {
             throw error
@@ -93,17 +87,6 @@ open class BaseResource: NSObject {
             let data: [T] = try unwrapListEnvelope(response.data, label: label)
             let meta = parsePaginationMeta(from: response.headers)
             return PaginatedResult(data: data, meta: meta)
-        } catch let error as AssinafyErrorProtocol {
-            throw error
-        } catch {
-            throw toSDKError(error, fallback: label)
-        }
-    }
-
-    func callCostEstimate(_ label: String, request: APIRequest) async throws -> CostEstimate {
-        do {
-            let response = try await http.perform(request)
-            return try unwrapEnvelope(response.data, label: label)
         } catch let error as AssinafyErrorProtocol {
             throw error
         } catch {
@@ -196,11 +179,12 @@ open class BaseResource: NSObject {
     // MARK: Private envelope helpers
 
     private func unwrapEnvelope<T: Decodable>(_ data: Data, label: String) throws -> T {
+        if let error = embeddedAPIError(in: data) { throw error }
         if let envelope = try? JSONDecoder.assinafy.decode(AssinafyEnvelope<T>.self, from: data) {
             if let status = envelope.status {
                 if status >= 200 && status < 300 {
                     if let value = envelope.data { return value }
-                    throw ValidationError("\(label): response envelope contained no data")
+                    throw AssinafySDKError("\(label): response envelope contained no data")
                 }
                 let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 throw APIError.from(statusCode: status, responseData: raw)
@@ -211,14 +195,12 @@ open class BaseResource: NSObject {
     }
 
     private func unwrapListEnvelope<T: Decodable>(_ data: Data, label: String) throws -> [T] {
+        if let error = embeddedAPIError(in: data) { throw error }
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            object["data"] != nil || object["status"] != nil || object["message"] != nil {
             let envelope = try JSONDecoder.assinafy.decode(AssinafyEnvelope<[T]>.self, from: data)
-            if let status = envelope.status, !(200..<300).contains(status) {
-                throw APIError.from(statusCode: status, responseData: object)
-            }
             guard let values = envelope.data else {
-                throw ValidationError("\(label): response envelope contained no data")
+                throw AssinafySDKError("\(label): response envelope contained no data")
             }
             return values
         }
@@ -226,15 +208,11 @@ open class BaseResource: NSObject {
     }
 
     private func validateVoidEnvelope(_ data: Data) throws {
-        guard !data.isEmpty,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let status = object["status"] as? Int,
-              !(200..<300).contains(status) else {
-            return
-        }
-        throw APIError.from(statusCode: status, responseData: object)
+        if let error = embeddedAPIError(in: data) { throw error }
     }
 }
+
+extension BaseResource: @unchecked Sendable {}
 
 /// Explicitly carries callback-style values across Swift concurrency boundaries.
 /// Objective-C completion handlers cannot express `Sendable`, so the bridge
@@ -248,8 +226,16 @@ private struct UncheckedSendable<Value>: @unchecked Sendable {
 }
 
 private func toSDKError(_ error: Error, fallback: String) -> Error {
+    if error is CancellationError { return error }
     if let urlError = error as? URLError {
         return NetworkError("\(fallback): \(urlError.localizedDescription)", underlyingError: urlError)
     }
     return AssinafySDKError("\(fallback): \(error.localizedDescription)", underlyingError: error)
+}
+
+private func embeddedAPIError(in data: Data) -> APIError? {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let status = object["status"] as? Int,
+          !(200..<300).contains(status) else { return nil }
+    return APIError.from(statusCode: status, responseData: object)
 }

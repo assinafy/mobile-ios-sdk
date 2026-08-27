@@ -7,7 +7,7 @@ import Foundation
 /// Login and password-reset calls do not require credentials. API-key endpoints
 /// require a bearer-token client because they operate on the authenticated user.
 @objcMembers
-public final class AuthResource: BaseResource {
+public final class AuthResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
@@ -36,6 +36,18 @@ public final class AuthResource: BaseResource {
     /// Mirrors `GET /users/self`.
     public func currentUser() async throws -> SelfResponse {
         return try await call("Failed to fetch current user", request: .get("/users/self"))
+    }
+
+    /// Fetches the user documented for `GET /users/self`.
+    ///
+    /// Both direct `data: User` and compatibility `{ user, accounts }` payloads
+    /// are accepted.
+    public func currentUserProfile() async throws -> User {
+        let response: SelfResponse = try await call(
+            "Failed to fetch current user",
+            request: .get("/users/self")
+        )
+        return response.user
     }
 
     /// Fetches all owner-notification preferences for the authenticated user.
@@ -67,8 +79,7 @@ public final class AuthResource: BaseResource {
     /// Fetches the authenticated user's document-funnel KPIs, summed across all
     /// accounts they belong to.
     ///
-    /// - Note: This endpoint is served on production only and returns `404` on
-    ///   the sandbox host.
+    /// - Note: The sandbox host currently returns `404` for this endpoint.
     ///
     /// Mirrors `GET /users/self/stats`.
     ///
@@ -89,16 +100,46 @@ public final class AuthResource: BaseResource {
         try await callVoid("Failed to change password", request: request)
     }
 
+    /// Changes a password and returns the API's `{ "email": string }` data payload.
+    public func changePasswordAndReturnResponse(
+        _ payload: ChangePasswordPayload
+    ) async throws -> EmailResponse {
+        try await call(
+            "Failed to change password",
+            request: try APIRequest.put("/authentication/change-password", body: payload)
+        )
+    }
+
     /// Sends a password reset email.
     public func requestPasswordReset(_ payload: RequestPasswordResetPayload) async throws {
         let request = try APIRequest.put("/authentication/request-password-reset", body: payload)
         try await callVoid("Failed to request password reset", request: request)
     }
 
+    /// Requests a password-reset email and returns `{ "email": string }`.
+    public func requestPasswordResetAndReturnResponse(
+        _ payload: RequestPasswordResetPayload
+    ) async throws -> EmailResponse {
+        try await call(
+            "Failed to request password reset",
+            request: try APIRequest.put("/authentication/request-password-reset", body: payload)
+        )
+    }
+
     /// Resets a password using the emailed token.
     public func resetPassword(_ payload: ResetPasswordPayload) async throws {
         let request = try APIRequest.put("/authentication/reset-password", body: payload)
         try await callVoid("Failed to reset password", request: request)
+    }
+
+    /// Resets a password and returns the API's `{ "email": string }` data payload.
+    public func resetPasswordAndReturnResponse(
+        _ payload: ResetPasswordPayload
+    ) async throws -> EmailResponse {
+        try await call(
+            "Failed to reset password",
+            request: try APIRequest.put("/authentication/reset-password", body: payload)
+        )
     }
 
     /// Retrieves the masked user API key, when one exists.
@@ -117,7 +158,7 @@ public final class AuthResource: BaseResource {
             request: try APIRequest.post("/users/api-keys", body: payload)
         )
         guard let apiKey = response.apiKey, !apiKey.isEmpty else {
-            throw ValidationError("API key response contained no api_key")
+            throw AssinafySDKError("API key response contained no api_key")
         }
         return apiKey
     }

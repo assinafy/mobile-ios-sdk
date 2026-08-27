@@ -15,8 +15,12 @@ public protocol AssinafyErrorProtocol: Error {
 
 // MARK: - Error Domains
 
-/// Error domain constants used by ``ASFAPIError``, ``ASFValidationError``,
-/// and ``ASFNetworkError`` when bridged to `NSError`.
+/// Error domains used when Swift SDK errors bridge to Objective-C `NSError`.
+///
+/// `NSError.code` contains the HTTP status for API errors, `422` for local
+/// validation, the underlying `URLError.Code` for network failures, or `-1`
+/// for SDK contract errors. Details are available in `userInfo` under
+/// `responseData`, `errors`, and `NSUnderlyingErrorKey` as applicable.
 @objc public final class ASFErrorDomain: NSObject {
     @objc public static let api        = "com.assinafy.sdk.APIError"
     @objc public static let validation = "com.assinafy.sdk.ValidationError"
@@ -27,7 +31,7 @@ public protocol AssinafyErrorProtocol: Error {
 // MARK: - AssinafySDKError
 
 /// A generic SDK-level error for unexpected conditions not covered by
-/// ``ASFAPIError``, ``ASFValidationError``, or ``ASFNetworkError``.
+/// ``APIError``, ``ValidationError``, or ``NetworkError``.
 public struct AssinafySDKError: AssinafyErrorProtocol, LocalizedError {
     public let message: String
     public let context: [String: Any]
@@ -72,6 +76,26 @@ public struct APIError: AssinafyErrorProtocol, LocalizedError {
 
     public var context: [String: Any] {
         ["statusCode": statusCode, "responseData": responseData as Any]
+    }
+
+    /// Typed blockers returned by a failed workspace deletion request.
+    ///
+    /// The array is empty for other API errors or when the server does not
+    /// include a valid `restrictions` payload.
+    public var workspaceDeletionRestrictions: [WorkspaceDeletionRestriction] {
+        guard let object = responseData as? [String: Any],
+              let values = object["restrictions"] as? [[String: Any]] else {
+            return []
+        }
+        return values.compactMap { value in
+            guard let code = value["code"] as? String,
+                  let message = value["message"] as? String else { return nil }
+            return WorkspaceDeletionRestriction(
+                code: code,
+                message: message,
+                accountIds: value["account_ids"] as? [String] ?? []
+            )
+        }
     }
 
     /// Creates an API error from an HTTP status, message, and optional response payload.
@@ -163,7 +187,9 @@ extension NetworkError: @unchecked Sendable {}
 
 extension NetworkError: CustomNSError {
     public static var errorDomain: String { ASFErrorDomain.network }
-    public var errorCode: Int { -1009 }
+    public var errorCode: Int {
+        (underlyingError as? URLError)?.errorCode ?? URLError.notConnectedToInternet.rawValue
+    }
     public var errorUserInfo: [String: Any] {
         var info: [String: Any] = [NSLocalizedDescriptionKey: message]
         if let cause = underlyingError { info[NSUnderlyingErrorKey] = cause as NSError }

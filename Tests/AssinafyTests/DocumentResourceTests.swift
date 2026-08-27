@@ -525,6 +525,25 @@ final class DocumentResourceTests: XCTestCase {
         }
     }
 
+    func testWaitUntilReadyThrowsImmediatelyForEveryTerminalStatus() async {
+        for status in ["expired", "rejected_by_signer", "rejected_by_user"] {
+            let client = MockHTTPClient()
+            var dict = uploadResponseDict()
+            dict["status"] = status
+            client.stubEnvelope(dict)
+            let resource = DocumentResource(http: client, defaultAccountId: "test-account")
+            do {
+                _ = try await resource.waitUntilReady(documentId: "doc1")
+                XCTFail("Expected terminal status to throw")
+            } catch let error as AssinafySDKError {
+                XCTAssertEqual(error.context["status"] as? String, status)
+            } catch {
+                XCTFail("Expected AssinafySDKError, got \(error)")
+            }
+            XCTAssertEqual(client.allRequests.count, 1)
+        }
+    }
+
     func testWaitUntilReadyRejectsEmptyDocumentID() async {
         await assertThrowsValidationError {
             _ = try await self.resource.waitUntilReady(documentId: "")
@@ -663,6 +682,38 @@ final class DocumentResourceTests: XCTestCase {
         XCTAssertNil(json["recipient"])
     }
 
+    func testSendPublicSignTokenEmailUsesOneRequestAndBareEnvelope() async throws {
+        mock.stubJSON(["status": 200, "message": "Token sent"])
+        let publicResource = DocumentResource(http: mock)
+
+        try await publicResource.sendPublicSignToken(
+            documentId: "doc1",
+            email: "recipient@example.invalid"
+        )
+
+        XCTAssertEqual(mock.allRequests.count, 1)
+        XCTAssertEqual(mock.lastRequest?.path, "/public/documents/doc1/send-token")
+        let body = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json as NSDictionary, ["email": "recipient@example.invalid"] as NSDictionary)
+    }
+
+    func testSendPublicSignTokenCompatibilityResponseReportsCompletedSideEffect() async throws {
+        let client = SequenceHTTPClient([jsonResponse(["status": 200, "message": "Token sent"])])
+        let publicResource = DocumentResource(http: client)
+
+        do {
+            _ = try await publicResource.sendPublicSignToken(
+                documentId: "doc1",
+                payload: SendTokenPayload(recipient: "recipient@example.invalid")
+            )
+            XCTFail("Expected follow-up lookup to fail")
+        } catch let error as AssinafySDKError {
+            XCTAssertEqual(error.context["tokenSent"] as? Bool, true)
+            XCTAssertEqual(error.context["documentId"] as? String, "doc1")
+        }
+    }
+
     func testSendPublicSignTokenUsesSandboxCompatibilityShapeWhenConfigured() async throws {
         let response = jsonResponse([
             "status": 200,
@@ -704,6 +755,41 @@ final class DocumentResourceTests: XCTestCase {
         XCTAssertNil(json["recipient"])
     }
 
+    func testConfirmSignerDataOmitsFalseExtensionAndCanReturnSigner() async throws {
+        mock.stubEnvelope([
+            "id": "signer1",
+            "full_name": "SDK Recipient",
+            "email": "recipient@example.invalid",
+        ])
+        let publicResource = DocumentResource(http: mock)
+
+        let signer = try await publicResource.confirmSignerDataAndReturnSigner(
+            documentId: "doc1",
+            signerAccessCode: "access-code",
+            payload: ConfirmSignerDataPayload(
+                fullName: "SDK Recipient",
+                email: "recipient@example.invalid"
+            )
+        )
+
+        XCTAssertEqual(signer.id, "signer1")
+        XCTAssertEqual(
+            mock.lastRequest?.queryItems,
+            [URLQueryItem(name: "signer-access-code", value: "access-code")]
+        )
+        let body = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertNil(json["has_accepted_terms"])
+    }
+
+    func testConfirmSignerDataEncodesTrueExtensionWhenRequested() throws {
+        let data = try JSONEncoder.assinafy.encode(
+            ConfirmSignerDataPayload(hasAcceptedTerms: true)
+        )
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["has_accepted_terms"] as? Bool, true)
+    }
+
     func testCreateFromTemplateSendsEditorFieldsTagsAndSignerStep() async throws {
         mock.stubEnvelope(uploadResponseDict())
         _ = try await resource.createFromTemplate(
@@ -722,7 +808,7 @@ final class DocumentResourceTests: XCTestCase {
                 message: "Please sign",
                 expiresAt: "2026-06-01T00:00:00Z",
                 editorFields: [TemplateEditorField(fieldId: "field1", value: "value1")],
-                tags: ["Audit"]
+                tags: ["Contracts"]
             )
         )
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/templates/tpl1/documents")
@@ -735,7 +821,7 @@ final class DocumentResourceTests: XCTestCase {
         }
         XCTAssertEqual(signers.first?["step"] as? Int, 1)
         XCTAssertEqual(editorFields.first?["field_id"] as? String, "field1")
-        XCTAssertEqual(json["tags"] as? [String], ["Audit"])
+        XCTAssertEqual(json["tags"] as? [String], ["Contracts"])
     }
 
     func testCreateFromTemplateRequiresRoleAndSignerIDsBeforeRequest() async {

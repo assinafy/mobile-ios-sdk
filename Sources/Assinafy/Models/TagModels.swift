@@ -129,9 +129,9 @@ struct TagNamesPayload: Encodable {
 }
 
 struct TagDeleteResponse: Decodable {
-    let deleted: Bool?
+    let deleted: Bool
 }
 
 struct TagDetachResponse: Decodable {
-    let detached: Bool?
+    let detached: Bool
 }

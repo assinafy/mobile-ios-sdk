@@ -19,6 +19,24 @@ final class ErrorTests: XCTestCase {
         XCTAssertEqual(nsError.localizedDescription, "Bad request")
     }
 
+    func testWorkspaceDeletionRestrictionsAreTyped() {
+        let error = APIError(
+            statusCode: 400,
+            message: "Deletion blocked",
+            responseData: [
+                "restrictions": [[
+                    "code": "ActivePaidSubscription",
+                    "message": "Workspace has an active subscription.",
+                    "account_ids": ["account-1"],
+                ]],
+            ]
+        )
+
+        XCTAssertEqual(error.workspaceDeletionRestrictions.count, 1)
+        XCTAssertEqual(error.workspaceDeletionRestrictions[0].code, "ActivePaidSubscription")
+        XCTAssertEqual(error.workspaceDeletionRestrictions[0].accountIds, ["account-1"])
+    }
+
     func testValidationErrorBridgesToNSError() {
         let error = ValidationError("Invalid input", errors: ["email": "required"])
         let nsError = error as NSError
@@ -33,5 +51,10 @@ final class ErrorTests: XCTestCase {
         XCTAssertEqual(nsError.domain, ASFErrorDomain.network)
         XCTAssertEqual(nsError.code, -1009)
         XCTAssertEqual(nsError.localizedDescription, "Connection lost")
+    }
+
+    func testNetworkErrorPreservesUnderlyingURLErrorCode() {
+        let error = NetworkError("Timed out", underlyingError: URLError(.timedOut))
+        XCTAssertEqual((error as NSError).code, URLError.timedOut.rawValue)
     }
 }

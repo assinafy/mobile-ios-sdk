@@ -1,5 +1,27 @@
 import Foundation
 
+// MARK: - WorkspaceDeletionRestriction
+
+/// A condition that prevents a workspace from being deleted without `force`.
+@objcMembers
+public final class WorkspaceDeletionRestriction: NSObject {
+    /// Machine-readable code such as `ActivePaidSubscription` or `PendingDocuments`.
+    public let code: String
+    /// Human-readable explanation returned by the API.
+    public let message: String
+    /// Workspace IDs affected by this restriction.
+    public let accountIds: [String]
+
+    /// Creates a deletion restriction value.
+    public init(code: String, message: String, accountIds: [String]) {
+        self.code = code
+        self.message = message
+        self.accountIds = accountIds
+    }
+}
+
+extension WorkspaceDeletionRestriction: @unchecked Sendable {}
+
 // MARK: - NotificationSenderType
 
 /// Who signer notification emails/messages appear to come from.
@@ -120,7 +142,7 @@ extension WorkspaceResponse: Decodable {
             primaryColor:   try c.decodeIfPresent(String.self, forKey: .primaryColor),
             secondaryColor: try c.decodeIfPresent(String.self, forKey: .secondaryColor),
             notificationSenderType: try c.decodeIfPresent(String.self, forKey: .notificationSenderType),
-            roles:           (try? c.decode([String].self, forKey: .roles)) ?? [],
+            roles:           try c.decodeIfPresent([String].self, forKey: .roles) ?? [],
             isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
             createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt)
         )
@@ -178,7 +200,7 @@ extension WorkspaceListItem: Decodable {
             secondaryColor:  try c.decodeIfPresent(String.self, forKey: .secondaryColor),
             notificationSenderType: try c.decodeIfPresent(String.self, forKey: .notificationSenderType),
             isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
-            roles:           (try? c.decode([String].self, forKey: .roles)) ?? [],
+            roles:           try c.decodeIfPresent([String].self, forKey: .roles) ?? [],
             createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt)
         )
     }
@@ -317,31 +339,33 @@ extension DocumentStatsRow: Decodable {
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        func int(_ key: CodingKeys, legacyKey: CodingKeys? = nil) -> Int {
-            if let value = try? c.decode(Int.self, forKey: key) { return value }
-            if let legacyKey, let value = try? c.decode(Int.self, forKey: legacyKey) { return value }
+        func int(_ key: CodingKeys, legacyKey: CodingKeys? = nil) throws -> Int {
+            if c.contains(key) { return try c.decodeIfPresent(Int.self, forKey: key) ?? 0 }
+            if let legacyKey, c.contains(legacyKey) {
+                return try c.decodeIfPresent(Int.self, forKey: legacyKey) ?? 0
+            }
             return 0
         }
         self.init(
-            period:                    (try? c.decodeIfPresent(String.self, forKey: .period)) ?? "",
-            documentsUploaded:         int(.documentsUploaded),
-            documentsSent:             int(.documentsSent),
-            signatureRequests:         int(.signatureRequests),
-            signatureRequestsNotificationBypass: int(.signatureRequestsNotificationBypass),
-            signatureRequestsNotificationEmail: int(.signatureRequestsNotificationEmail,
-                                                     legacyKey: .legacySignatureRequestsEmail),
-            signatureRequestsNotificationWhatsapp: int(.signatureRequestsNotificationWhatsapp,
-                                                        legacyKey: .legacySignatureRequestsWhatsapp),
-            signatureRequestsVerificationBypass: int(.signatureRequestsVerificationBypass),
-            signatureRequestsVerificationEmail: int(.signatureRequestsVerificationEmail),
-            signatureRequestsVerificationWhatsapp: int(.signatureRequestsVerificationWhatsapp),
+            period:                    try c.decodeIfPresent(String.self, forKey: .period) ?? "",
+            documentsUploaded:         try int(.documentsUploaded),
+            documentsSent:             try int(.documentsSent),
+            signatureRequests:         try int(.signatureRequests),
+            signatureRequestsNotificationBypass: try int(.signatureRequestsNotificationBypass),
+            signatureRequestsNotificationEmail: try int(.signatureRequestsNotificationEmail,
+                                                         legacyKey: .legacySignatureRequestsEmail),
+            signatureRequestsNotificationWhatsapp: try int(.signatureRequestsNotificationWhatsapp,
+                                                            legacyKey: .legacySignatureRequestsWhatsapp),
+            signatureRequestsVerificationBypass: try int(.signatureRequestsVerificationBypass),
+            signatureRequestsVerificationEmail: try int(.signatureRequestsVerificationEmail),
+            signatureRequestsVerificationWhatsapp: try int(.signatureRequestsVerificationWhatsapp),
             signatureRequestsVerificationDigitalCertificate:
-                int(.signatureRequestsVerificationDigitalCertificate),
-            signatureRequestsViewed: int(.signatureRequestsViewed,
-                                         legacyKey: .legacyDocumentsOpened),
-            signatureRequestsCompleted: int(.signatureRequestsCompleted,
-                                            legacyKey: .legacyDocumentsSigned),
-            documentsCertified:        int(.documentsCertified)
+                try int(.signatureRequestsVerificationDigitalCertificate),
+            signatureRequestsViewed: try int(.signatureRequestsViewed,
+                                             legacyKey: .legacyDocumentsOpened),
+            signatureRequestsCompleted: try int(.signatureRequestsCompleted,
+                                                legacyKey: .legacyDocumentsSigned),
+            documentsCertified:        try int(.documentsCertified)
         )
     }
 }

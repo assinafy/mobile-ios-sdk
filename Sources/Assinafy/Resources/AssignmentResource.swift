@@ -12,7 +12,7 @@ import Foundation
 /// )
 /// ```
 @objcMembers
-public final class AssignmentResource: BaseResource {
+public final class AssignmentResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
@@ -75,7 +75,7 @@ public final class AssignmentResource: BaseResource {
         let did = try requireId(documentId, name: "Document ID")
         let body = try buildAssignmentEstimateBody(payload)
         let request = try APIRequest.post("/documents/\(did)/assignments/estimate-cost", body: body)
-        return try await callCostEstimate("Failed to estimate assignment cost", request: request)
+        return try await call("Failed to estimate assignment cost", request: request)
     }
 
     /// Resets the expiration date on an existing assignment.
@@ -97,6 +97,22 @@ public final class AssignmentResource: BaseResource {
             body: ResetExpirationPayload(expiresAt: expiresAt)
         )
         return try await call("Failed to reset assignment expiration", request: request)
+    }
+
+    /// Sets a non-null expiration date using the current API contract.
+    public func resetExpiration(
+        documentId: String,
+        assignmentId: String,
+        newExpiresAt: String
+    ) async throws -> Assignment {
+        guard !newExpiresAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Expiration date is required")
+        }
+        return try await resetExpiration(
+            documentId: documentId,
+            assignmentId: assignmentId,
+            expiresAt: newExpiresAt
+        )
     }
 
     /// Resends a signing notification to one pending signer.
@@ -138,7 +154,7 @@ public final class AssignmentResource: BaseResource {
         let request = APIRequest.post(
             "/documents/\(did)/assignments/\(aid)/signers/\(sid)/estimate-resend-cost"
         )
-        return try await callCostEstimate("Failed to estimate resend cost", request: request)
+        return try await call("Failed to estimate resend cost", request: request)
     }
 
     /// Signs an assignment on behalf of the signer (collect or virtual).
@@ -197,6 +213,9 @@ public final class AssignmentResource: BaseResource {
         let did = try requireId(documentId, name: "Document ID")
         let aid = try requireId(assignmentId, name: "Assignment ID")
         let code = try requireId(signerAccessCode, name: "Signer access code")
+        guard !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Decline reason is required")
+        }
         let payload = DeclineAssignmentPayload(declineReason: reason)
         let body = try JSONEncoder.assinafy.encode(payload)
         let request = APIRequest(

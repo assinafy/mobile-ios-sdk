@@ -83,8 +83,7 @@ public final class CreateFieldPayload: NSObject, Encodable {
     public let name: String
     public let regex: String?
     public let isRequired: Bool
-    /// Sandbox-compatible extension. `true` is omitted (the documented default);
-    /// `false` is sent because the live API accepts and honors it.
+    /// Sandbox compatibility setting; encoded only when `false`.
     public let isActive: Bool
 
     /// Creates a custom field definition.
@@ -130,11 +129,11 @@ extension CreateFieldPayload: @unchecked Sendable {}
 /// Provide only the fields you want to change.
 @objcMembers
 public final class UpdateFieldPayload: NSObject, Encodable {
-    /// Sandbox-compatible extension accepted and honored by the live API.
+    /// Optional sandbox compatibility setting.
     public let type: String?
     public let name: String?
     public let regex: String?
-    /// Sandbox-compatible extension accepted and honored by the live API.
+    /// Optional sandbox compatibility setting.
     public let isRequired: NSNumber?
     public let isActive: NSNumber?
     /// When `true`, encodes `regex` as explicit JSON `null` instead of omitting it.
@@ -277,6 +276,25 @@ public final class FieldValidateMultipleItem: NSObject, Encodable {
 }
 
 extension FieldValidateMultipleItem: @unchecked Sendable {}
+
+/// A batch field-validation item whose value retains its JSON type.
+public struct FieldJSONValidationItem: Encodable, Sendable {
+    /// Field definition ID.
+    public let fieldId: String
+    /// String, number, boolean, object, array, or null value to validate.
+    public let value: JSONValue
+
+    /// Creates a typed JSON field-validation item.
+    public init(fieldId: String, value: JSONValue) {
+        self.fieldId = fieldId
+        self.value = value
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case fieldId = "field_id"
+        case value
+    }
+}
 
 // MARK: - FieldTypeInfo
 

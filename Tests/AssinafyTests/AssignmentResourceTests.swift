@@ -257,6 +257,29 @@ final class AssignmentResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.path, "/documents/doc1/assignments/a1/reset-expiration")
     }
 
+    func testCanonicalResetExpirationRequiresAndEncodesDate() async throws {
+        mock.stubEnvelope(assignmentDict())
+        let expiration = "2026-09-03T12:00:00Z"
+
+        _ = try await resource.resetExpiration(
+            documentId: "doc1",
+            assignmentId: "a1",
+            newExpiresAt: expiration
+        )
+
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body["expires_at"] as? String, expiration)
+
+        await assertThrowsValidationError {
+            _ = try await self.resource.resetExpiration(
+                documentId: "doc1",
+                assignmentId: "a1",
+                newExpiresAt: "  "
+            )
+        }
+    }
+
     func testResendNotificationRequiresDocumentAssignmentAndSignerID() async {
         await assertThrowsValidationError {
             _ = try await self.resource.resendNotification(documentId: "", assignmentId: "a1", signerId: "s1")
@@ -504,6 +527,18 @@ final class AssignmentResourceTests: XCTestCase {
             return
         }
         XCTAssertEqual(json["decline_reason"] as? String, "Not happy")
+    }
+
+    func testDeclineRejectsBlankReasonBeforeRequest() async {
+        await assertThrowsValidationError {
+            try await self.resource.decline(
+                documentId: "doc1",
+                assignmentId: "assignment1",
+                signerAccessCode: "code",
+                reason: "  "
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
     }
 
     func testListWhatsappNotificationsDecodesButtons() async throws {

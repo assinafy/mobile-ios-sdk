@@ -198,8 +198,35 @@ final class FieldResourceTests: XCTestCase {
 
     func testValidateMultipleRejectsEmpty() async {
         await assertThrowsValidationError {
-            _ = try await self.resource.validateMultiple(items: [])
+            _ = try await self.resource.validateMultiple(items: [FieldValidateMultipleItem]())
         }
+    }
+
+    func testValidatePreservesJSONValueTypes() async throws {
+        mock.stubEnvelope(["type": "number", "success": true, "error_message": ""])
+        _ = try await resource.validate(
+            fieldId: "f1",
+            value: JSONValue(.number(1.25))
+        )
+        let body = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["value"] as? Double, 1.25)
+    }
+
+    func testValidateMultiplePreservesNestedJSONValues() async throws {
+        mock.stubEnvelopeList([
+            ["field_id": "f1", "type": "object", "success": true, "error_message": ""],
+        ])
+        _ = try await resource.validateMultiple(items: [
+            FieldJSONValidationItem(
+                fieldId: "f1",
+                value: JSONValue(.object(["approved": JSONValue(.bool(true))]))
+            ),
+        ])
+        let body = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [[String: Any]])
+        let value = try XCTUnwrap(json.first?["value"] as? [String: Any])
+        XCTAssertEqual(value["approved"] as? Bool, true)
     }
 
     func testListFieldTypesUsesFieldTypesPath() async throws {

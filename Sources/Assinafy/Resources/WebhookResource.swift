@@ -12,7 +12,7 @@ import Foundation
 /// )
 /// ```
 @objcMembers
-public final class WebhookResource: BaseResource {
+public final class WebhookResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
@@ -26,6 +26,19 @@ public final class WebhookResource: BaseResource {
         _ payload: WebhookRegisterPayload,
         accountId: String? = nil
     ) async throws -> WebhookSubscription {
+        guard let components = URLComponents(string: payload.url),
+              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil else {
+            throw ValidationError("Webhook URL must be an absolute HTTP or HTTPS URL")
+        }
+        try validateEmail(payload.email)
+        guard payload.events.allSatisfy({
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else {
+            throw ValidationError("Webhook event names must not be blank")
+        }
         let id = try self.accountId(accountId)
         let request = try APIRequest.put("/accounts/\(id)/webhooks/subscriptions", body: payload)
         return try await call("Failed to register webhook", request: request)

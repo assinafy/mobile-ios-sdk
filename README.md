@@ -1,315 +1,332 @@
 # Assinafy iOS SDK
 
-A native iOS SDK for the Assinafy document signing API.
-
-Official API reference: https://api.assinafy.com.br/v1/docs
+Native Swift and Objective-C access to the [Assinafy v1 API](https://api.assinafy.com.br/v1/docs) for documents, signers, assignments, fields, tags, templates, workspaces, webhooks, and authentication.
 
 ## Requirements
 
 - iOS 16.0+
-- macOS 12.0+ (when used from a macOS target)
+- macOS 12.0+ for macOS consumers
 - Swift 6.3+
 - Xcode 26.6+
 
+Swift and Xcode do not use an LTS release channel. These versions are the current stable toolchain supported by this package.
+
 ## Installation
 
-### Swift Package Manager
-
-Add the package to your `Package.swift`:
+Add the package and product to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.3.0")
+    .package(
+        url: "https://github.com/assinafy/mobile-ios-sdk.git",
+        from: "1.3.1"
+    ),
+],
+targets: [
+    .target(
+        name: "YourApp",
+        dependencies: [
+            .product(name: "Assinafy", package: "mobile-ios-sdk"),
+        ]
+    ),
 ]
 ```
 
-Or in Xcode: **File → Add Packages…** and paste the repository URL.
+In Xcode, select **File → Add Package Dependencies…** and enter the repository URL.
 
-## Quick Start
+## Authentication and configuration
 
-### Configuration
+Use bearer tokens in distributed mobile apps. Permanent API keys belong in a trusted backend and must not be embedded in an app bundle.
 
 ```swift
 import Assinafy
 
-// API key authentication (server-side use only — see security note below)
-let client = AssinafyClient(
-    apiKey: "your-api-key",
-    defaultAccountId: "your-workspace-id"
+let configuration = AssinafyClientConfiguration(
+    token: bearerToken,
+    defaultAccountId: accountId,
+    timeout: 30
+)
+try configuration.validate()
+let client = AssinafyClient(configuration: configuration)
+```
+
+For public operations such as login and password reset, credentials may be omitted:
+
+```swift
+let publicClient = AssinafyClient(
+    configuration: AssinafyClientConfiguration()
 )
 
-// Or bearer token authentication (recommended for mobile apps)
-let client = AssinafyClient(
-    token: "your-bearer-token",
-    defaultAccountId: "your-workspace-id"
+let session = try await publicClient.auth.login(
+    LoginPayload(email: email, password: password)
 )
 ```
 
-> **Security:** Assinafy's API documentation recommends API keys only from trusted back-end systems. For mobile apps, fetch a short-lived bearer token from your own backend (or use the `auth.login` endpoint directly) instead of embedding a permanent `X-Api-Key` in the app bundle.
+Configuration fails closed. Requests are rejected before network I/O when credentials conflict, a timeout is invalid, an identifier is unsafe, or the base URL is not an absolute HTTPS URL without user information, query, or fragment.
 
-### Authentication
+## Complete document flow
 
-```swift
-let unauthenticatedClient = AssinafyClient(configuration: AssinafyClientConfiguration())
-let login = try await unauthenticatedClient.auth.login(
-    LoginPayload(email: "user@example.com", password: "password")
-)
-
-let client = AssinafyClient(
-    token: login.accessToken,
-    defaultAccountId: login.accounts.first?.id
-)
-```
-
-### Upload and Request Signatures
+The following function is a complete owner-side flow: upload, wait for processing, create or reuse a signer, estimate cost, create an assignment, inspect status, and download the original PDF.
 
 ```swift
-// Simple upload and sign flow
-let (document, assignment) = try await client.uploadAndRequestSignatures(
-    documentData: pdfData,
-    options: AssinafyClient.UploadOptions(signers: [
-        AssinafyClient.SignerInput(name: "John Doe", email: "john@example.com")
-    ])
-)
-```
+import Assinafy
+import Foundation
 
-### Upload Document
+struct SignatureRequestResult {
+    let document: DocumentUploadResponse
+    let signer: Signer
+    let assignment: Assignment
+    let originalPDF: Data
+}
 
-```swift
-let doc = try await client.documents.upload(
-    pdfData,
-    options: DocumentUploadOptions(accountId: "acc-id")
-)
-_ = try await client.documents.waitUntilReady(documentId: doc.id)
-```
-
-### Create Signers
-
-```swift
-let signer = try await client.signers.create(
-    CreateSignerPayload(
-        fullName: "John Doe",
-        email: "john@example.com",
-        whatsappPhoneNumber: "+5548999990000"
+func requestSignature(
+    pdfData: Data,
+    bearerToken: String,
+    accountId: String,
+    signerName: String,
+    signerEmail: String
+) async throws -> SignatureRequestResult {
+    let configuration = AssinafyClientConfiguration(
+        token: bearerToken,
+        defaultAccountId: accountId
     )
+    try configuration.validate()
+    let client = AssinafyClient(configuration: configuration)
+
+    let uploaded = try await client.documents.upload(pdfData)
+    let document = try await client.documents.waitUntilReady(
+        documentId: uploaded.id,
+        options: WaitUntilReadyOptions(
+            maxWaitSeconds: 60,
+            pollIntervalSeconds: 2
+        )
+    )
+
+    let signer = try await client.signers.create(
+        CreateSignerPayload(fullName: signerName, email: signerEmail)
+    )
+
+    let request = CreateAssignmentPayload.withSignerIds(
+        [signer.id],
+        method: .virtual,
+        message: "Please review and sign."
+    )
+    let estimate = try await client.assignments.estimateCost(
+        documentId: document.id,
+        payload: request
+    )
+    guard estimate.hasSufficientResources else {
+        throw AssinafySDKError(
+            estimate.blockingReason ?? "Insufficient account resources"
+        )
+    }
+
+    let assignment = try await client.assignments.create(
+        documentId: document.id,
+        payload: request
+    )
+    _ = try await client.documents.getSigningProgress(documentId: document.id)
+    _ = try await client.documents.activities(documentId: document.id)
+
+    let originalPDF = try await client.documents.downloadArtifact(
+        documentId: document.id,
+        artifact: .original
+    )
+    return SignatureRequestResult(
+        document: document,
+        signer: signer,
+        assignment: assignment,
+        originalPDF: originalPDF
+    )
+}
+```
+
+The convenience `uploadAndRequestSignatures` performs the same owner-side orchestration. It validates all signer input before uploading, but the remote steps are not transactional. If a later request fails, the already-created document or signers remain available for explicit cleanup or retry.
+
+## Signer flow
+
+A signer access code comes from the signing invitation and is sent as the exact `signer-access-code` query parameter. It must be treated as a secret.
+
+```swift
+func signVirtualAssignment(
+    client: AssinafyClient,
+    documentId: String,
+    assignmentId: String,
+    accessCode: String,
+    fullName: String,
+    email: String
+) async throws {
+    _ = try await client.signers.getSelf(signerAccessCode: accessCode)
+    try await client.signers.acceptTermsWithoutResponse(
+        signerAccessCode: accessCode
+    )
+    _ = try await client.documents.confirmSignerDataAndReturnSigner(
+        documentId: documentId,
+        signerAccessCode: accessCode,
+        payload: ConfirmSignerDataPayload(
+            fullName: fullName,
+            email: email,
+            hasAcceptedTerms: true
+        )
+    )
+    try await client.assignments.sign(
+        documentId: documentId,
+        assignmentId: assignmentId,
+        signerAccessCode: accessCode
+    )
+}
+```
+
+Public token delivery uses one request and returns `Void`:
+
+```swift
+try await publicClient.documents.sendPublicSignToken(
+    documentId: documentId,
+    email: "recipient@example.invalid"
 )
 ```
 
-### Tags
+## Fields and JSON values
+
+String validation remains source-compatible. Use `JSONValue` when a field accepts another JSON type:
+
+```swift
+let result = try await client.fields.validate(
+    fieldId: fieldId,
+    value: JSONValue(.integer(42))
+)
+```
+
+Untyped response fields also expose lossless JSON alongside legacy string or Foundation views:
+
+- `DocumentActivity.originJSON` and `payloadJSON`
+- `AssignmentItem.valueJSON`
+- `TemplateFieldPlacement.displaySettingsJSON`
+- `WebhookDispatch.payloadJSON`
+
+## Tags and templates
 
 ```swift
 let tag = try await client.tags.create(
     CreateTagPayload(name: "Contracts", color: "ff8800")
 )
-
 _ = try await client.tags.appendDocumentTags(
-    documentId: document.id,
+    documentId: documentId,
     tagIds: [tag.id]
 )
-```
 
-### Create Assignment
-
-```swift
-let assignment = try await client.assignments.create(
-    documentId: document.id,
-    payload: .withSignerIds([signer.id], method: .virtual)
-)
-```
-
-### Signer-facing flows
-
-The signer-facing endpoints expect a signer access code (delivered to the
-signer by email or WhatsApp):
-
-```swift
-// Look up the current document
-let doc = try await client.signers.getCurrentDocument(
-    signerId: signerId,
-    signerAccessCode: code
-)
-
-// Confirm the signer's data before signing (virtual assignments only)
-try await client.documents.confirmSignerData(
-    documentId: doc.id,
-    signerAccessCode: code,
-    payload: ConfirmSignerDataPayload(
-        fullName: signer.fullName,
-        email: signer.email,
-        governmentId: "00000000000"
-    )
-)
-
-// Sign or decline the assignment
-try await client.assignments.sign(
-    documentId: doc.id,
-    assignmentId: doc.assignment!.id,
-    signerAccessCode: code
-)
-// or
-try await client.assignments.decline(
-    documentId: doc.id,
-    assignmentId: doc.assignment!.id,
-    signerAccessCode: code,
-    reason: "Terms unacceptable."
-)
-```
-
-### Validating field values
-
-```swift
-let result = try await client.fields.validate(
-    fieldId: cpfDefinition.id,
-    value: "400.676.228-36"
-)
-print(result.success, result.errorMessage)
-```
-
-### Templates
-
-Production supports listing templates and creating documents from an existing
-template:
-
-```swift
 let templates = try await client.templates.list(
-    params: TemplateListParams(search: "Hiring contract")
-)
-guard let template = templates.data.first else {
-    throw AssinafySDKError("No matching template")
-}
-
-let generated = try await client.documents.createFromTemplate(
-    templateId: template.id,
-    signers: [
-        TemplateSigner(
-            roleId: "role-id",
-            id: signer.id,
-            verificationMethod: "Email",
-            notificationMethods: ["Email"],
-            step: NSNumber(value: 1)
-        )
-    ],
-    options: CreateDocumentFromTemplateOptions(
-        name: "Hiring contract - John.pdf",
-        editorFields: [TemplateEditorField(fieldId: "field-id", value: "Acme")],
-        tags: ["Onboarding"]
-    )
+    params: TemplateListParams(search: "Hiring")
 )
 ```
 
-Template-definition `create`, `get`, `update`, and `delete` are sandbox
-compatibility extensions. They are not present in the current production
-OpenAPI contract:
+Template listing and document creation from a template use the v1 contract.
+Template-definition create, get, update, and delete are compatibility methods;
+confirm their availability for the configured environment before depending on
+them.
+
+## Resource map
+
+- `client.auth`: login, social login/linking, password operations, API-key management, current user, notification preferences, user statistics
+- `client.workspaces`: account CRUD, theme, statistics, logo upload/download/delete
+- `client.documents`: upload, list/search/get/rename/delete, processing status, pages, thumbnails, activities, artifacts, verification, template document creation, public token flow
+- `client.signers`: workspace signer CRUD plus signer self-service, terms, verification, signatures, signer documents, batch sign/decline
+- `client.assignments`: list, create, estimate, sign/decline, resend, expiration, WhatsApp notifications
+- `client.fields`: definitions, field types, single and batch validation
+- `client.tags`: workspace tags and document attachments
+- `client.templates`: template listing and compatible definition management
+- `client.webhooks`: subscriptions, event types, delivery history, and retry
+
+See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for each method's authentication, HTTP path, request payload, response payload, compatibility behavior, and error model.
+
+## Errors
 
 ```swift
-let sandboxTemplate = try await client.templates.create(
-    name: "Hiring contract",
-    pdfData: contractPDF
-)
-_ = try await client.templates.get(templateId: sandboxTemplate.id)
-_ = try await client.templates.update(
-    templateId: sandboxTemplate.id,
-    payload: UpdateTemplatePayload(message: "Please sign within 7 days")
-)
-try await client.templates.delete(templateId: sandboxTemplate.id)
+do {
+    _ = try await client.documents.get(documentId: documentId)
+} catch let error as APIError {
+    print(error.statusCode, error.message, error.responseData as Any)
+    for restriction in error.workspaceDeletionRestrictions {
+        print(restriction.code, restriction.accountIds)
+    }
+} catch let error as ValidationError {
+    print(error.message, error.errors)
+} catch let error as NetworkError {
+    print(error.message, error.underlyingError as Any)
+} catch is CancellationError {
+    // The SDK preserves Swift task cancellation.
+}
 ```
 
-## Resources
-
-The SDK exposes resource objects for the public API documented at https://api.assinafy.com.br/v1/docs:
-
-- `client.documents` - Document uploads, downloads, rename, search, management, public lookup, signing token delivery, status catalog
-- `client.signers` - Signer CRUD, self-service flows, signer-facing document listing/search/sign-multiple/decline-multiple/download
-- `client.assignments` - Signing assignments: list, create, sign, decline, resend, cost estimation, reset expiration, ordered-signing steps, WhatsApp notification log
-- `client.webhooks` - Webhook subscriptions, event-type catalog, dispatch history, retry
-- `client.templates` - Document template listing and instantiation, plus live-verified sandbox CRUD extensions
-- `client.workspaces` - Workspace (account) CRUD, theme/branding, document KPI stats, and logo upload/download/delete
-- `client.tags` - Workspace tag CRUD and document tag listing/replacement/append/detach
-- `client.fields` - Field-definition CRUD, value validation (single and batch), field type catalog
-- `client.auth` - Login, social login (+ linking and authorization-URL builder), password reset, change password, API key management, current-user profile, notification preferences, and cross-account KPIs
-
-For a per-method reference with full request/response payloads, see
-[`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
+Cross-origin HTTPS download redirects are allowed only for bodyless `GET` and
+`HEAD`. Only `Accept`, `Accept-Encoding`, `Accept-Language`, `Range`, `If-Range`,
+and `User-Agent` survive. Credential, cookie, and unknown custom headers are
+removed. HTTP downgrades, user-information URLs, and cross-origin body redirects
+are refused.
 
 ## Testing
 
-Run the unit suite:
+Run strict host tests and a release build:
 
 ```bash
-swift test
+swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+swift build -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 ```
 
-Live API checks are gated by environment variables and are skipped by default:
+CI also runs XCTest on an iOS 26.5/iPhone 17 Pro simulator with Xcode 26.6,
+builds DocC with warnings treated as errors, checks public API compatibility
+against the nearest prior tag, and verifies that release tags, `sdkVersion`,
+and the changelog agree.
+
+Live tests accept credentials only through the environment and refuse every host except `https://sandbox.assinafy.com.br/v1`:
 
 ```bash
 ASSINAFY_API_KEY="..." \
 ASSINAFY_ACCOUNT_ID="..." \
 ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1" \
-swift test --filter AssinafyLiveTests
+swift test --filter AssinafyTests.AssinafyLiveTests
 ```
 
-Live tests refuse to run against any host except
-`https://sandbox.assinafy.com.br/v1`. Sandbox and production expose different
-operation sets; the production OpenAPI document remains the SDK contract. The
-client applies the sandbox's live-required assignment-account and public-token
-request fields only when configured for the Assinafy sandbox host.
-
-Mutation tests are additionally gated so normal test runs cannot create API
-resources or send notifications. To run the complete suite, provide two
-dedicated recipient addresses at runtime:
+Mutation tests require an explicit opt-in and two dedicated recipients supplied at runtime:
 
 ```bash
 ASSINAFY_API_KEY="..." \
 ASSINAFY_ACCOUNT_ID="..." \
 ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1" \
 ASSINAFY_RUN_LIVE_MUTATIONS=1 \
-ASSINAFY_TEST_EMAIL_A="recipient-a@example.com" \
-ASSINAFY_TEST_EMAIL_B="recipient-b@example.com" \
-swift test --filter AssinafyLiveTests
+ASSINAFY_TEST_EMAIL_A="recipient-a@example.invalid" \
+ASSINAFY_TEST_EMAIL_B="recipient-b@example.invalid" \
+swift test --filter AssinafyTests.AssinafyLiveTests
 ```
 
-The suite covers read-only catalogs plus reversible notification-preference,
-tag, signer, field, template, document, and assignment flows. Each mutation
-flow tracks the resources it creates and attempts to delete them; cleanup
-failures fail the test. Pre-existing assignment signers are reused and never
-deleted. Never commit live credentials or recipient addresses.
+Never commit live credentials, access codes, passwords, or recipient addresses.
+The `Live Sandbox` GitHub workflow reads environment secrets, runs read-only
+checks weekly, permits manually requested mutation runs, and runs the complete
+mutation suite for every `v*` release tag. Complete runs fail when the sandbox
+account lacks the resources needed to create an assignment.
 
-## Error Handling
+## Objective-C
 
-```swift
-do {
-    let doc = try await client.documents.upload(data)
-} catch let error as APIError {
-    // Handle API errors (4xx, 5xx responses)
-    print("API Error: \(error.statusCode) - \(error.message)")
-} catch let error as ValidationError {
-    // Handle validation errors
-    print("Validation: \(error.message)")
-} catch let error as NetworkError {
-    // Handle network errors
-    print("Network: \(error.message)")
-}
-```
-
-## Objective-C Support
-
-Core models and resource operations expose Objective-C-compatible types and
-completion-handler wrappers. Swift-concurrency-only APIs are identified in the
-[method reference](docs/API_REFERENCE.md):
+Objective-C-compatible methods use completion handlers delivered on the main queue. The generated header is the source of truth for selectors; not every Swift-concurrency helper has a completion wrapper.
 
 ```objc
-ASFAssinafyClient *client = [[ASFAssinafyClient alloc] initWithApiKey:@"key"
-                                                        defaultAccountId:@"acc"];
+ASFAssinafyClient *client = [[ASFAssinafyClient alloc]
+    initWithToken:bearerToken
+    defaultAccountId:accountId];
 
-[client.signers getSignerWithId:@"signer-id" accountId:nil completion:^(Signer *signer, NSError *error) {
-    if (error) {
-        NSLog(@"Error: %@", error);
+[client.signers getSignerWithId:@"signer-id"
+                       accountId:nil
+                      completion:^(Signer *signer, NSError *error) {
+    if (error != nil) {
+        NSLog(@"Request failed: %@", error.localizedDescription);
         return;
     }
-    NSLog(@"Signer: %@", signer.fullName);
+    NSLog(@"Signer ID: %@", signer.id);
 }];
 ```
 
+Swift error types bridge to `NSError` domains in `ASFErrorDomain`. API status, validation fields, response data, and underlying transport errors are carried through `code` and `userInfo`.
+
 ## License
 
-MIT License - see LICENSE file for details.
+MIT. See [LICENSE](LICENSE).

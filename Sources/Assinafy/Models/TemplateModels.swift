@@ -50,16 +50,21 @@ public final class TemplateFieldPlacement: NSObject {
     public let fieldId: String
     public let roleId: String
     public let label: String?
+    /// Lossless rendering metadata returned by the API.
+    @nonobjc public let displaySettingsJSON: JSONValue?
+    /// String compatibility view of ``displaySettingsJSON``.
     public let displaySettings: String?
     public let createdAt: String?
     public let updatedAt: String?
 
     init(id: String, fieldId: String, roleId: String, label: String? = nil,
-         displaySettings: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
+         displaySettingsJSON: JSONValue? = nil, displaySettings: String? = nil,
+         createdAt: String? = nil, updatedAt: String? = nil) {
         self.id = id
         self.fieldId = fieldId
         self.roleId = roleId
         self.label = label
+        self.displaySettingsJSON = displaySettingsJSON
         self.displaySettings = displaySettings
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -80,12 +85,14 @@ extension TemplateFieldPlacement: Decodable {
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let displaySettingsJSON = try decodeJSONValue(from: c, forKey: .displaySettings)
         self.init(
             id: try c.decode(String.self, forKey: .id),
             fieldId: try c.decode(String.self, forKey: .fieldId),
             roleId: try c.decode(String.self, forKey: .roleId),
             label: try c.decodeIfPresent(String.self, forKey: .label),
-            displaySettings: try decodeFlexibleOptionalString(from: c, forKey: .displaySettings),
+            displaySettingsJSON: displaySettingsJSON,
+            displaySettings: displaySettingsJSON?.stringValue,
             createdAt: try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
             updatedAt: try decodeFlexibleOptionalString(from: c, forKey: .updatedAt)
         )
@@ -131,7 +138,7 @@ extension TemplatePage: Decodable {
             height: try c.decode(Int.self, forKey: .height),
             width: try c.decode(Int.self, forKey: .width),
             downloadUrl: try c.decode(String.self, forKey: .downloadUrl),
-            fields: (try? c.decode([TemplateFieldPlacement].self, forKey: .fields)) ?? []
+            fields: try c.decodeIfPresent([TemplateFieldPlacement].self, forKey: .fields) ?? []
         )
     }
 }
@@ -194,9 +201,9 @@ extension TemplateListItem: Decodable {
             accountId:    try c.decodeIfPresent(String.self, forKey: .accountId),
             createdAt:    try decodeFlexibleString(from: c, forKey: .createdAt),
             updatedAt:    try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
-            pages:        (try? c.decode([TemplatePage].self, forKey: .pages)) ?? [],
-            roles:        (try? c.decode([TemplateRole].self, forKey: .roles)) ?? [],
-            tags:         (try? c.decode([Tag].self, forKey: .tags)) ?? []
+            pages:        try c.decodeIfPresent([TemplatePage].self, forKey: .pages) ?? [],
+            roles:        try c.decodeIfPresent([TemplateRole].self, forKey: .roles) ?? [],
+            tags:         try c.decodeIfPresent([Tag].self, forKey: .tags) ?? []
         )
     }
 }
@@ -262,9 +269,9 @@ extension TemplateDetails: Decodable {
             documentName: try c.decodeIfPresent(String.self,         forKey: .documentName),
             message:      try c.decodeIfPresent(String.self,         forKey: .message),
             roles:        try c.decodeIfPresent([TemplateRole].self, forKey: .roles),
-            pages:        (try? c.decode([TemplatePage].self, forKey: .pages)) ?? [],
-            tags:         (try? c.decode([Tag].self, forKey: .tags)) ?? [],
-            defaultDocumentTags: (try? c.decode([Tag].self, forKey: .defaultDocumentTags)) ?? [],
+            pages:        try c.decodeIfPresent([TemplatePage].self, forKey: .pages) ?? [],
+            tags:         try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
+            defaultDocumentTags: try c.decodeIfPresent([Tag].self, forKey: .defaultDocumentTags) ?? [],
             createdAt:    try decodeFlexibleString(from: c, forKey: .createdAt),
             updatedAt:    try decodeFlexibleOptionalString(from: c, forKey: .updatedAt)
         )
@@ -435,10 +442,10 @@ extension CreateDocumentFromTemplateOptions: @unchecked Sendable {}
 /// Query parameters for `GET /accounts/{account_id}/templates`.
 @objcMembers
 public final class TemplateListParams: NSObject {
-    /// Live-verified sandbox extension; not present in production OpenAPI.
+    /// Optional sandbox compatibility filter.
     public var status: String?
     public var search: String?
-    /// Live-verified sandbox extension; not present in production OpenAPI.
+    /// Optional sandbox compatibility filter.
     public var tagIds: [String]
     /// Legacy server extension retained for compatibility.
     public var sort: String?

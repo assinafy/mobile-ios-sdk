@@ -22,13 +22,13 @@ public final class CostEstimateBreakdownItem: NSObject {
         self.unitCost = unitCost
     }
 
-    fileprivate convenience init(raw: [String: Any]) {
+    fileprivate convenience init(raw: [String: Any]) throws {
         self.init(
-            code: raw["code"] as? String ?? "",
-            name: raw["name"] as? String ?? "",
-            cost: CostEstimate.double(raw, "cost"),
-            quantity: Int(CostEstimate.double(raw, "quantity")),
-            unitCost: CostEstimate.double(raw, "unit_cost")
+            code: try CostEstimate.string(raw, "code") ?? "",
+            name: try CostEstimate.string(raw, "name") ?? "",
+            cost: try CostEstimate.double(raw, "cost"),
+            quantity: try CostEstimate.integer(raw, "quantity"),
+            unitCost: try CostEstimate.double(raw, "unit_cost")
         )
     }
 }
@@ -51,6 +51,8 @@ public final class CostEstimate: NSObject, Decodable {
     public let hasSufficientBalance: Bool
     /// Number of documents this operation will consume.
     public let documents: Double
+    /// Integer document count from the current API schema.
+    public var documentCount: Int { Self.safeInteger(documents) ?? 0 }
     /// Credit cost for notifications or extra usage.
     public let credits: Double
     /// Whether the operation requires an extra document charge.
@@ -93,39 +95,54 @@ public final class CostEstimate: NSObject, Decodable {
         self.raw = raw
     }
 
-    private convenience init(raw: [String: Any]) {
-        let totalCredits = Self.double(raw, "total_credits")
-        let credits = Self.double(raw, "credits")
-        let estimated = Self.double(raw, "estimated_cost")
-        let legacyTotal = Self.double(raw, "total")
-        let hasResources = (raw["has_sufficient_resources"] as? Bool)
-            ?? (raw["has_sufficient_balance"] as? Bool)
+    private convenience init(raw: [String: Any]) throws {
+        let totalCredits = try Self.double(raw, "total_credits")
+        let credits = try Self.double(raw, "credits")
+        let estimated = try Self.double(raw, "estimated_cost")
+        let legacyTotal = try Self.double(raw, "total")
+        let hasResources = try Self.bool(raw, "has_sufficient_resources")
+            ?? Self.bool(raw, "has_sufficient_balance")
             ?? false
-        let breakdown = (raw["breakdown"] as? [[String: Any]] ?? []).map {
-            CostEstimateBreakdownItem(raw: $0)
+        let breakdownValues: [[String: Any]]
+        if let value = raw["breakdown"], !(value is NSNull) {
+            guard let value = value as? [[String: Any]] else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: "breakdown must be an array of objects")
+                )
+            }
+            breakdownValues = value
+        } else {
+            breakdownValues = []
+        }
+        let breakdown = try breakdownValues.map {
+            try CostEstimateBreakdownItem(raw: $0)
+        }
+        let resolvedEstimate: Double
+        if raw["estimated_cost"] != nil {
+            resolvedEstimate = estimated
+        } else if raw["total_credits"] != nil {
+            resolvedEstimate = totalCredits
+        } else if raw["total"] != nil {
+            resolvedEstimate = legacyTotal
+        } else {
+            resolvedEstimate = credits
         }
         self.init(
-            creditBalance:        Self.double(raw, "credit_balance"),
-            documentBalance:      Self.double(raw, "document_balance"),
-            estimatedCost:        estimated != 0
-                ? estimated
-                : (totalCredits != 0 ? totalCredits : (legacyTotal != 0 ? legacyTotal : credits)),
+            creditBalance:        try Self.double(raw, "credit_balance"),
+            documentBalance:      try Self.double(raw, "document_balance"),
+            estimatedCost:        resolvedEstimate,
             hasSufficientBalance: hasResources,
-            documents:            Self.double(raw, "documents"),
+            documents:            Double(try Self.integer(raw, "documents")),
             credits:              credits,
-            needsExtraDocument:   (raw["needs_extra_document"] as? Bool) ?? false,
-            extraDocumentCost:    Self.double(raw, "extra_document_cost"),
+            needsExtraDocument:   try Self.bool(raw, "needs_extra_document") ?? false,
+            extraDocumentCost:    try Self.double(raw, "extra_document_cost"),
             totalCredits:         totalCredits,
             breakdown:            breakdown,
             hasSufficientResources: hasResources,
-            blockingReason:       raw["blocking_reason"] as? String,
-            message:              raw["message"] as? String,
+            blockingReason:       try Self.string(raw, "blocking_reason"),
+            message:              try Self.string(raw, "message"),
             raw: raw
         )
-    }
-
-    static func from(_ raw: [String: Any]) -> CostEstimate {
-        CostEstimate(raw: raw)
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -155,27 +172,68 @@ public final class CostEstimate: NSObject, Decodable {
                       debugDescription: "Cost estimate contains no recognized fields")
             )
         }
-        self.init(raw: values.mapValues(Self.anyValue))
+        try self.init(raw: values.mapValues(\.foundationValue))
     }
 
-    fileprivate static func double(_ dict: [String: Any], _ key: String) -> Double {
-        if let n = dict[key] as? Double { return n }
-        if let n = dict[key] as? Int    { return Double(n) }
-        if let n = dict[key] as? NSNumber { return n.doubleValue }
-        if let s = dict[key] as? String { return Double(s) ?? 0 }
-        return 0
-    }
-
-    private static func anyValue(_ fragment: JSONFragment) -> Any {
-        switch fragment.storage {
-        case .string(let value): return value
-        case .number(let value): return value
-        case .bool(let value): return value
-        case .object(let value): return value.mapValues(anyValue)
-        case .array(let value): return value.map(anyValue)
-        case .null: return NSNull()
+    fileprivate static func double(_ dict: [String: Any], _ key: String) throws -> Double {
+        guard let raw = dict[key], !(raw is NSNull) else { return 0 }
+        let value: Double?
+        switch raw {
+        case is Bool: value = nil
+        case let number as Double: value = number
+        case let number as Int: value = Double(number)
+        case let number as Int64: value = Double(number)
+        case let number as UInt64: value = Double(number)
+        case let number as NSNumber: value = number.doubleValue
+        case let string as String: value = Double(string)
+        default: value = nil
         }
+        guard let value, value.isFinite else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "\(key) must be a finite number")
+            )
+        }
+        return value
     }
+
+    fileprivate static func integer(_ dict: [String: Any], _ key: String) throws -> Int {
+        let value = try double(dict, key)
+        guard let integer = safeInteger(value) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "\(key) must be a finite integer")
+            )
+        }
+        return integer
+    }
+
+    fileprivate static func bool(_ dict: [String: Any], _ key: String) throws -> Bool? {
+        guard let value = dict[key], !(value is NSNull) else { return nil }
+        guard let value = value as? Bool else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "\(key) must be a boolean")
+            )
+        }
+        return value
+    }
+
+    fileprivate static func string(_ dict: [String: Any], _ key: String) throws -> String? {
+        guard let value = dict[key], !(value is NSNull) else { return nil }
+        guard let value = value as? String else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "\(key) must be a string")
+            )
+        }
+        return value
+    }
+
+    fileprivate static func safeInteger(_ value: Double) -> Int? {
+        guard value.isFinite,
+              value.rounded(.towardZero) == value,
+              value >= Double(Int.min),
+              value < Double(Int.max) else { return nil }
+        return Int(value)
+    }
+
 }
 
 extension CostEstimate: @unchecked Sendable {}

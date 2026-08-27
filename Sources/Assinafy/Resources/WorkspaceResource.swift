@@ -1,5 +1,9 @@
 import Foundation
 
+private struct SandboxCreateWorkspacePayload: Encodable {
+    let name: String
+}
+
 /// Manages workspace (account) objects.
 ///
 /// Access this resource through ``AssinafyClient/workspaces``.
@@ -11,7 +15,7 @@ import Foundation
 /// )
 /// ```
 @objcMembers
-public final class WorkspaceResource: BaseResource {
+public final class WorkspaceResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
@@ -20,7 +24,11 @@ public final class WorkspaceResource: BaseResource {
     /// - Parameter payload: Name and branding options for the workspace.
     /// - Returns: The created ``WorkspaceResponse``.
     public func create(_ payload: CreateWorkspacePayload) async throws -> WorkspaceResponse {
-        let request = try APIRequest.post("/accounts", body: payload)
+        let request = if usesSandboxCompatibility {
+            try APIRequest.post("/accounts", body: SandboxCreateWorkspacePayload(name: payload.name))
+        } else {
+            try APIRequest.post("/accounts", body: payload)
+        }
         return try await call("Failed to create workspace", request: request)
     }
 
@@ -88,8 +96,7 @@ public final class WorkspaceResource: BaseResource {
 
     /// Fetches precomputed per-account document-funnel KPIs.
     ///
-    /// - Note: This endpoint is not available on the sandbox host and returns
-    ///   `404` there; it is served on production only.
+    /// - Note: The sandbox host currently returns `404` for this endpoint.
     ///
     /// - Parameters:
     ///   - params: Granularity (`monthly`/`daily`) and month filter.

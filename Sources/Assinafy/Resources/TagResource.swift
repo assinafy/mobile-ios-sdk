@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Access this resource through ``AssinafyClient/tags``.
 @objcMembers
-public final class TagResource: BaseResource {
+public final class TagResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Workspace tags
 
@@ -31,6 +31,7 @@ public final class TagResource: BaseResource {
         accountId: String? = nil
     ) async throws -> Tag {
         try validateTagName(payload.name)
+        try validateTagColor(payload.color)
         let id = try self.accountId(accountId)
         let request = try APIRequest.post("/accounts/\(id)/tags", body: payload)
         return try await call("Failed to create tag", request: request)
@@ -49,6 +50,10 @@ public final class TagResource: BaseResource {
         if let name = payload.name {
             try validateTagName(name)
         }
+        guard payload.name != nil || payload.color != nil || payload.clearsColor else {
+            throw ValidationError("At least one tag field is required")
+        }
+        try validateTagColor(payload.color)
         let request = try APIRequest.put("/accounts/\(id)/tags/\(tid)", body: payload)
         return try await call("Failed to update tag", request: request)
     }
@@ -69,6 +74,22 @@ public final class TagResource: BaseResource {
             "Failed to delete tag",
             request: .delete("/accounts/\(id)/tags/\(tid)", queryItems: items)
         )
+    }
+
+    /// Deletes a tag and returns the documented `{ "deleted": boolean }` value.
+    public func deleteAndReturnStatus(
+        tagId: String,
+        force: Bool = false,
+        accountId: String? = nil
+    ) async throws -> Bool {
+        let id = try self.accountId(accountId)
+        let tid = try requireId(tagId, name: "Tag ID")
+        let items = force ? [URLQueryItem(name: "force", value: "true")] : nil
+        let response: TagDeleteResponse = try await call(
+            "Failed to delete tag",
+            request: .delete("/accounts/\(id)/tags/\(tid)", queryItems: items)
+        )
+        return response.deleted
     }
 
     // MARK: - Document tags
@@ -101,14 +122,18 @@ public final class TagResource: BaseResource {
         let id = try self.accountId(accountId)
         let did = try requireId(documentId, name: "Document ID")
         try validateTagIds(tagIds, allowEmpty: true)
+        let requestValues = try await tagRequestValues(tagIds, accountId: id)
         let request = try APIRequest.put(
             "/accounts/\(id)/documents/\(did)/tags",
-            body: TagNamesPayload(tags: tagIds)
+            body: TagNamesPayload(tags: requestValues)
         )
         let result: PaginatedResult<Tag> = try await callList(
             "Failed to replace document tags",
             request: request
         )
+        if usesSandboxCompatibility, !tagIds.isEmpty, result.data.isEmpty {
+            return try await listDocumentTags(documentId: did, accountId: id)
+        }
         return result.data
     }
 
@@ -134,14 +159,18 @@ public final class TagResource: BaseResource {
         let id = try self.accountId(accountId)
         let did = try requireId(documentId, name: "Document ID")
         try validateTagIds(tagIds, allowEmpty: false)
+        let requestValues = try await tagRequestValues(tagIds, accountId: id)
         let request = try APIRequest.post(
             "/accounts/\(id)/documents/\(did)/tags",
-            body: TagNamesPayload(tags: tagIds)
+            body: TagNamesPayload(tags: requestValues)
         )
         let result: PaginatedResult<Tag> = try await callList(
             "Failed to append document tags",
             request: request
         )
+        if usesSandboxCompatibility, result.data.isEmpty {
+            return try await listDocumentTags(documentId: did, accountId: id)
+        }
         return result.data
     }
 
@@ -171,6 +200,22 @@ public final class TagResource: BaseResource {
             "Failed to detach document tag",
             request: .delete("/accounts/\(id)/documents/\(did)/tags/\(tid)")
         )
+    }
+
+    /// Detaches a document tag and returns `{ "detached": boolean }`.
+    public func detachDocumentTagAndReturnStatus(
+        documentId: String,
+        tagId: String,
+        accountId: String? = nil
+    ) async throws -> Bool {
+        let id = try self.accountId(accountId)
+        let did = try requireId(documentId, name: "Document ID")
+        let tid = try requireId(tagId, name: "Tag ID")
+        let response: TagDetachResponse = try await call(
+            "Failed to detach document tag",
+            request: .delete("/accounts/\(id)/documents/\(did)/tags/\(tid)")
+        )
+        return response.detached
     }
 
     // MARK: - Objective-C / completion-handler API
@@ -229,6 +274,51 @@ public final class TagResource: BaseResource {
         }
         for id in ids {
             _ = try requireId(id, name: "Tag ID")
+        }
+    }
+
+    private func validateTagColor(_ color: String?) throws {
+        guard let color else { return }
+        guard color.range(of: "^#?[0-9A-Fa-f]{6}$", options: .regularExpression)
+                == color.startIndex..<color.endIndex else {
+            throw ValidationError("Tag color must be a 6-character hexadecimal value")
+        }
+    }
+
+    private func tagRequestValues(_ tagIds: [String], accountId: String) async throws -> [String] {
+        guard usesSandboxCompatibility, !tagIds.isEmpty else { return tagIds }
+        let requestedIds = Set(tagIds)
+        var namesById: [String: String] = [:]
+        var page = 1
+        while true {
+            let tags: PaginatedResult<Tag> = try await callList(
+                "Failed to resolve sandbox tag IDs",
+                request: .get(
+                    "/accounts/\(accountId)/tags",
+                    queryItems: [
+                        URLQueryItem(name: "page", value: String(page)),
+                        URLQueryItem(name: "per-page", value: "100"),
+                    ]
+                )
+            )
+            for tag in tags.data where requestedIds.contains(tag.id) {
+                namesById[tag.id] = tag.name
+            }
+            if requestedIds.isSubset(of: namesById.keys) { break }
+            if let lastPage = tags.meta?.lastPage, page < lastPage {
+                page += 1
+                continue
+            }
+            if tags.meta == nil, tags.data.count == 100 {
+                throw AssinafySDKError("Sandbox tag catalog omitted pagination metadata")
+            }
+            break
+        }
+        return try tagIds.map { tagId in
+            guard let name = namesById[tagId] else {
+                throw ValidationError("One or more tag IDs do not exist in the sandbox workspace")
+            }
+            return name
         }
     }
 }

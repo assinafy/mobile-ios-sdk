@@ -4,7 +4,7 @@ import Foundation
 
 /// Configuration options for ``AssinafyClient``.
 ///
-/// Use ``AssinafyClientConfiguration/init(apiKey:baseURL:defaultAccountId:timeout:logger:)``
+/// Use ``AssinafyClientConfiguration/init(apiKey:token:baseURL:defaultAccountId:timeout:logger:)``
 /// to fully customise behaviour, or the convenience `apiKey` / `token` factory
 /// methods on ``AssinafyClient`` for the common case. Leave credentials empty
 /// when you only need unauthenticated endpoints such as login or password reset.
@@ -51,6 +51,93 @@ public final class AssinafyClientConfiguration: NSObject {
         self.timeout = timeout
         self.logger = logger
     }
+
+    /// Creates an Objective-C-compatible configuration using the built-in no-op logger.
+    ///
+    /// Pass either `apiKey` or `token`, never both. Both may be `nil` for public
+    /// authentication endpoints.
+    @objc(initWithAPIKey:token:baseURL:defaultAccountId:timeout:)
+    public convenience init(
+        apiKey: String?,
+        token: String?,
+        baseURL: String,
+        defaultAccountId: String?,
+        timeout: TimeInterval
+    ) {
+        self.init(
+            apiKey: apiKey,
+            token: token,
+            baseURL: baseURL,
+            defaultAccountId: defaultAccountId,
+            timeout: timeout,
+            logger: NoopLogger()
+        )
+    }
+
+    /// Validates credentials and transport settings before the client is used.
+    ///
+    /// The non-throwing initializers are retained for source compatibility, but
+    /// every request also enforces these checks and fails with ``ValidationError``.
+    /// Call this method during application setup when configuration values come
+    /// from user input or an external configuration file.
+    ///
+    /// - Throws: ``ValidationError`` for contradictory or blank credentials, an
+    ///   unsafe base URL, an invalid default account ID, or a non-positive timeout.
+    public func validate() throws {
+        if apiKey != nil, token != nil {
+            throw ValidationError("Configure either an API key or a bearer token, not both")
+        }
+        try Self.validateCredential(apiKey, name: "API key")
+        try Self.validateCredential(token, name: "Bearer token")
+        guard timeout.isFinite, timeout > 0 else {
+            throw ValidationError("Timeout must be a finite positive interval")
+        }
+        if let defaultAccountId {
+            _ = try Self.validateIdentifier(defaultAccountId, name: "Default account ID")
+        }
+        guard Self.normalisedBaseURL(baseURL) != nil else {
+            throw ValidationError(
+                "Base URL must be an absolute HTTPS URL without credentials, query, or fragment"
+            )
+        }
+    }
+
+    static func normalisedBaseURL(_ raw: String) -> URL? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.hasSuffix("/") { value.removeLast() }
+        guard var components = URLComponents(string: value),
+              components.scheme?.caseInsensitiveCompare("https") == .orderedSame,
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil else {
+            return nil
+        }
+        components.scheme = "https"
+        return components.url
+    }
+
+    private static func validateCredential(_ value: String?, name: String) throws {
+        guard let value else { return }
+        guard !value.isEmpty,
+              value.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              value.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw ValidationError("\(name) is invalid")
+        }
+    }
+
+    static func validateIdentifier(_ value: String, name: String) throws -> String {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty,
+              value != ".",
+              value != "..",
+              value.rangeOfCharacter(from: .controlCharacters) == nil,
+              value.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\?#")) == nil else {
+            throw ValidationError("\(name) is invalid")
+        }
+        return value
+    }
 }
 
 extension AssinafyClientConfiguration: @unchecked Sendable {}
@@ -95,7 +182,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 public final class AssinafyClient: NSObject {
 
     /// The SDK version string included in the `User-Agent` header.
-    public static let sdkVersion = "1.3.0"
+    public static let sdkVersion = "1.3.1"
 
     // MARK: Resources
 
@@ -125,22 +212,39 @@ public final class AssinafyClient: NSObject {
 
     /// Creates a client with a full configuration object.
     ///
+    /// Invalid settings never send a network request: resource operations throw
+    /// ``ValidationError``. Call ``AssinafyClientConfiguration/validate()`` at
+    /// application startup when immediate validation is preferred.
+    ///
     /// - Parameter configuration: All client settings.
     @objc public init(configuration: AssinafyClientConfiguration) {
-        let baseURL = Self.normaliseBaseURL(configuration.baseURL)
+        let validationError: ValidationError?
+        do {
+            try configuration.validate()
+            validationError = nil
+        } catch let error as ValidationError {
+            validationError = error
+        } catch {
+            validationError = ValidationError(error.localizedDescription)
+        }
+        let baseURL = AssinafyClientConfiguration.normalisedBaseURL(configuration.baseURL)
+            ?? URL(string: AssinafyClientConfiguration.productionBaseURL)!
         var headers: [String: String] = [
             "Accept": "application/json",
             "User-Agent": "assinafy-ios-sdk/\(AssinafyClient.sdkVersion)",
         ]
-        if let key = configuration.apiKey {
-            headers["X-Api-Key"] = key
-        } else if let tok = configuration.token {
-            headers["Authorization"] = "Bearer \(tok)"
+        if validationError == nil {
+            if let key = configuration.apiKey {
+                headers["X-Api-Key"] = key
+            } else if let tok = configuration.token {
+                headers["Authorization"] = "Bearer \(tok)"
+            }
         }
         let http = URLSessionHTTPClient(
             baseURL: baseURL,
             defaultHeaders: headers,
-            timeout: configuration.timeout
+            timeout: validationError == nil ? configuration.timeout : 30,
+            configurationError: validationError
         )
         self.http = http
         self.config = configuration
@@ -162,8 +266,18 @@ public final class AssinafyClient: NSObject {
         )
         webhooks    = WebhookResource(http: http, defaultAccountId: accountId, logger: logger)
         templates   = TemplateResource(http: http, defaultAccountId: accountId, logger: logger)
-        tags        = TagResource(http: http, defaultAccountId: accountId, logger: logger)
-        workspaces  = WorkspaceResource(http: http, defaultAccountId: accountId, logger: logger)
+        tags        = TagResource(
+            http: http,
+            defaultAccountId: accountId,
+            logger: logger,
+            usesSandboxCompatibility: sandboxCompatibility
+        )
+        workspaces  = WorkspaceResource(
+            http: http,
+            defaultAccountId: accountId,
+            logger: logger,
+            usesSandboxCompatibility: sandboxCompatibility
+        )
         fields      = FieldResource(http: http, defaultAccountId: accountId, logger: logger)
         auth        = AuthResource(http: http, defaultAccountId: accountId, logger: logger)
         super.init()
@@ -295,6 +409,12 @@ public final class AssinafyClient: NSObject {
         for payload in signerPayloads {
             try signers.validateCreatePayload(payload)
         }
+        var uniqueEmails = Set<String>()
+        for email in signerPayloads.compactMap(\.email) {
+            guard uniqueEmails.insert(email.lowercased()).inserted else {
+                throw ValidationError("Signer emails must be unique")
+            }
+        }
 
         let uploadOpts = DocumentUploadOptions(accountId: acct)
         let document = try await documents.upload(documentData, options: uploadOpts)
@@ -327,23 +447,19 @@ public final class AssinafyClient: NSObject {
     /// - Parameter authClient: The OAuth provider identifier (e.g. `"google"`).
     /// - Returns: The authorization URL, or `nil` if it cannot be constructed.
     @objc public func socialLoginAuthorizationURL(authClient: String) -> URL? {
-        let base = Self.normaliseBaseURL(config.baseURL).absoluteString
+        guard (try? config.validate()) != nil,
+              !authClient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let baseURL = AssinafyClientConfiguration.normalisedBaseURL(config.baseURL) else {
+            return nil
+        }
+        let base = baseURL.absoluteString
         var components = URLComponents(string: base + "/auth/authenticate")
         components?.queryItems = [URLQueryItem(name: "authclient", value: authClient)]
         return components?.url
     }
-
-    // MARK: - Private
-
-    private static func normaliseBaseURL(_ raw: String) -> URL {
-        var str = raw.trimmingCharacters(in: .whitespaces)
-        while str.hasSuffix("/") { str.removeLast() }
-        guard let url = URL(string: str) else {
-            preconditionFailure("AssinafyClient: invalid baseURL '\(raw)'")
-        }
-        return url
-    }
 }
+
+extension AssinafyClient: @unchecked Sendable {}
 
 extension AssinafyClient.UploadOptions: @unchecked Sendable {}
 

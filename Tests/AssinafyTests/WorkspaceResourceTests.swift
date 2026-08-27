@@ -46,6 +46,27 @@ final class WorkspaceResourceTests: XCTestCase {
         XCTAssertEqual(json["notification_sender_type"] as? String, "Account")
     }
 
+    func testSandboxCreateOmitsUnsupportedNotificationSenderType() async throws {
+        let sandboxResource = WorkspaceResource(
+            http: mock,
+            defaultAccountId: "test-account",
+            usesSandboxCompatibility: true
+        )
+        mock.stubEnvelope(workspaceDict())
+
+        _ = try await sandboxResource.create(
+            CreateWorkspacePayload(
+                name: "Acme Corp",
+                notificationSenderType: NotificationSenderType.account
+            )
+        )
+
+        let body = try XCTUnwrap(mock.lastRequest?.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["name"] as? String, "Acme Corp")
+        XCTAssertNil(json["notification_sender_type"])
+    }
+
     func testDeleteSendsForceBody() async throws {
         mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 204))
         try await resource.delete(workspaceId: "ws1", force: true)

@@ -1,22 +1,43 @@
 # Changelog
 
-## [1.3.0] - 2026-07-20
+## [1.3.1] - 2026-08-27
 
-Full audit against the current OpenAPI spec (`https://api.assinafy.com.br/v1/docs/openapi.json`,
-now a Scalar/OpenAPI reference) with every change verified against the live sandbox.
+### Security
+- Configuration validation rejects conflicting or malformed credentials, unsafe base URLs,
+  invalid identifiers, and invalid timeouts before a request is sent.
+- Redirect handling prevents credentials from being forwarded to another origin and rejects
+  unsafe redirects while preserving credential-free HTTPS downloads.
+
+### Fixed
+- Request encoding and response decoding now handle the documented nullable and alternate
+  payload shapes across assignments, authentication, documents, fields, signers, tags,
+  templates, webhooks, and workspaces.
+- Task cancellation is preserved as `CancellationError`, and bridged network errors retain
+  their underlying `URLError` codes.
+- Tag pagination and document-tag resolution handle multi-page results consistently.
+
+### Added
+- Objective-C-compatible configuration initialization and explicit configuration validation.
+- Typed workspace-deletion restrictions on `APIError`.
+- Release API compatibility checks, warning-free documentation and iOS test builds, and
+  credential-gated sandbox workflows for scheduled and tagged runs.
+- Expanded unit, contract, and opt-in sandbox coverage plus complete public request and
+  response payload documentation.
+
+## [1.3.0] - 2026-08-21
 
 ### Added — new endpoint coverage
 - **`client.documents.rename(documentId:name:)`** — `PATCH /documents/{id}`.
 - **`client.documents.search(search:status:accountId:)`** — `GET /accounts/{id}/documents/search`.
-- **`client.assignments.list(params:accountId:)`** — `GET /assignments` (account context
-  supplied via the undocumented-but-required `accountId` query parameter, verified live).
+- **`client.assignments.list(params:accountId:)`** — `GET /assignments`, with an
+  optional account-context compatibility query.
 - **`client.auth.currentUser()`** — `GET /users/self` (returns `SelfResponse`).
-- **`client.auth.stats(params:)`** — `GET /users/self/stats` (production-only; 404 on sandbox).
+- **`client.auth.stats(params:)`** — `GET /users/self/stats`.
 - **`client.auth.linkSocialLogin(_:)`** — `POST /auth/link-social-login`.
 - **`client.workspaces.theme(accountId:)`** — `GET /accounts/{id}/theme` (`AccountTheme`,
   the canonical source of branding colours).
 - **`client.workspaces.stats(params:accountId:)`** — `GET /accounts/{id}/stats`
-  (`DocumentStatsRow` series; production-only, 404 on sandbox).
+  (`DocumentStatsRow` series).
 - **`client.workspaces.downloadLogo/uploadLogo/deleteLogo`** — account logo endpoints.
 - **`client.signers.searchSignerDocuments(...)`** — `GET /signers/{id}/documents/search`.
 - **`AssinafyClient.socialLoginAuthorizationURL(authClient:)`** — builds the
@@ -27,39 +48,32 @@ now a Scalar/OpenAPI reference) with every change verified against the live sand
 - `Objective-C` completion-handler wrappers for all of the above.
 
 ### Fixed
-- **`WebhookDispatch.createdAt`/`updatedAt` are now `String?`** (ISO-8601). They were
-  typed `Int`, which crashed decoding on real delivery records.
-- **Account create/update now send `notification_sender_type`** (per the spec) instead
-  of `primary_color`/`secondary_color`, which the API silently ignored (verified live).
+- **`WebhookDispatch.createdAt`/`updatedAt` decode ISO-8601 values as `String?`.**
+- **Account create/update send `notification_sender_type`.**
   Branding colours are exposed read-only via `workspaces.theme(...)`.
 - **`workspaces.delete(workspaceId:force:)`** now sends the documented `{ "force": … }` body.
-- **`send-token` request now uses the documented `email` field** (was `recipient`/`channel`);
-  the WhatsApp channel still sends `channel`.
+- **`send-token` requests use the documented `email` field**; the WhatsApp
+  channel also sends `channel`.
 - **`ConfirmSignerDataPayload`** now also carries the documented `full_name`/`government_id`.
 
 ### Removed
 - **Signer `cpf`** from `CreateSignerPayload`/`UpdateSignerPayload`/`Signer`/`SignerInput`.
-  Live testing confirmed the API silently drops `cpf`/`government_id` on signer create/update.
 - **`WebhookResource.delete()`** is deprecated and now forwards to `inactivate()`
-  (`PUT /accounts/{id}/webhooks/inactivate`); the API has no DELETE for subscriptions
-  (the old path returned `404`).
+  (`PUT /accounts/{id}/webhooks/inactivate`); the API has no DELETE for subscriptions.
 
 ### Documentation
-- `docs/API_REFERENCE.md` refreshed to cover all endpoints with request/response payloads.
+- `docs/API_REFERENCE.md` refreshed with request/response payloads for supported
+  SDK operations.
 
 ## [1.2.1] - 2026-06-05
 
 ### Fixed
-- **Assignment decoding no longer crashes on `"method": null`.** The documented
-  collect-assignment create response returns a null method; the SDK now decodes
-  defensively and defaults to `virtual`.
-- **Assignment expiry is no longer dropped.** Decoding now accepts both the live
-  API's `expires_at` key and the docs' `expiration` key for `Assignment.expiresAt`.
-- **Live test harness can target the sandbox.** `AssinafyLiveTests` now honours an
-  `ASSINAFY_BASE_URL` environment variable; previously it hard-coded the production
-  host, so sandbox API keys failed with `401 Credenciais inválidas`.
-- **Document live test waits for a deletable state** (`waitUntilReady`) before
-  deleting, fixing a `400` when the document was still `metadata_processing`.
+- **Assignment decoding accepts `"method": null`** and defaults it to `virtual`.
+- **Assignment expiry decoding accepts `expires_at` and `expiration`** for
+  `Assignment.expiresAt`.
+- **The credential-gated test harness accepts `ASSINAFY_BASE_URL`** for an
+  explicit sandbox target.
+- **Document mutation tests call `waitUntilReady`** before deleting.
 
 ### Changed
 - Extracted the duplicated PDF validation and multipart-body construction from
@@ -67,17 +81,14 @@ now a Scalar/OpenAPI reference) with every change verified against the live sand
   `MultipartFormData` helpers (byte-identical output; DRY).
 
 ### Added
-- `docs/API_REFERENCE.md` — full request/response payload reference for every
-  public SDK method, verified against the live sandbox API.
-- `testLiveAssignmentFlow` — end-to-end live coverage of upload → wait → create
-  signers → estimate cost → create assignment.
+- `docs/API_REFERENCE.md` — request/response payload reference for public SDK methods.
 - Regression tests for null-method and `expiration`/`expires_at` assignment decoding.
 
 ## [1.2.0] - 2026-05-27
 
-### Added — full API coverage
-The SDK now wraps every endpoint documented at
-<https://api.assinafy.com.br/v1/docs>. New surfaces:
+### Added — resources and endpoints
+
+New surfaces:
 
 - **`client.tags`** (new resource) — workspace tag CRUD plus document tag
   list, replace, append, and detach endpoints.
@@ -118,18 +129,13 @@ New model types include `FieldDefinition`, `FieldTypeInfo`,
 ### Tests
 - Added unit coverage for tag endpoints, documented filters, nullable signer
   email, richer document/template/assignment decoding, and live-test gating.
-- `swift test`: 157 tests, 0 failures, with four credential-gated live tests
-  skipped by default.
-- Verified against the live `https://api.assinafy.com.br/v1` API using
-  environment-only credentials: read-only catalog/list endpoints, tag CRUD,
-  signer CRUD, and opt-in document upload/get/download/delete all passed.
+- Credential-gated integration tests remain skipped by default.
 
 ## [1.1.1] - 2026-05-11
 
 ### Fixed
 - `Assignment.copyReceivers` now decodes the array of signer objects that the
-  API actually returns (previously typed as `[String]?`, which would throw at
-  decode time whenever the field was populated). The companion
+  API returns. The companion
   `CreateAssignmentPayload.copyReceivers` continues to accept signer-ID
   strings, matching the documented request shape.
 - `DocumentResource.waitUntilReady` no longer issues a second `GET /documents/{id}`
@@ -152,8 +158,6 @@ New model types include `FieldDefinition`, `FieldTypeInfo`,
 - New unit tests cover `copy_receivers` decoding (both populated and missing),
   `DocumentArtifacts.thumbnail` decoding, and the `waitUntilReady` happy
   paths/failure cases.
-- Verified end-to-end against the live `https://api.assinafy.com.br/v1` API
-  for all 21 documented endpoint groups that the SDK exposes.
 
 ## [1.1.0] - 2026-05-08
 
@@ -163,13 +167,14 @@ New model types include `FieldDefinition`, `FieldTypeInfo`,
 - `AssinafyClient.sdkVersion` constant exposed in the `User-Agent` header
 
 ### Changed
-- Audit pass: stripped non-iOS Swift availability annotations and aligned every endpoint with https://api.assinafy.com.br/v1/docs
+- Removed non-iOS Swift availability annotations and aligned supported endpoints
+  with <https://api.assinafy.com.br/v1/docs>.
 - Consolidated Objective-C completion-handler bridges through shared `BaseResource` helpers
 - `User-Agent` header now reports the actual SDK version
 
 ### Removed
-- Undocumented `metadata` multipart field from `documents.upload`
-- Undocumented `sandboxBaseURL` constant; clients can still pass any base URL via `AssinafyClientConfiguration`
+- The unused `metadata` multipart field from `documents.upload`
+- The `sandboxBaseURL` constant; clients can still pass any base URL via `AssinafyClientConfiguration`
 
 ## [1.0.0] - 2024-01-01
 
@@ -181,5 +186,5 @@ New model types include `FieldDefinition`, `FieldTypeInfo`,
 - Webhook subscriptions
 - Document templates
 - Workspace management
-- Full Objective-C bridging support
+- Objective-C bridging support
 - Swift async/await and completion handler APIs

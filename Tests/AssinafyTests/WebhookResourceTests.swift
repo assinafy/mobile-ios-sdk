@@ -138,4 +138,18 @@ final class WebhookResourceTests: XCTestCase {
         XCTAssertTrue(payload.events.contains("signer_signed_document"))
         XCTAssertTrue(payload.events.contains("signer_rejected_document"))
     }
+
+    func testRegisterRejectsInvalidURLAndEmailBeforeRequest() async {
+        await assertThrowsValidationError {
+            _ = try await self.resource.register(
+                WebhookRegisterPayload(url: "relative/path", email: "invalid")
+            )
+        }
+        await assertThrowsValidationError {
+            _ = try await self.resource.register(
+                WebhookRegisterPayload(url: "https://example.com/hook", email: "invalid")
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
 }

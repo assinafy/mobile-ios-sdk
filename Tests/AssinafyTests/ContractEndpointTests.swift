@@ -1,10 +1,8 @@
 import XCTest
 @testable import Assinafy
 
-/// Unit coverage for the endpoints and payload corrections introduced by the
-/// API audit. Each test pins the HTTP method, path, and request body against the
-/// live-verified contract so regressions are caught without network access.
-final class AuditedEndpointsTests: XCTestCase {
+/// Contract tests that pin HTTP methods, paths, payloads, and response decoding.
+final class ContractEndpointTests: XCTestCase {
     var mock: MockHTTPClient!
 
     override func setUp() {
@@ -98,6 +96,53 @@ final class AuditedEndpointsTests: XCTestCase {
         XCTAssertEqual(me.accounts.first?.name, "Acme")
     }
 
+    func testCurrentUserProfileDecodesDirectUserPayload() async throws {
+        let resource = AuthResource(http: mock)
+        mock.stubEnvelope([
+            "id": "u1", "name": "SDK User", "email": "user@example.invalid",
+            "created_at": "2026-01-01", "is_password_set": true,
+        ])
+
+        let user = try await resource.currentUserProfile()
+
+        XCTAssertEqual(user.id, "u1")
+        XCTAssertEqual(mock.lastRequest?.path, "/users/self")
+    }
+
+    func testPasswordOperationsExposeEmailResponsePayloads() async throws {
+        let resource = AuthResource(http: mock)
+        mock.stubEnvelope(["email": "user@example.invalid"])
+        mock.stubEnvelope(["email": "user@example.invalid"])
+        mock.stubEnvelope(["email": "user@example.invalid"])
+
+        let changed = try await resource.changePasswordAndReturnResponse(
+            ChangePasswordPayload(
+                email: "user@example.invalid",
+                password: "old-secret",
+                newPassword: "new-secret"
+            )
+        )
+        let requested = try await resource.requestPasswordResetAndReturnResponse(
+            RequestPasswordResetPayload(email: "user@example.invalid")
+        )
+        let reset = try await resource.resetPasswordAndReturnResponse(
+            ResetPasswordPayload(
+                email: "user@example.invalid",
+                token: "reset-token",
+                newPassword: "new-secret"
+            )
+        )
+
+        XCTAssertEqual(changed.email, "user@example.invalid")
+        XCTAssertEqual(requested.email, "user@example.invalid")
+        XCTAssertEqual(reset.email, "user@example.invalid")
+        XCTAssertEqual(mock.allRequests.map(\.path), [
+            "/authentication/change-password",
+            "/authentication/request-password-reset",
+            "/authentication/reset-password",
+        ])
+    }
+
     func testLinkSocialLoginPostsProviderAndToken() async throws {
         let resource = AuthResource(http: mock, defaultAccountId: nil)
         mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
@@ -179,6 +224,15 @@ final class AuditedEndpointsTests: XCTestCase {
         XCTAssertEqual(rows.first?.documentsCertified, 2)
     }
 
+    func testWorkspaceStatsRejectsMalformedKnownFields() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "period": "2026-06",
+            "documents_uploaded": "three",
+        ])
+
+        XCTAssertThrowsError(try JSONDecoder.assinafy.decode(DocumentStatsRow.self, from: data))
+    }
+
     func testCostEstimateDecodesDocumentedTypedBreakdown() throws {
         let json: [String: Any] = [
             "documents": 1,
@@ -202,6 +256,7 @@ final class AuditedEndpointsTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: json)
         let estimate = try JSONDecoder.assinafy.decode(CostEstimate.self, from: data)
         XCTAssertEqual(estimate.documents, 1)
+        XCTAssertEqual(estimate.documentCount, 1)
         XCTAssertEqual(estimate.totalCredits, 1.9)
         XCTAssertEqual(estimate.breakdown.count, 1)
         XCTAssertEqual(estimate.breakdown.first?.code, "NotificationWhatsapp")
@@ -214,6 +269,79 @@ final class AuditedEndpointsTests: XCTestCase {
     func testCostEstimateRejectsUnrecognizedObject() throws {
         let data = try JSONSerialization.data(withJSONObject: ["unexpected": 1])
         XCTAssertThrowsError(try JSONDecoder.assinafy.decode(CostEstimate.self, from: data))
+    }
+
+    func testCostEstimateRejectsNonFiniteOrFractionalCounts() throws {
+        for value: Any in ["NaN", 1.5, "inf"] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "documents": 1,
+                "breakdown": [["quantity": value]],
+            ])
+            XCTAssertThrowsError(try JSONDecoder.assinafy.decode(CostEstimate.self, from: data))
+        }
+    }
+
+    func testCostEstimatePreservesExplicitZeroEstimate() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "documents": 0,
+            "estimated_cost": 0,
+            "total_credits": 3,
+        ])
+        let estimate = try JSONDecoder.assinafy.decode(CostEstimate.self, from: data)
+        XCTAssertEqual(estimate.estimatedCost, 0)
+    }
+
+    // MARK: - Flexible JSON fields
+
+    func testJSONValuePreservesIntegerPrecisionAndRoundTrips() throws {
+        let data = Data(
+            #"{"signed":9223372036854775807,"unsigned":18446744073709551615,"fraction":1.25}"#.utf8
+        )
+        let value = try JSONDecoder.assinafy.decode(JSONValue.self, from: data)
+        guard case .object(let object) = value.storage else {
+            return XCTFail("Expected object")
+        }
+        XCTAssertEqual(object["signed"], JSONValue(.integer(Int64.max)))
+        XCTAssertEqual(object["unsigned"], JSONValue(.unsignedInteger(UInt64.max)))
+        XCTAssertEqual(object["fraction"], JSONValue(.number(1.25)))
+        XCTAssertEqual(
+            try JSONDecoder.assinafy.decode(
+                JSONValue.self,
+                from: JSONEncoder.assinafy.encode(value)
+            ),
+            value
+        )
+    }
+
+    func testDynamicResponseFieldsPreserveJSONAndCompatibilityStrings() throws {
+        let activityJSON = #"{"id":1,"event":"updated","message":"ok","origin":{"type":"user"},"payload":[true,2],"created_at":"2026-01-01"}"#
+        let activity = try JSONDecoder.assinafy.decode(
+            DocumentActivity.self,
+            from: Data(activityJSON.utf8)
+        )
+        guard case .object(let origin)? = activity.originJSON?.storage,
+              case .array(let payload)? = activity.payloadJSON?.storage else {
+            return XCTFail("Expected activity JSON values")
+        }
+        XCTAssertEqual(origin["type"], JSONValue(.string("user")))
+        XCTAssertEqual(payload, [JSONValue(.bool(true)), JSONValue(.integer(2))])
+        XCTAssertTrue(activity.origin.contains("user"))
+
+        let itemJSON = #"{"id":"item-1","value":{"approved":true},"completed":true}"#
+        let item = try JSONDecoder.assinafy.decode(AssignmentItem.self, from: Data(itemJSON.utf8))
+        guard case .object(let captured)? = item.valueJSON?.storage else {
+            return XCTFail("Expected assignment value object")
+        }
+        XCTAssertEqual(captured["approved"], JSONValue(.bool(true)))
+        XCTAssertTrue(item.value?.contains("approved") == true)
+
+        let placementJSON = #"{"id":"p1","field_id":"f1","role_id":"r1","display_settings":null}"#
+        let placement = try JSONDecoder.assinafy.decode(
+            TemplateFieldPlacement.self,
+            from: Data(placementJSON.utf8)
+        )
+        XCTAssertEqual(placement.displaySettingsJSON, JSONValue(.null))
+        XCTAssertEqual(placement.displaySettings, "")
     }
 
     // MARK: - Signer
@@ -232,7 +360,9 @@ final class AuditedEndpointsTests: XCTestCase {
         let resource = SignerResource(http: mock, defaultAccountId: "acc")
         mock.stub(response: APIResponse(data: Data(), headers: [:], statusCode: 200))
         try await resource.uploadSignature(signerAccessCode: "code", type: .signature,
-                                           imageData: Data("x".utf8), reuse: true)
+                                           imageData: Data([0x89, 0x50, 0x4E, 0x47,
+                                                            0x0D, 0x0A, 0x1A, 0x0A]),
+                                           reuse: true)
         let items = mock.lastRequest?.queryItems ?? []
         XCTAssertTrue(items.contains(URLQueryItem(name: "reuse", value: "true")))
     }

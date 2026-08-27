@@ -87,11 +87,11 @@ extension Signer: Decodable {
             whatsappPhoneNumber:  try c.decodeIfPresent(String.self,  forKey: .whatsappPhoneNumber),
             hasAcceptedTerms:     try c.decodeIfPresent(Bool.self,    forKey: .hasAcceptedTerms) ?? false,
             verificationMethod:   try c.decodeIfPresent(String.self,  forKey: .verificationMethod),
-            notificationMethods:  (try? c.decode([String].self, forKey: .notificationMethods)) ?? [],
+            notificationMethods:  try c.decodeIfPresent([String].self, forKey: .notificationMethods) ?? [],
             step:                 try c.decodeIfPresent(Int.self,     forKey: .step) ?? 0,
             notified:             try c.decodeIfPresent(Bool.self, forKey: .notified).map { NSNumber(value: $0) },
             completed:            try c.decodeIfPresent(Bool.self,    forKey: .completed) ?? false,
-            notificationHistory:  (try? c.decode([SignerNotificationHistory].self, forKey: .notificationHistory)) ?? []
+            notificationHistory:  try c.decodeIfPresent([SignerNotificationHistory].self, forKey: .notificationHistory) ?? []
         )
     }
 }
@@ -147,7 +147,7 @@ extension SignerNotificationHistory: Decodable {
 
 /// Payload for creating a new signer in the workspace.
 ///
-/// ``signers/create(_:accountId:)`` is idempotent by email — if a signer with
+/// ``SignerResource/create(_:accountId:)`` is idempotent by email — if a signer with
 /// the given address already exists, the SDK returns the existing record.
 ///
 /// ## Example
@@ -421,7 +421,9 @@ public final class ConfirmSignerDataPayload: NSObject, Encodable {
         try c.encodeIfPresent(email, forKey: .email)
         try c.encodeIfPresent(governmentId, forKey: .governmentId)
         try c.encodeIfPresent(whatsappPhoneNumber, forKey: .whatsappPhoneNumber)
-        try c.encode(hasAcceptedTerms, forKey: .hasAcceptedTerms)
+        if hasAcceptedTerms {
+            try c.encode(true, forKey: .hasAcceptedTerms)
+        }
     }
 }
 
@@ -430,7 +432,7 @@ extension ConfirmSignerDataPayload: @unchecked Sendable {}
 // MARK: - SignatureType
 
 /// The type of signature image.
-@objc public enum SignatureType: Int {
+@objc public enum SignatureType: Int, Sendable {
     case signature = 0
     case initial = 1
 

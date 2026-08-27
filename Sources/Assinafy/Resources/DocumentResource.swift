@@ -21,7 +21,7 @@ private struct SandboxSendTokenPayload: Encodable {
 /// let ready = try await client.documents.waitUntilReady(documentId: doc.id)
 /// ```
 @objcMembers
-public final class DocumentResource: BaseResource {
+public final class DocumentResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
@@ -85,7 +85,8 @@ public final class DocumentResource: BaseResource {
 
     /// Searches documents in a workspace (lightweight).
     ///
-    /// Mirrors `GET /accounts/{account_id}/documents/search`. Unlike ``list(params:accountId:)``,
+    /// Mirrors `GET /accounts/{account_id}/documents/search`. Unlike
+    /// ``list(params:accountId:)-(DocumentListParams,_)``,
     /// this returns a trimmed payload suited to autocomplete and quick lookups.
     ///
     /// - Parameters:
@@ -191,7 +192,20 @@ public final class DocumentResource: BaseResource {
               pollIntervalSeconds <= largestSleepSeconds else {
             throw ValidationError("Poll interval must be a finite positive interval")
         }
-        let deadline = ProcessInfo.processInfo.systemUptime + maxWaitSeconds
+        let elapsed: @Sendable () -> TimeInterval
+        if #available(iOS 16, macOS 13, *) {
+            let clock = ContinuousClock()
+            let startedAt = clock.now
+            elapsed = {
+                let components = startedAt.duration(to: clock.now).components
+                return Double(components.seconds) + Double(components.attoseconds) / 1e18
+            }
+        } else {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            elapsed = {
+                Double(DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000_000
+            }
+        }
         while true {
             let doc: DocumentUploadResponse = try await call(
                 "Failed to fetch document",
@@ -200,13 +214,13 @@ public final class DocumentResource: BaseResource {
             switch doc.status {
             case .metadataReady, .pendingSignature, .certificating, .certificated:
                 return doc
-            case .failed:
-                throw AssinafySDKError("Document processing failed",
+            case .failed, .expired, .rejectedBySigner, .rejectedByUser:
+                throw AssinafySDKError("Document reached terminal status \(doc.statusString)",
                                        context: ["documentId": did, "status": doc.statusString])
             default:
                 break
             }
-            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            let remaining = maxWaitSeconds - elapsed()
             guard remaining > 0 else {
                 throw AssinafySDKError(
                     "Document did not become ready within \(Int(maxWaitSeconds))s",
@@ -347,7 +361,7 @@ public final class DocumentResource: BaseResource {
         let request = try APIRequest.post(
             "/accounts/\(id)/templates/\(tid)/documents/estimate-cost", body: body
         )
-        return try await callCostEstimate("Failed to estimate template document cost", request: request)
+        return try await call("Failed to estimate template document cost", request: request)
     }
 
     /// Verifies the integrity of a signed document.
@@ -425,34 +439,43 @@ public final class DocumentResource: BaseResource {
     /// Sends the 6-digit signing token to a signer via email or WhatsApp.
     ///
     /// Mirrors `PUT /public/documents/{id}/send-token`. No authentication is
-    /// required. Clients configured for the Assinafy sandbox add its live-required
-    /// `recipient` and `channel` compatibility fields.
+    /// required. Clients configured for the Assinafy sandbox add `recipient`
+    /// and `channel` compatibility fields.
     @discardableResult
     public func sendPublicSignToken(
         documentId: String,
         payload: SendTokenPayload
     ) async throws -> SendTokenResponse {
         let did = try requireId(documentId, name: "Document ID")
-        let path = "/public/documents/\(did)/send-token"
-        let request: APIRequest
-        if usesSandboxCompatibility {
-            request = try .put(
-                path,
-                body: SandboxSendTokenPayload(
-                    email: payload.recipient,
-                    recipient: payload.recipient,
-                    channel: payload.channel.stringValue
-                )
+        try await sendPublicSignTokenRequest(documentId: did, payload: payload)
+        do {
+            let document = try await getPublicInfo(documentId: did)
+            return SendTokenResponse(
+                document: document,
+                channel: payload.channel.stringValue,
+                recipient: payload.recipient
             )
-        } else {
-            request = try .put(path, body: payload)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw AssinafySDKError(
+                "Signing token was sent, but the follow-up document lookup failed",
+                context: ["tokenSent": true, "documentId": did],
+                underlyingError: error
+            )
         }
-        try await callVoid("Failed to send signing token", request: request)
-        let document = try await getPublicInfo(documentId: did)
-        return SendTokenResponse(
-            document: document,
-            channel: payload.channel.stringValue,
-            recipient: payload.recipient
+    }
+
+    /// Sends an email signing token with one `PUT` request and no synthetic response.
+    ///
+    /// Request data is `{ "email": string }`; a successful response is the
+    /// standard envelope without `data`.
+    public func sendPublicSignToken(documentId: String, email: String) async throws {
+        let did = try requireId(documentId, name: "Document ID")
+        let email = try validateEmail(email)
+        try await sendPublicSignTokenRequest(
+            documentId: did,
+            payload: SendTokenPayload(recipient: email, channel: .email)
         )
     }
 
@@ -478,6 +501,43 @@ public final class DocumentResource: BaseResource {
             queryItems: items
         )
         try await callVoid("Failed to confirm signer data", request: request)
+    }
+
+    /// Confirms signer data and returns the documented `data: Signer` payload.
+    public func confirmSignerDataAndReturnSigner(
+        documentId: String,
+        signerAccessCode: String,
+        payload: ConfirmSignerDataPayload
+    ) async throws -> Signer {
+        let did = try requireId(documentId, name: "Document ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        let request = try APIRequest.put(
+            "/documents/\(did)/signers/confirm-data",
+            body: payload,
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
+        )
+        return try await call("Failed to confirm signer data", request: request)
+    }
+
+    private func sendPublicSignTokenRequest(
+        documentId: String,
+        payload: SendTokenPayload
+    ) async throws {
+        let path = "/public/documents/\(documentId)/send-token"
+        let request: APIRequest
+        if usesSandboxCompatibility {
+            request = try .put(
+                path,
+                body: SandboxSendTokenPayload(
+                    email: payload.recipient,
+                    recipient: payload.recipient,
+                    channel: payload.channel.stringValue
+                )
+            )
+        } else {
+            request = try .put(path, body: payload)
+        }
+        try await callVoid("Failed to send signing token", request: request)
     }
 
     // MARK: - Objective-C / completion-handler API

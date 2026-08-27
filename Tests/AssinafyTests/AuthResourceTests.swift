@@ -105,6 +105,22 @@ final class AuthResourceTests: XCTestCase {
         XCTAssertEqual(result.accounts.first?.id, "account-1")
     }
 
+    func testCurrentUserProfileAcceptsCompatibilityWrapper() async throws {
+        mock.stubEnvelope([
+            "user": [
+                "id": "user-1",
+                "name": "Test User",
+                "email": "test@example.com",
+                "created_at": "2026-01-01T00:00:00Z",
+            ],
+            "accounts": [],
+        ])
+
+        let user = try await resource.currentUserProfile()
+
+        XCTAssertEqual(user.id, "user-1")
+    }
+
     func testGetNotificationPreferencesDecodesAllDocumentedFields() async throws {
         mock.stubEnvelope(notificationPreferencesDict())
 

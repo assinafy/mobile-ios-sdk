@@ -34,7 +34,7 @@ extension Account: Decodable {
         self.init(
             id: try c.decode(String.self, forKey: .id),
             name: try c.decode(String.self, forKey: .name),
-            roles: (try? c.decode([String].self, forKey: .roles)) ?? [],
+            roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? [],
             isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
             createdAt: try c.decode(String.self, forKey: .createdAt)
         )
@@ -143,7 +143,7 @@ extension LoginResponse: Decodable {
         self.init(
             accessToken: try c.decode(String.self, forKey: .accessToken),
             user: try c.decode(User.self, forKey: .user),
-            accounts: (try? c.decode([Account].self, forKey: .accounts)) ?? []
+            accounts: try c.decodeIfPresent([Account].self, forKey: .accounts) ?? []
         )
     }
 }
@@ -177,7 +177,7 @@ extension SelfResponse: Decodable {
         if let user = try c.decodeIfPresent(User.self, forKey: .user) {
             self.init(
                 user: user,
-                accounts: (try? c.decode([Account].self, forKey: .accounts)) ?? []
+                accounts: try c.decodeIfPresent([Account].self, forKey: .accounts) ?? []
             )
             return
         }
@@ -187,6 +187,23 @@ extension SelfResponse: Decodable {
         )
     }
 }
+
+// MARK: - EmailResponse
+
+/// Email payload returned after password-change and password-reset operations.
+@objcMembers
+public final class EmailResponse: NSObject, Decodable {
+    /// The account email affected by the operation.
+    public let email: String
+
+    /// Creates a password-operation response.
+    /// - Parameter email: The account email returned by the API.
+    public init(email: String) {
+        self.email = email
+    }
+}
+
+extension EmailResponse: @unchecked Sendable {}
 
 // MARK: - Notification Preferences
 

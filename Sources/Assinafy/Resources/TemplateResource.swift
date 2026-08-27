@@ -9,7 +9,7 @@ import Foundation
 /// let templates = try await client.templates.list(accountId: "acc_id")
 /// ```
 @objcMembers
-public final class TemplateResource: BaseResource {
+public final class TemplateResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 

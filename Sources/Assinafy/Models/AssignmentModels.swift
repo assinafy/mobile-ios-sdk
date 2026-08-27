@@ -54,7 +54,7 @@ extension AssignmentSummary: Decodable {
         self.init(
             signerCount:    try c.decode(Int.self, forKey: .signerCount),
             completedCount: try c.decode(Int.self, forKey: .completedCount),
-            signers:        (try? c.decode([Signer].self, forKey: .signers)) ?? []
+            signers:        try c.decodeIfPresent([Signer].self, forKey: .signers) ?? []
         )
     }
 }
@@ -127,19 +127,23 @@ public final class AssignmentItem: NSObject {
     /// JSON compatibility view of ``displaySettingsObject``.
     @available(*, deprecated, renamed: "displaySettingsObject")
     public var displaySettings: String? { legacyDisplaySettings }
+    /// Lossless JSON value captured for this item.
+    @nonobjc public let valueJSON: JSONValue?
+    /// String compatibility view of ``valueJSON``.
     public let value: String?
     public let completed: Bool
 
     init(id: String, page: DocumentPage? = nil, signer: Signer? = nil,
          field: FieldDefinition? = nil, displaySettingsObject: DisplaySettings? = nil,
          displaySettings: String? = nil,
-         value: String? = nil, completed: Bool = false) {
+         valueJSON: JSONValue? = nil, value: String? = nil, completed: Bool = false) {
         self.id = id
         self.page = page
         self.signer = signer
         self.field = field
         self.displaySettingsObject = displaySettingsObject
         self.legacyDisplaySettings = displaySettings
+        self.valueJSON = valueJSON
         self.value = value
         self.completed = completed
     }
@@ -156,6 +160,7 @@ extension AssignmentItem: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let displaySettingsObject = try? c.decode(DisplaySettings.self, forKey: .displaySettings)
+        let valueJSON = try decodeJSONValue(from: c, forKey: .value)
         self.init(
             id: try c.decode(String.self, forKey: .id),
             page: try c.decodeIfPresent(DocumentPage.self, forKey: .page),
@@ -163,7 +168,8 @@ extension AssignmentItem: Decodable {
             field: try c.decodeIfPresent(FieldDefinition.self, forKey: .field),
             displaySettingsObject: displaySettingsObject,
             displaySettings: try decodeFlexibleOptionalString(from: c, forKey: .displaySettings),
-            value: try decodeFlexibleOptionalString(from: c, forKey: .value),
+            valueJSON: valueJSON,
+            value: valueJSON?.stringValue,
             completed: try c.decodeIfPresent(Bool.self, forKey: .completed) ?? false
         )
     }
@@ -272,11 +278,11 @@ extension Assignment: Decodable {
             methodString:  methodString,
             expiresAt:     expiresAt,
             message:       try c.decodeIfPresent(String.self,         forKey: .message),
-            signers:       (try? c.decode([Signer].self, forKey: .signers)) ?? [],
-            copyReceivers: (try? c.decode([Signer].self, forKey: .copyReceivers)) ?? [],
-            items:         (try? c.decode([AssignmentItem].self, forKey: .items)) ?? [],
+            signers:       try c.decodeIfPresent([Signer].self, forKey: .signers) ?? [],
+            copyReceivers: try c.decodeIfPresent([Signer].self, forKey: .copyReceivers) ?? [],
+            items:         try c.decodeIfPresent([AssignmentItem].self, forKey: .items) ?? [],
             summary:       try c.decodeIfPresent(AssignmentSummary.self, forKey: .summary),
-            signingUrls:   (try? c.decode([AssignmentSigningURL].self, forKey: .signingUrls)) ?? []
+            signingUrls:   try c.decodeIfPresent([AssignmentSigningURL].self, forKey: .signingUrls) ?? []
         )
     }
 }
@@ -285,7 +291,8 @@ extension Assignment: Decodable {
 
 /// A reference to a signer within an assignment payload.
 ///
-/// Use ``id(_:)`` for a simple signer ID reference, or ``descriptor(id:verificationMethod:notificationMethods:)``
+/// Use ``id(_:)`` for a simple signer ID reference, or
+/// ``descriptor(id:verificationMethod:notificationMethods:step:)``
 /// when you need to specify delivery channels or build cost-estimation payloads.
 public enum SignerReference: Sendable {
     /// A signer identified solely by their ID.
@@ -650,7 +657,7 @@ extension WhatsappNotification: Decodable {
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let buttons = (try? c.decode([Button].self, forKey: .buttons)) ?? []
+        let buttons = try c.decodeIfPresent([Button].self, forKey: .buttons) ?? []
         self.init(
             sentAt: try c.decodeIfPresent(Int.self, forKey: .sentAt) ?? 0,
             header: try c.decodeIfPresent(String.self, forKey: .header),

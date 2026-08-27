@@ -16,6 +16,68 @@ final class AssinafyClientTests: XCTestCase {
         XCTAssertEqual(config.timeout, 60)
     }
 
+    func testConfigurationValidationRejectsUnsafeSettings() {
+        let invalid = [
+            AssinafyClientConfiguration(apiKey: "key", token: "token"),
+            AssinafyClientConfiguration(apiKey: " "),
+            AssinafyClientConfiguration(token: "token\nvalue"),
+            AssinafyClientConfiguration(baseURL: "http://api.test.com/v1"),
+            AssinafyClientConfiguration(baseURL: "https://user:pass@api.test.com/v1"),
+            AssinafyClientConfiguration(baseURL: "https://api.test.com/v1?key=value"),
+            AssinafyClientConfiguration(defaultAccountId: ".."),
+            AssinafyClientConfiguration(defaultAccountId: "account\nvalue"),
+            AssinafyClientConfiguration(timeout: 0),
+            AssinafyClientConfiguration(timeout: .infinity),
+        ]
+
+        for config in invalid {
+            XCTAssertThrowsError(try config.validate()) { error in
+                XCTAssertTrue(error is ValidationError)
+            }
+        }
+    }
+
+    func testObjectiveCCompatibleConfigurationInitializer() throws {
+        let config = AssinafyClientConfiguration(
+            apiKey: nil,
+            token: "test-token",
+            baseURL: "https://api.test.com/v1",
+            defaultAccountId: "account-id",
+            timeout: 45
+        )
+
+        try config.validate()
+        XCTAssertEqual(config.token, "test-token")
+        XCTAssertEqual(config.timeout, 45)
+    }
+
+    func testClientCanCrossSwiftConcurrencyBoundary() async {
+        let client = AssinafyClient(configuration: AssinafyClientConfiguration())
+        let version = await Task.detached { [client] in
+            _ = client.documents
+            return AssinafyClient.sdkVersion
+        }.value
+        XCTAssertEqual(version, "1.3.1")
+    }
+
+    func testConfigurationValidationAcceptsPublicAndAuthenticatedClients() throws {
+        try AssinafyClientConfiguration().validate()
+        try AssinafyClientConfiguration(
+            apiKey: "test-key",
+            baseURL: " https://api.test.com/v1/ ",
+            defaultAccountId: "account-id",
+            timeout: 0.5
+        ).validate()
+    }
+
+    func testInvalidConfigurationFailsClosedBeforeNetwork() async {
+        let client = AssinafyClient(apiKey: "test-key", baseURL: "http://api.test.com/v1")
+
+        await assertThrowsValidationError {
+            _ = try await client.auth.currentUser()
+        }
+    }
+
     func testTokenInitialisationExposesResources() {
         let client = AssinafyClient(token: "token", defaultAccountId: "acc")
         XCTAssertNotNil(client.documents)
@@ -49,6 +111,16 @@ final class AssinafyClientTests: XCTestCase {
         XCTAssertNotNil(client)
     }
 
+    func testSocialLoginURLRejectsInvalidConfigurationAndBlankProvider() {
+        let invalid = AssinafyClient(configuration: AssinafyClientConfiguration(
+            baseURL: "http://api.test.com/v1"
+        ))
+        XCTAssertNil(invalid.socialLoginAuthorizationURL(authClient: "google"))
+
+        let valid = AssinafyClient(configuration: AssinafyClientConfiguration())
+        XCTAssertNil(valid.socialLoginAuthorizationURL(authClient: "  "))
+    }
+
     func testSandboxHostEnablesOnlyKnownRequestCompatibility() {
         let sandbox = AssinafyClient(
             apiKey: "test-key",
@@ -59,14 +131,35 @@ final class AssinafyClientTests: XCTestCase {
 
         XCTAssertTrue(sandbox.documents.usesSandboxCompatibility)
         XCTAssertTrue(sandbox.assignments.usesSandboxCompatibility)
+        XCTAssertTrue(sandbox.tags.usesSandboxCompatibility)
+        XCTAssertTrue(sandbox.workspaces.usesSandboxCompatibility)
         XCTAssertFalse(production.documents.usesSandboxCompatibility)
         XCTAssertFalse(production.assignments.usesSandboxCompatibility)
+        XCTAssertFalse(production.tags.usesSandboxCompatibility)
+        XCTAssertFalse(production.workspaces.usesSandboxCompatibility)
     }
 
     func testUploadWorkflowValidatesBeforeCreatingDocument() async {
         let mock = MockHTTPClient()
         let client = AssinafyClient(http: mock, defaultAccountId: "acc")
         let options = AssinafyClient.UploadOptions(signers: [])
+
+        await assertThrowsValidationError {
+            _ = try await client.uploadAndRequestSignatures(
+                documentData: Data("%PDF-1.4\n".utf8),
+                options: options
+            )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+
+    func testUploadWorkflowRejectsDuplicateSignerEmailsBeforeCreatingDocument() async {
+        let mock = MockHTTPClient()
+        let client = AssinafyClient(http: mock, defaultAccountId: "acc")
+        let options = AssinafyClient.UploadOptions(signers: [
+            .init(name: "First", email: "Signer@example.com"),
+            .init(name: "Second", email: "signer@example.com"),
+        ])
 
         await assertThrowsValidationError {
             _ = try await client.uploadAndRequestSignatures(

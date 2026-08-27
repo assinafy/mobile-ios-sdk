@@ -1,5 +1,19 @@
 import Foundation
 
+private let emailPattern = "^[A-Z0-9a-z._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$"
+
+@discardableResult
+func validateEmail(_ email: String) throws -> String {
+    let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard email == trimmed,
+          !email.isEmpty,
+          email.range(of: emailPattern, options: .regularExpression)
+            == email.startIndex..<email.endIndex else {
+        throw ValidationError("Invalid email address", errors: ["email": email])
+    }
+    return email
+}
+
 // MARK: - PaginationMeta
 
 /// Pagination metadata extracted from `X-Pagination-*` response headers.
@@ -140,45 +154,69 @@ func decodeFlexibleOptionalString<K: CodingKey>(
     return nil
 }
 
-struct JSONFragment: Codable, Sendable, Equatable {
-    enum Storage: Sendable, Equatable {
+func decodeJSONValue<K: CodingKey>(
+    from container: KeyedDecodingContainer<K>,
+    forKey key: K
+) throws -> JSONValue? {
+    guard container.contains(key) else { return nil }
+    return try container.decode(JSONValue.self, forKey: key)
+}
+
+/// A lossless JSON value used for API fields whose schema intentionally allows
+/// strings, numbers, booleans, objects, arrays, or `null`.
+public struct JSONValue: Codable, Sendable, Equatable {
+    /// The concrete JSON representation.
+    public enum Storage: Sendable, Equatable {
         case string(String)
+        case integer(Int64)
+        case unsignedInteger(UInt64)
         case number(Double)
         case bool(Bool)
-        case object([String: JSONFragment])
-        case array([JSONFragment])
+        case object([String: JSONValue])
+        case array([JSONValue])
         case null
     }
 
-    let storage: Storage
+    /// The concrete value and all nested values.
+    public let storage: Storage
 
-    init(_ storage: Storage) {
+    /// Creates a JSON value from a concrete representation.
+    public init(_ storage: Storage) {
         self.storage = storage
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let single = try decoder.singleValueContainer()
         if single.decodeNil() {
             storage = .null
         } else if let value = try? single.decode(Bool.self) {
             storage = .bool(value)
+        } else if let value = try? single.decode(Int64.self) {
+            storage = .integer(value)
+        } else if let value = try? single.decode(UInt64.self) {
+            storage = .unsignedInteger(value)
         } else if let value = try? single.decode(Double.self) {
             storage = .number(value)
         } else if let value = try? single.decode(String.self) {
             storage = .string(value)
-        } else if let value = try? single.decode([String: JSONFragment].self) {
+        } else if let value = try? single.decode([String: JSONValue].self) {
             storage = .object(value)
-        } else if let value = try? single.decode([JSONFragment].self) {
+        } else if let value = try? single.decode([JSONValue].self) {
             storage = .array(value)
         } else {
-            storage = .null
+            throw DecodingError.dataCorruptedError(
+                in: single,
+                debugDescription: "Value is not valid JSON"
+            )
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var single = encoder.singleValueContainer()
         switch storage {
         case .string(let value): try single.encode(value)
+        case .integer(let value): try single.encode(value)
+        case .unsignedInteger(let value): try single.encode(value)
         case .number(let value): try single.encode(value)
         case .bool(let value): try single.encode(value)
         case .object(let value): try single.encode(value)
@@ -187,10 +225,15 @@ struct JSONFragment: Codable, Sendable, Equatable {
         }
     }
 
-    var stringValue: String {
+    /// A string compatibility view. Objects and arrays are serialized as JSON.
+    public var stringValue: String {
         switch storage {
         case .string(let value):
             return value
+        case .integer(let value):
+            return String(value)
+        case .unsignedInteger(let value):
+            return String(value)
         case .number(let value):
             return String(value)
         case .bool(let value):
@@ -200,6 +243,23 @@ struct JSONFragment: Codable, Sendable, Equatable {
             return data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
         case .null:
             return ""
+        }
+    }
+}
+
+typealias JSONFragment = JSONValue
+
+extension JSONValue {
+    var foundationValue: Any {
+        switch storage {
+        case .string(let value): return value
+        case .integer(let value): return value
+        case .unsignedInteger(let value): return value
+        case .number(let value): return value
+        case .bool(let value): return value
+        case .object(let values): return values.mapValues(\.foundationValue)
+        case .array(let values): return values.map(\.foundationValue)
+        case .null: return NSNull()
         }
     }
 }

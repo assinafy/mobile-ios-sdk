@@ -4,9 +4,9 @@ import Foundation
 
 /// The lifecycle state of a document.
 ///
-/// Used from Objective-C as `ASFDocumentStatus` (Int-based).
+/// Exposed to Objective-C as the `DocumentStatus` integer enum.
 /// Use ``stringValue`` to obtain the raw API string for display or logging.
-@objc public enum DocumentStatus: Int {
+@objc public enum DocumentStatus: Int, Sendable {
     case unknown          = -1
     case uploading        =  0
     case uploaded         =  1
@@ -62,7 +62,7 @@ public extension DocumentStatus {
 // MARK: - DocumentArtifactName
 
 /// The name of a downloadable document artifact.
-@objc public enum DocumentArtifactName: Int {
+@objc public enum DocumentArtifactName: Int, Sendable {
     /// The original unmodified PDF.
     case original = 0
     /// The fully signed and certificated PDF.
@@ -256,8 +256,8 @@ extension DocumentListItem: Decodable {
             templateId:    try c.decodeIfPresent(String.self, forKey: .templateId),
             assignment:    try c.decodeIfPresent(Assignment.self, forKey: .assignment),
             artifacts:     try c.decodeIfPresent(DocumentArtifacts.self, forKey: .artifacts),
-            pages:         (try? c.decode([DocumentPage].self, forKey: .pages)) ?? [],
-            tags:          (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            pages:         try c.decodeIfPresent([DocumentPage].self, forKey: .pages) ?? [],
+            tags:          try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
             createdAt:     try decodeFlexibleString(from: c, forKey: .createdAt),
             updatedAt:     try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
             isClosed:      try c.decodeIfPresent(Bool.self,   forKey: .isClosed) ?? false,
@@ -270,7 +270,7 @@ extension DocumentListItem: Decodable {
 
 // MARK: - DeclinedBySigner
 
-public struct DeclinedBySigner: Decodable {
+public struct DeclinedBySigner: Decodable, Sendable {
     public let id: String
     public let fullName: String
     public let email: String?
@@ -374,7 +374,7 @@ extension DocumentUploadResponse: Decodable {
             status:        DocumentStatus(string: statusString),
             statusString:  statusString,
             artifacts:     try c.decode(DocumentArtifacts.self,  forKey: .artifacts),
-            pages:         (try? c.decode([DocumentPage].self, forKey: .pages)) ?? [],
+            pages:         try c.decodeIfPresent([DocumentPage].self, forKey: .pages) ?? [],
             createdAt:     try decodeFlexibleString(from: c, forKey: .createdAt),
             updatedAt:     try decodeFlexibleString(from: c, forKey: .updatedAt),
             isClosed:      try c.decodeIfPresent(Bool.self,      forKey: .isClosed) ?? false,
@@ -384,7 +384,7 @@ extension DocumentUploadResponse: Decodable {
             declinedBy: declinedBySigner.map {
                 DeclinedBySigner(id: $0.id, fullName: $0.fullName, email: $0.email)
             },
-            tags:          (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            tags:          try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
             assignment:    try c.decodeIfPresent(Assignment.self, forKey: .assignment)
         )
     }
@@ -392,18 +392,27 @@ extension DocumentUploadResponse: Decodable {
 
 // MARK: - DocumentActivity
 
-/// A single entry in a document's audit activity log.
+/// A single entry in a document's activity log.
 @objcMembers
 public final class DocumentActivity: NSObject {
     public let id: Int
     public let event: String
     public let message: String
+    /// Lossless JSON representation of the event origin.
+    @nonobjc public let originJSON: JSONValue?
+    /// Lossless JSON representation of the event payload.
+    @nonobjc public let payloadJSON: JSONValue?
+    /// String compatibility view of ``originJSON``.
     public let origin: String
+    /// String compatibility view of ``payloadJSON``.
     public let payload: String?
     public let createdAt: String
 
-    init(id: Int, event: String, message: String, origin: String, payload: String? = nil, createdAt: String) {
+    init(id: Int, event: String, message: String, originJSON: JSONValue? = nil,
+         payloadJSON: JSONValue? = nil, origin: String, payload: String? = nil,
+         createdAt: String) {
         self.id = id; self.event = event; self.message = message
+        self.originJSON = originJSON; self.payloadJSON = payloadJSON
         self.origin = origin; self.payload = payload; self.createdAt = createdAt
     }
 }
@@ -418,12 +427,16 @@ extension DocumentActivity: Decodable {
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let originJSON = try decodeJSONValue(from: c, forKey: .origin)
+        let payloadJSON = try decodeJSONValue(from: c, forKey: .payload)
         self.init(
             id:        try c.decode(Int.self,    forKey: .id),
             event:     try c.decode(String.self, forKey: .event),
             message:   try c.decode(String.self, forKey: .message),
-            origin:    (try decodeFlexibleOptionalString(from: c, forKey: .origin)) ?? "",
-            payload:   try decodeFlexibleOptionalString(from: c, forKey: .payload),
+            originJSON: originJSON,
+            payloadJSON: payloadJSON,
+            origin:    originJSON?.stringValue ?? "",
+            payload:   payloadJSON?.stringValue,
             createdAt: try decodeFlexibleString(from: c, forKey: .createdAt)
         )
     }
@@ -517,8 +530,8 @@ extension DocumentDetails: Decodable {
             downloadFinalUrl: try c.decodeIfPresent(String.self,         forKey: .downloadFinalUrl),
             signingUrl:       try c.decodeIfPresent(String.self,         forKey: .signingUrl),
             artifacts:        try c.decodeIfPresent(DocumentArtifacts.self, forKey: .artifacts),
-            pages:            (try? c.decode([DocumentPage].self, forKey: .pages)) ?? [],
-            tags:             (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            pages:            try c.decodeIfPresent([DocumentPage].self, forKey: .pages) ?? [],
+            tags:             try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
             createdAt:        try decodeFlexibleString(from: c, forKey: .createdAt),
             updatedAt:        try decodeFlexibleString(from: c, forKey: .updatedAt),
             isClosed:         try c.decodeIfPresent(Bool.self,           forKey: .isClosed) ?? false,
@@ -871,7 +884,7 @@ extension PublicDocumentInfo: Decodable {
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let pages = (try? c.decode([DocumentPage].self, forKey: .pages)) ?? []
+        let pages = try c.decodeIfPresent([DocumentPage].self, forKey: .pages) ?? []
         let count = (try? c.decode(Int.self, forKey: .pageCount))
             ?? (try? c.decode(String.self, forKey: .pageCount)).flatMap(Int.init)
         let statusString = try c.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
@@ -888,7 +901,7 @@ extension PublicDocumentInfo: Decodable {
             signingUrl: try c.decodeIfPresent(String.self, forKey: .signingUrl),
             declineReason: try c.decodeIfPresent(String.self, forKey: .declineReason),
             declinedBy: try c.decodeIfPresent(Signer.self, forKey: .declinedBy),
-            tags: (try? c.decode([Tag].self, forKey: .tags)) ?? [],
+            tags: try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
             assignment: try c.decodeIfPresent(Assignment.self, forKey: .assignment),
             pages: pages,
             createdAt: try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
@@ -905,7 +918,7 @@ public typealias PublicDocument = PublicDocumentInfo
 // MARK: - SendTokenChannel
 
 /// The delivery channel for `PUT /public/documents/{id}/send-token`.
-@objc public enum SendTokenChannel: Int {
+@objc public enum SendTokenChannel: Int, Sendable {
     case email = 0
     case whatsapp = 1
 

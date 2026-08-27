@@ -32,7 +32,7 @@ final class TemplateResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc1/templates")
     }
 
-    func testListSendsDocumentedParametersAndLiveVerifiedExtensions() async throws {
+    func testListEncodesAllConfiguredFilters() async throws {
         mock.stubEnvelopeList([])
         _ = try await resource.list(
             params: TemplateListParams(

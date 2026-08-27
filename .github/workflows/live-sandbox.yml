@@ -1,0 +1,83 @@
+name: Live Sandbox
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      run_mutations:
+        description: Run tests that create sandbox resources and send notifications
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: '23 9 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  sandbox:
+    name: Sandbox API
+    if: ${{ github.ref == 'refs/heads/main' || github.ref_type == 'tag' }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    environment: live-sandbox
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      ASSINAFY_BASE_URL: https://sandbox.assinafy.com.br/v1
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check sandbox credentials
+        env:
+          ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
+          ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
+        run: |
+          if [[ -z "$ASSINAFY_API_KEY" || -z "$ASSINAFY_ACCOUNT_ID" ]]; then
+            echo "::error::Configure ASSINAFY_API_KEY and ASSINAFY_ACCOUNT_ID in the live-sandbox environment."
+            exit 1
+          fi
+
+      - name: Run read-only sandbox tests
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.run_mutations) }}
+        env:
+          ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
+          ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
+        run: >-
+          swift test
+          --filter 'AssinafyTests.AssinafyLiveTests/(testLiveReadOnlyCatalogAndListEndpoints|testLiveContractReadEndpoints)'
+
+      - name: Check mutation recipients
+        if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.run_mutations) }}
+        env:
+          ASSINAFY_TEST_EMAIL_A: ${{ secrets.ASSINAFY_TEST_EMAIL_A }}
+          ASSINAFY_TEST_EMAIL_B: ${{ secrets.ASSINAFY_TEST_EMAIL_B }}
+        run: |
+          if [[ -z "$ASSINAFY_TEST_EMAIL_A" || -z "$ASSINAFY_TEST_EMAIL_B" ]]; then
+            echo "::error::Configure ASSINAFY_TEST_EMAIL_A and ASSINAFY_TEST_EMAIL_B in the live-sandbox environment."
+            exit 1
+          fi
+          shopt -s nocasematch
+          if [[ "$ASSINAFY_TEST_EMAIL_A" == "$ASSINAFY_TEST_EMAIL_B" ]]; then
+            echo "::error::Sandbox mutation recipients must be distinct."
+            exit 1
+          fi
+
+      - name: Run complete sandbox suite
+        if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.run_mutations) }}
+        env:
+          ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
+          ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
+          ASSINAFY_RUN_LIVE_MUTATIONS: '1'
+          ASSINAFY_REQUIRE_LIVE_ASSIGNMENT: '1'
+          ASSINAFY_TEST_EMAIL_A: ${{ secrets.ASSINAFY_TEST_EMAIL_A }}
+          ASSINAFY_TEST_EMAIL_B: ${{ secrets.ASSINAFY_TEST_EMAIL_B }}
+        run: swift test --filter AssinafyTests.AssinafyLiveTests

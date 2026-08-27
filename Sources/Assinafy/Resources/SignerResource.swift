@@ -1,7 +1,5 @@
 import Foundation
 
-private let emailPattern = "^[A-Z0-9a-z._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}$"
-
 /// Manages signer records within a workspace.
 ///
 /// Access this resource through ``AssinafyClient/signers``.
@@ -17,7 +15,7 @@ private let emailPattern = "^[A-Z0-9a-z._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}
 /// )
 /// ```
 @objcMembers
-public final class SignerResource: BaseResource {
+public final class SignerResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
@@ -119,7 +117,7 @@ public final class SignerResource: BaseResource {
 
     /// Searches for a signer by email address.
     ///
-    /// The comparison is case-insensitive.
+    /// Email matching is case-insensitive.
     ///
     /// - Parameters:
     ///   - email: The email address to search for.
@@ -157,12 +155,7 @@ public final class SignerResource: BaseResource {
     ///   API returns no profile data, so legacy `fullName` and `email` values
     ///   are empty unless an older server includes them.
     public func acceptTerms(signerAccessCode: String) async throws -> AcceptTermsResponse {
-        let code = try requireId(signerAccessCode, name: "Signer access code")
-        let request = APIRequest(
-            method: .put,
-            path: "/signers/accept-terms",
-            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
-        )
+        let request = try acceptTermsRequest(signerAccessCode: signerAccessCode)
         let data = try await callData("Failed to accept terms", request: request)
         guard !data.isEmpty else {
             return AcceptTermsResponse(fullName: "", email: "", hasAcceptedTerms: true)
@@ -180,6 +173,14 @@ public final class SignerResource: BaseResource {
                 ?? AcceptTermsResponse(fullName: "", email: "", hasAcceptedTerms: true)
         }
         return try JSONDecoder.assinafy.decode(AcceptTermsResponse.self, from: data)
+    }
+
+    /// Accepts the signer terms and handles the documented bare response envelope.
+    public func acceptTermsWithoutResponse(signerAccessCode: String) async throws {
+        try await callVoid(
+            "Failed to accept terms",
+            request: try acceptTermsRequest(signerAccessCode: signerAccessCode)
+        )
     }
 
     /// Verifies a signer's email using a verification code.
@@ -212,6 +213,9 @@ public final class SignerResource: BaseResource {
         reuse: Bool = false
     ) async throws {
         let code = try requireId(signerAccessCode, name: "Signer access code")
+        guard imageData.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else {
+            throw ValidationError("Signature image must be PNG data")
+        }
         var items = [
             URLQueryItem(name: "signer-access-code", value: code),
             URLQueryItem(name: "type", value: type.stringValue)
@@ -317,6 +321,9 @@ public final class SignerResource: BaseResource {
         guard !documentIds.isEmpty else {
             throw ValidationError("documentIds must not be empty")
         }
+        for documentId in documentIds {
+            _ = try requireId(documentId, name: "Document ID")
+        }
         let payload = SignMultipleDocumentsPayload(documentIds: documentIds)
         let body = try JSONEncoder.assinafy.encode(payload)
         let request = APIRequest(
@@ -339,6 +346,12 @@ public final class SignerResource: BaseResource {
         let code = try requireId(signerAccessCode, name: "Signer access code")
         guard !documentIds.isEmpty else {
             throw ValidationError("documentIds must not be empty")
+        }
+        for documentId in documentIds {
+            _ = try requireId(documentId, name: "Document ID")
+        }
+        guard !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError("Decline reason is required")
         }
         let payload = DeclineMultipleDocumentsPayload(documentIds: documentIds, declineReason: reason)
         let body = try JSONEncoder.assinafy.encode(payload)
@@ -464,6 +477,15 @@ public final class SignerResource: BaseResource {
 
     // MARK: - Private
 
+    private func acceptTermsRequest(signerAccessCode: String) throws -> APIRequest {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        return APIRequest(
+            method: .put,
+            path: "/signers/accept-terms",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
+        )
+    }
+
     /// Validates signer input without performing network I/O.
     ///
     /// Internal workflows use this before creating prerequisite resources so
@@ -478,10 +500,6 @@ public final class SignerResource: BaseResource {
     }
 
     private func assertValidEmail(_ email: String) throws {
-        guard !email.isEmpty,
-              email.range(of: emailPattern, options: .regularExpression)
-                == email.startIndex..<email.endIndex else {
-            throw ValidationError("Invalid email address", errors: ["email": email])
-        }
+        try validateEmail(email)
     }
 }

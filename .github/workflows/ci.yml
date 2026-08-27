@@ -26,6 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Show Swift version
         run: swift --version
@@ -34,13 +35,39 @@ jobs:
         run: swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Build release
-        run: swift build -c release -Xswiftc -warnings-as-errors
+        run: >-
+          swift build -c release
+          -Xswiftc -strict-concurrency=complete
+          -Xswiftc -warnings-as-errors
 
-      - name: Build for iOS Simulator
+      - name: Check public API compatibility
+        run: swift package diagnose-api-breaking-changes "$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^)"
+
+      - name: Build documentation with warnings enforced
         run: >-
           xcodebuild -scheme Assinafy
           -destination 'generic/platform=iOS Simulator'
-          -configuration Release
+          -derivedDataPath "$RUNNER_TEMP/AssinafyDocBuild"
+          CODE_SIGNING_ALLOWED=NO
+          SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+          OTHER_DOCC_FLAGS=--warnings-as-errors
+          docbuild
+
+      - name: Test on iOS Simulator
+        run: >-
+          xcodebuild -scheme Assinafy
+          -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5'
+          -configuration Debug
           -derivedDataPath "$RUNNER_TEMP/AssinafyDerivedData"
           CODE_SIGNING_ALLOWED=NO
-          build
+          SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+          test
+
+      - name: Check tagged SDK version
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          grep -Fq "public static let sdkVersion = \"$version\"" Sources/Assinafy/AssinafyClient.swift
+          grep -Fq "## [$version]" CHANGELOG.md

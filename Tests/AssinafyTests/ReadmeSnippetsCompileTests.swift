@@ -250,4 +250,85 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
         _ = placement.displaySettingsJSON
         _ = dispatch.payloadJSON
     }
+
+    // MARK: - OAuth 2.1
+
+    @available(*, unavailable)
+    private func oauthFlow(
+        client: AssinafyClient,
+        clientId: String,
+        callbackURL: URL
+    ) async throws {
+        let resource = try await client.oauth.protectedResourceMetadata()
+        let server = try await client.oauth.authorizationServerMetadata(
+            issuer: resource.authorizationServers[0]
+        )
+
+        let request = OAuthAuthorizationRequest(
+            clientId: clientId,
+            redirectURI: "myapp://oauth-callback",
+            scopes: [.documentsRead, .documentsWrite, .offlineAccess],
+            resource: resource.resource
+        )
+        _ = request.authorizationURL(endpoint: server.authorizationEndpoint)!
+        _ = client.oauth.authorizationURL(for: request)
+
+        let code = try OAuthCallback(callbackURL: callbackURL)!
+            .validate(against: request, issuer: server.issuer)
+
+        let token = try await client.oauth.exchangeAuthorizationCode(
+            .authorizationCode(
+                code: code,
+                redirectURI: request.redirectURI,
+                codeVerifier: request.pkce.codeVerifier,
+                clientId: clientId,
+                resource: resource.resource
+            )
+        )
+
+        let userClient = AssinafyClient(token: token.accessToken)
+
+        if token.isExpired(), let refresh = token.refreshToken {
+            _ = try await client.oauth.refreshAccessToken(
+                .refreshToken(refresh, clientId: clientId)
+            )
+        }
+
+        try await client.oauth.revoke(
+            OAuthRevokePayload(token: token.accessToken, clientId: clientId)
+        )
+
+        let claims = try await userClient.oauth.userInfo()
+        print(claims.sub, claims.name as Any, claims.email as Any)
+    }
+
+    @available(*, unavailable)
+    private func oauthErrorHandling(client: AssinafyClient, payload: OAuthTokenPayload) async {
+        do {
+            _ = try await client.oauth.exchangeAuthorizationCode(payload)
+        } catch let error as APIError {
+            switch error.oauthError?.code {
+            case "invalid_grant":  break
+            case "invalid_client": break
+            case "invalid_target": break
+            default: break
+            }
+        } catch {}
+    }
+
+    // MARK: - Signer verification methods
+
+    @available(*, unavailable)
+    private func verificationMethods(first: Signer, second: Signer, roleId: String) {
+        _ = CreateAssignmentPayload(
+            method: .virtual,
+            signers: [
+                .signer(id: first.id, verification: .email, step: 1),
+                .signer(id: second.id, verification: .digitalCertificate, step: 2),
+            ]
+        )
+        _ = TemplateSigner(roleId: roleId, id: first.id, verification: .whatsapp)
+        _ = first.verification
+        _ = first.notifications
+    }
 }

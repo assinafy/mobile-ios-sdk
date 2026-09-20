@@ -32,6 +32,10 @@ Paths below are relative to the SDK's default production base URL,
   `data`. A **bare envelope** has no documented result model; `Void` methods
   validate the HTTP/envelope status and discard its body.
 - Binary operations return raw `Data` rather than an envelope.
+- The `/oauth/*` and `/.well-known/*` operations answer **flat** objects with no
+  envelope, as RFC 6749 §5.1, OIDC Core §5.3.2, and RFC 8615 require. Their
+  failures are flat `{error, error_description}` bodies, readable as
+  `APIError.oauthError`.
 - List operations return `PaginatedResult<T>`. `data` comes from the envelope;
   `meta` is built from `X-Pagination-Current-Page`,
   `X-Pagination-Per-Page`, `X-Pagination-Total-Count`, and
@@ -126,6 +130,190 @@ payload uses the same keys and may send any nonempty subset:
   "SignerWhatsappFailed": true
 }
 ```
+
+## OAuth 2.1
+
+All methods are available through `client.oauth`. The flow is the RFC 6749
+authorization code grant with **mandatory PKCE (S256)**; the server accepts no
+other challenge method. A mobile app is a public client: it sends `client_id`
+with no `client_secret`, and every `clientSecret` parameter below stays `nil`.
+
+**These endpoints are deployed on production only.** The sandbox host answers
+`403` for the well-known path and `404` for `/oauth/token`.
+
+| Async SDK method | Auth | Exact request | Wire response and SDK result |
+| --- | --- | --- | --- |
+| `protectedResourceMetadata()` | Public | `GET {host}/.well-known/oauth-protected-resource` at the **host root**, outside `/v1` | Flat object -> `OAuthProtectedResourceMetadata` |
+| `authorizationServerMetadata(issuer:)` | Public | `GET {issuer}/.well-known/oauth-authorization-server` on the authorization server's own host | Flat object -> `OAuthAuthorizationServerMetadata` |
+| `exchangeAuthorizationCode(_:)` | Public | `POST /oauth/token`; JSON body below with `grant_type=authorization_code` | Flat object -> `OAuthTokenResponse` |
+| `refreshAccessToken(_:)` | Public | `POST /oauth/token`; JSON body below with `grant_type=refresh_token` | Flat object -> `OAuthTokenResponse` |
+| `revoke(_:)` | Public | `POST /oauth/revoke`; JSON `token`, `client_id` required, optional `token_type_hint`, `client_secret` | Empty `200`; returns `Void` |
+| `userInfo()` | Account | `GET /oauth/userinfo`, presenting the OAuth access token as the bearer credential | Flat claims object -> `OAuthUserInfo` |
+
+`authorizationURL(for:)` and `OAuthAuthorizationRequest.authorizationURL(endpoint:)`
+build a URL locally and send no request.
+
+### Authorization request
+
+`OAuthAuthorizationRequest` produces this query against the authorization
+endpoint (`https://auth.assinafy.com.br/oauth/authorize`):
+
+| Parameter | Value |
+| --- | --- |
+| `response_type` | Always `code` |
+| `client_id` | The registered client identifier |
+| `redirect_uri` | The registered redirect URI, matched exactly |
+| `state` | 43 BASE64URL characters of CSPRNG output, single-use |
+| `code_challenge` | BASE64URL(SHA256(`code_verifier`)) |
+| `code_challenge_method` | Always `S256` |
+| `scope` | Space-separated scopes; omitted when empty |
+| `resource` | RFC 8707 resource indicator; omitted when `nil` |
+
+The `code_verifier` is **never** sent here. `OAuthCallback.validate(against:issuer:)`
+then checks the callback: it throws `APIError` carrying the server's `error`,
+`ValidationError` on a `state` mismatch (compared in constant time), on an `iss`
+mismatch when an issuer is supplied, or when no code is present.
+
+### Token request
+
+```json
+{
+  "grant_type": "authorization_code",
+  "code": "ac_7f3c1d92b4a64e08",
+  "redirect_uri": "myapp://oauth-callback",
+  "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+  "client_id": "cli_2b9e44d1",
+  "resource": "https://api.assinafy.com.br"
+}
+```
+
+```json
+{
+  "grant_type": "refresh_token",
+  "refresh_token": "rt_6a2f08c5e1b74d39",
+  "client_id": "cli_2b9e44d1"
+}
+```
+
+`code`, `redirect_uri`, `code_verifier`, `refresh_token`, `client_secret`, and
+`resource` are omitted when `nil`. The SDK validates locally before sending:
+`client_id` must be non-blank; the authorization-code grant requires a non-blank
+`code` and `redirect_uri` and a `code_verifier` of 43–128 characters; the
+refresh grant requires a non-blank `refresh_token`. Any other `grant_type` is
+rejected as `ValidationError`.
+
+### Token response
+
+```json
+{
+  "access_token": "at_9d41c7be20f5486a",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "rt_6a2f08c5e1b74d39",
+  "scope": "documents:read documents:write",
+  "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+`refresh_token` is present only when `offline_access` was requested **and**
+consented. `id_token` is present only when `openid` was granted. `scope` lists
+the access token's scopes and never contains `offline_access`, which is a
+request-time signal rather than a permission. `OAuthTokenResponse` adds
+`issuedAt` (decode time), `expiresAt`, `scopes`, and `isExpired(leeway:)`,
+defaulting to 60 seconds of headroom.
+
+### Revocation request
+
+```json
+{
+  "token": "at_9d41c7be20f5486a",
+  "token_type_hint": "access_token",
+  "client_id": "cli_2b9e44d1"
+}
+```
+
+Every token outcome answers `200` — revoked, already revoked, unknown, or
+malformed — so the endpoint cannot reveal whether a token exists. Only failed
+client authentication answers `401 invalid_client`.
+
+### Userinfo response
+
+```json
+{
+  "sub": "d6zqpbyog2v3xvxerwn8la94",
+  "name": "Maria Silva",
+  "email": "maria@example.test",
+  "email_verified": true
+}
+```
+
+`sub` is always present and requires `openid`; `name` requires `profile`;
+`email` and `email_verified` require `email`. Absent claims decode to `nil`.
+
+### Discovery responses
+
+```json
+{
+  "resource": "https://api.assinafy.com.br",
+  "authorization_servers": ["https://auth.assinafy.com.br"],
+  "scopes_supported": ["documents:read", "documents:write", "templates:read",
+                       "templates:write", "account:read", "openid", "profile", "email"],
+  "bearer_methods_supported": ["header"]
+}
+```
+
+`scopes_supported` here deliberately excludes `offline_access`: requesting a
+refresh token is a client concern, not something the resource is protected by.
+The authorization server's own document does list it.
+
+```json
+{
+  "issuer": "https://auth.assinafy.com.br",
+  "authorization_endpoint": "https://auth.assinafy.com.br/oauth/authorize",
+  "token_endpoint": "https://api.assinafy.com.br/v1/oauth/token",
+  "revocation_endpoint": "https://api.assinafy.com.br/v1/oauth/revoke",
+  "userinfo_endpoint": "https://api.assinafy.com.br/v1/oauth/userinfo",
+  "jwks_uri": "https://auth.assinafy.com.br/.well-known/jwks.json",
+  "scopes_supported": ["documents:read", "documents:write", "templates:read",
+                       "templates:write", "account:read", "openid", "profile",
+                       "email", "offline_access"],
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "code_challenge_methods_supported": ["S256"],
+  "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
+  "authorization_response_iss_parameter_supported": true
+}
+```
+
+### Scopes
+
+| Scope | Grants |
+| --- | --- |
+| `documents:read` | Read documents, their pages, tags, signers, assignments, and activity |
+| `documents:write` | Create, update, and delete documents, and manage their signers, assignments, and activity |
+| `templates:read` | Read templates, their pages, roles, fields, and tags |
+| `templates:write` | Create, update, and delete templates, their pages, roles, fields, and tags |
+| `account:read` | Read the workspace profile, theme, and logo |
+| `openid` | Identify the user and enable `GET /oauth/userinfo` |
+| `profile` | Include the user's name in `id_token` and userinfo claims |
+| `email` | Include the user's email and verification status in the claims |
+| `offline_access` | Issue a refresh token; granted only to a client that asks for it |
+
+An OAuth token cannot reach billing, account lifecycle, credential management,
+or admin surfaces regardless of its scopes. A missing scope answers `403` with
+`WWW-Authenticate: Bearer error="insufficient_scope"` naming it.
+
+### Error surface
+
+Failures are flat, not enveloped. `APIError.oauthError` exposes them as
+`OAuthErrorDetail(code:description:)`.
+
+| Status | `error` | Cause |
+| --- | --- | --- |
+| `400` | `invalid_grant` | Bad, expired, replayed, or wrong-client code; a `code_verifier` outside the 43–128 unreserved-character grammar; `redirect_uri` mismatch; a refresh token whose authorization no longer includes `offline_access` |
+| `400` | `invalid_target` | A `resource` this server does not issue tokens for, or one disagreeing with the authorized value |
+| `400` | `unsupported_grant_type` | A grant type the server does not implement |
+| `401` | `invalid_client` | Unknown or disabled client, or failed client authentication. The description never reveals whether the `client_id` exists |
 
 ## Workspaces (accounts)
 
@@ -488,7 +676,8 @@ complete encoded shape for public request models and query containers.
 
 - `CreateAssignmentPayload`: `method` (`virtual` or `collect`), nonempty
   `signers`, optional `entries`, `message`, `expires_at`, and
-  `copy_receivers`. `SignerReference.id` encodes only `id`; descriptor values
+  `copy_receivers`. `SignerReference.id` encodes only `id`;
+  `SignerReference.signer(...)` and descriptor values
   may also encode `verification_method`, `notification_methods`, and positive
   `step`. Creation requires an ID for every signer.
 - `AssignmentEntry`: `page_id` and nonempty `fields`. Every field encodes
@@ -781,6 +970,27 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
 - `AssignmentMethod` maps `.virtual` / `.collect` to `virtual` / `collect`.
   `init(string:)` treats only `collect` as collect and otherwise returns
   virtual.
+- `SignerVerificationMethod` encodes `.email`, `.whatsapp`, and
+  `.digitalCertificate` as `Email`, `Whatsapp`, and `DigitalCertificate`.
+  `SignerNotificationMethod` encodes `.email` and `.whatsapp` the same way.
+  `SignerReference.signer(id:verification:notifications:step:)` and
+  `TemplateSigner(roleId:id:verification:notifications:step:)` take these
+  typed values; the raw-`String` forms remain for values added to the API after
+  an SDK release. Reading a signer back, `Signer.verification` and
+  `Signer.notifications` return the typed values and drop anything unknown
+  rather than failing to decode.
+  - `Email` is the default and is free.
+  - `Whatsapp` bills 0.45 credits for the required notification channel and is
+    available on paid subscriptions only.
+  - `DigitalCertificate` has the signer sign with their own ICP-Brasil
+    certificate — **A1** (a software file) or **A3** (a smart card or USB
+    token), both presented through the Web PKI browser extension, producing a
+    qualified PAdES signature. It requires the Digital Certificate feature, a
+    CPF or CNPJ in the signer's `government_id`, and that the signer be alone
+    in their step; it bills 2 credits. A CPF requires that person's certificate
+    (an e-CPF, or an e-CNPJ naming them as legal representative); a CNPJ
+    requires an e-CNPJ for that company. The signing handshake itself happens
+    in the browser and is not wrapped by this SDK.
 - `DocumentArtifactName` path values are `original`, `certificated`,
   `certificate-page`, `pades`, and `bundle`.
 - `SignatureType` path/query values are `signature` and `initial`.

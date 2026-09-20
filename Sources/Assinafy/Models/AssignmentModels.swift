@@ -307,6 +307,44 @@ public enum SignerReference: Sendable {
         notificationMethods: [String]? = nil,
         step: Int? = nil
     )
+
+    /// A signer with typed verification and notification methods.
+    ///
+    /// Prefer this over ``descriptor(id:verificationMethod:notificationMethods:step:)``:
+    /// the API matches these values exactly, so a typo in a raw string is only
+    /// caught by the server.
+    ///
+    /// ```swift
+    /// let payload = CreateAssignmentPayload(
+    ///     method: .virtual,
+    ///     signers: [
+    ///         .signer(id: firstSigner.id, verification: .email, step: 1),
+    ///         .signer(id: secondSigner.id, verification: .digitalCertificate, step: 2),
+    ///     ]
+    /// )
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - id: The signer's ID.
+    ///   - verification: How the signer proves their identity. Omit for
+    ///     ``SignerVerificationMethod/email``.
+    ///   - notifications: Channels used to notify the signer. Omit for email only.
+    ///   - step: The 1-based signing order for sequential assignments; `nil`
+    ///     for parallel signing. A ``SignerVerificationMethod/digitalCertificate``
+    ///     signer must be alone in their step.
+    public static func signer(
+        id: String,
+        verification: SignerVerificationMethod? = nil,
+        notifications: [SignerNotificationMethod]? = nil,
+        step: Int? = nil
+    ) -> SignerReference {
+        .descriptor(
+            id: id,
+            verificationMethod: verification?.rawValue,
+            notificationMethods: notifications?.map(\.rawValue),
+            step: step
+        )
+    }
 }
 
 // MARK: - AssignmentField

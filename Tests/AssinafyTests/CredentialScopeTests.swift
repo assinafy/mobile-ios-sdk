@@ -306,4 +306,110 @@ final class CredentialScopeTests: XCTestCase {
         XCTAssertEqual(original.credential, .workspace)
         XCTAssertEqual(stripped.credential, .withheld)
     }
+
+    // MARK: - OAuth
+
+    func testOAuthPublicRoutesOmitWorkspaceCredential() async throws {
+        let oauth = OAuthResource(
+            http: mock,
+            apiBaseURL: URL(string: "https://api.assinafy.com.br/v1")!
+        )
+
+        mock.stubJSON(["access_token": "at", "token_type": "Bearer", "expires_in": 3600])
+        _ = try await oauth.exchangeAuthorizationCode(
+            .authorizationCode(
+                code: "c",
+                redirectURI: "myapp://cb",
+                codeVerifier: OAuthPKCE().codeVerifier,
+                clientId: "client"
+            )
+        )
+        assertNoCredential("/oauth/token")
+
+        stubEmpty()
+        try await oauth.revoke(OAuthRevokePayload(token: "at", clientId: "client"))
+        assertNoCredential("/oauth/revoke")
+
+        mock.stubJSON(["resource": "https://api.assinafy.com.br"])
+        _ = try await oauth.protectedResourceMetadata()
+        assertNoCredential("https://api.assinafy.com.br/.well-known/oauth-protected-resource")
+
+        mock.stubJSON([
+            "issuer": "https://auth.assinafy.com.br",
+            "authorization_endpoint": "https://auth.assinafy.com.br/oauth/authorize",
+            "token_endpoint": "https://api.assinafy.com.br/v1/oauth/token",
+        ])
+        _ = try await oauth.authorizationServerMetadata()
+        assertNoCredential("https://auth.assinafy.com.br/.well-known/oauth-authorization-server")
+    }
+
+    func testOAuthUserinfoKeepsTheBearerCredential() async throws {
+        // `GET /oauth/userinfo` is spec'd `bearerAuth|apiKeyAuth`: the OAuth
+        // access token is presented as the bearer credential.
+        let oauth = OAuthResource(
+            http: mock,
+            apiBaseURL: URL(string: "https://api.assinafy.com.br/v1")!
+        )
+        mock.stubJSON(["sub": "abc"])
+        _ = try await oauth.userInfo()
+        XCTAssertEqual(mock.lastRequest?.path, "/oauth/userinfo")
+        XCTAssertEqual(mock.lastRequest?.credential, .workspace)
+    }
+
+    // MARK: - Cross-origin transport
+
+    func testTransportWithholdsCredentialsFromAnotherOrigin() throws {
+        let client = URLSessionHTTPClient(
+            baseURL: URL(string: "https://api.assinafy.com.br/v1")!,
+            defaultHeaders: [
+                "Accept": "application/json",
+                "X-Api-Key": "secret-key",
+                "Authorization": "Bearer secret-token",
+            ]
+        )
+
+        // Same origin, host root: the credential is still allowed in principle,
+        // and the request itself decides via `withoutWorkspaceCredential()`.
+        let sameOrigin = try client.buildURLRequest(
+            from: .get("https://api.assinafy.com.br/.well-known/oauth-protected-resource")
+        )
+        XCTAssertEqual(sameOrigin.url?.path, "/.well-known/oauth-protected-resource")
+        XCTAssertEqual(sameOrigin.value(forHTTPHeaderField: "X-Api-Key"), "secret-key")
+
+        // Another origin: the transport drops the credential even when the
+        // request asked for it, so a mistake upstream cannot leak the key.
+        let crossOrigin = try client.buildURLRequest(
+            from: .get("https://auth.assinafy.com.br/.well-known/oauth-authorization-server")
+        )
+        XCTAssertEqual(crossOrigin.url?.host, "auth.assinafy.com.br")
+        XCTAssertNil(crossOrigin.value(forHTTPHeaderField: "X-Api-Key"))
+        XCTAssertNil(crossOrigin.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(crossOrigin.value(forHTTPHeaderField: "Accept"), "application/json")
+    }
+
+    func testTransportRejectsUnsafeAbsolutePaths() throws {
+        let client = URLSessionHTTPClient(
+            baseURL: URL(string: "https://api.assinafy.com.br/v1")!,
+            defaultHeaders: [:]
+        )
+        for path in [
+            "http://api.assinafy.com.br/.well-known/oauth-protected-resource",
+            "https://user:pw@api.assinafy.com.br/.well-known/oauth-protected-resource",
+            "//evil.example/.well-known/oauth-protected-resource",
+        ] {
+            XCTAssertThrowsError(try client.buildURLRequest(from: .get(path)), path) { error in
+                XCTAssertTrue(error is ValidationError, "\(path) -> \(type(of: error))")
+            }
+        }
+    }
+
+    func testRelativePathsStillResolveUnderTheVersionedBase() throws {
+        let client = URLSessionHTTPClient(
+            baseURL: URL(string: "https://api.assinafy.com.br/v1")!,
+            defaultHeaders: ["X-Api-Key": "secret-key"]
+        )
+        let request = try client.buildURLRequest(from: .get("/accounts"))
+        XCTAssertEqual(request.url?.absoluteString, "https://api.assinafy.com.br/v1/accounts")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "secret-key")
+    }
 }

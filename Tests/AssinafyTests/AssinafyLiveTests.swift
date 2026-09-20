@@ -839,4 +839,52 @@ final class AssinafyLiveTests: XCTestCase {
         )
         if let operationError { throw operationError }
     }
+
+    // MARK: - OAuth discovery (production)
+
+    /// Pins the SDK's compiled-in OAuth defaults against what production
+    /// publishes.
+    ///
+    /// OAuth is not deployed on the sandbox host (the well-known path answers
+    /// `403` and `/v1/oauth/token` answers `404`), so this is the one live test
+    /// that talks to production. Both endpoints it reads are public, read-only
+    /// discovery documents that carry no credential and mutate nothing.
+    func testLiveOAuthDiscoveryMatchesCompiledDefaults() async throws {
+        guard ProcessInfo.processInfo.environment["ASSINAFY_RUN_LIVE_OAUTH_DISCOVERY"] == "1" else {
+            throw XCTSkip("Set ASSINAFY_RUN_LIVE_OAUTH_DISCOVERY=1 to probe production OAuth discovery.")
+        }
+        let client = AssinafyClient(configuration: AssinafyClientConfiguration())
+
+        let resource = try await client.oauth.protectedResourceMetadata()
+        XCTAssertEqual(resource.resource, "https://api.assinafy.com.br")
+        XCTAssertEqual(resource.authorizationServers, [OAuthResource.defaultIssuer])
+        XCTAssertEqual(resource.bearerMethodsSupported, ["header"])
+
+        let issuer = try XCTUnwrap(resource.authorizationServers.first)
+        let server = try await client.oauth.authorizationServerMetadata(issuer: issuer)
+        XCTAssertEqual(server.issuer, OAuthResource.defaultIssuer)
+        XCTAssertEqual(
+            server.authorizationEndpoint,
+            OAuthResource.defaultAuthorizationEndpoint,
+            "OAuthResource.defaultAuthorizationEndpoint has drifted from production"
+        )
+        XCTAssertEqual(
+            server.codeChallengeMethodsSupported, ["S256"],
+            "OAuthPKCE only implements S256"
+        )
+        XCTAssertTrue(server.grantTypesSupported.contains("authorization_code"))
+        XCTAssertTrue(server.grantTypesSupported.contains("refresh_token"))
+        XCTAssertTrue(
+            server.tokenEndpointAuthMethodsSupported.contains("none"),
+            "a public mobile client needs the `none` auth method"
+        )
+
+        // Every scope this SDK models must still be one the server issues.
+        for scope in OAuthScope.allCases {
+            XCTAssertTrue(
+                server.scopesSupported.contains(scope.rawValue),
+                "server no longer supports scope \(scope.rawValue)"
+            )
+        }
+    }
 }

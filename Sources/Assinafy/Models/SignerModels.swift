@@ -535,3 +535,77 @@ public final class DeclineMultipleDocumentsPayload: NSObject, Encodable {
 }
 
 extension DeclineMultipleDocumentsPayload: @unchecked Sendable {}
+
+// MARK: - Verification and notification methods
+
+/// How a signer proves who they are before the platform accepts their signature.
+///
+/// Set per signer when an assignment is created — see
+/// ``SignerReference/signer(id:verification:notifications:step:)`` and
+/// ``TemplateSigner/init(roleId:id:verification:notifications:step:)``.
+/// Omit it to default to ``email``.
+///
+/// | Method | How it works | Cost per signer |
+/// | --- | --- | --- |
+/// | ``email`` | One-time code sent to the signer's email | Free |
+/// | ``whatsapp`` | One-time code sent over WhatsApp | Verification free; the required WhatsApp channel costs 0.45 credits |
+/// | ``digitalCertificate`` | The signer signs with their own ICP-Brasil certificate | 2 credits |
+public enum SignerVerificationMethod: String, Sendable, CaseIterable {
+    /// A one-time code sent to the signer's email address. The default.
+    case email = "Email"
+
+    /// A one-time code sent over WhatsApp.
+    ///
+    /// The verification itself is not billed, but it requires the WhatsApp
+    /// notification channel, so the signer costs 0.45 credits. Available only
+    /// on paid subscriptions.
+    case whatsapp = "Whatsapp"
+
+    /// The signer signs with their own **ICP-Brasil certificate (A1 or A3)**,
+    /// producing a qualified PAdES signature.
+    ///
+    /// A1 certificates are software files held on the signer's machine; A3
+    /// certificates live on a smart card or USB token. Both are presented
+    /// through the Web PKI browser extension, so the choice between them is the
+    /// signer's and needs nothing from the integration.
+    ///
+    /// Requires the Digital Certificate feature on the account, charges 2
+    /// credits, and the signer must have a CPF or CNPJ in `government_id` and
+    /// be **alone in their signing step**. A CPF requires that person's
+    /// certificate — an e-CPF, or an e-CNPJ naming them as legal
+    /// representative; a CNPJ requires an e-CNPJ for that company, from any of
+    /// its representatives.
+    ///
+    /// - Important: Certificate signing completes through a browser handshake
+    ///   with the Web PKI extension, not through this SDK's native signing
+    ///   calls. Send the signer to the web signing page instead.
+    case digitalCertificate = "DigitalCertificate"
+}
+
+/// The channels used to tell a signer a document is waiting for them.
+///
+/// Omit to default to ``email`` alone.
+public enum SignerNotificationMethod: String, Sendable, CaseIterable {
+    /// Notify by email. The default, and always free.
+    case email = "Email"
+
+    /// Notify over WhatsApp.
+    ///
+    /// Costs 0.45 credits per signer and is available only on paid
+    /// subscriptions.
+    case whatsapp = "Whatsapp"
+}
+
+public extension Signer {
+    /// ``verificationMethod`` as a typed value, or `nil` when the server sent
+    /// nothing or a value this SDK release does not know.
+    var verification: SignerVerificationMethod? {
+        verificationMethod.flatMap(SignerVerificationMethod.init(rawValue:))
+    }
+
+    /// ``notificationMethods`` as typed values, dropping any this SDK release
+    /// does not know.
+    var notifications: [SignerNotificationMethod] {
+        notificationMethods.compactMap(SignerNotificationMethod.init(rawValue:))
+    }
+}

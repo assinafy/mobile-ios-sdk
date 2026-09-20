@@ -52,7 +52,7 @@ jobs:
             echo "filter=AssinafyTests.AssinafyLiveTests" >> "$GITHUB_OUTPUT"
           else
             echo "mutations=false" >> "$GITHUB_OUTPUT"
-            echo "filter=AssinafyTests.AssinafyLiveTests/(testLiveReadOnlyCatalogAndListEndpoints|testLiveContractReadEndpoints)" >> "$GITHUB_OUTPUT"
+            echo "filter=AssinafyTests.AssinafyLiveTests/(testLiveReadOnlyCatalogAndListEndpoints|testLiveContractReadEndpoints|testLiveOAuthDiscoveryMatchesCompiledDefaults)" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check sandbox credentials
@@ -93,6 +93,10 @@ jobs:
           ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
           ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
           ASSINAFY_RUN_LIVE_MUTATIONS: ${{ steps.suite.outputs.mutations == 'true' && '1' || '' }}
+          # OAuth is deployed on production only, so this one test reads two
+          # public, unauthenticated discovery documents from the production
+          # host. It sends no credential and changes nothing.
+          ASSINAFY_RUN_LIVE_OAUTH_DISCOVERY: '1'
           ASSINAFY_REQUIRE_LIVE_ASSIGNMENT: ${{ steps.suite.outputs.mutations == 'true' && '1' || '' }}
           ASSINAFY_TEST_EMAIL_A: ${{ secrets.ASSINAFY_TEST_EMAIL_A }}
           ASSINAFY_TEST_EMAIL_B: ${{ secrets.ASSINAFY_TEST_EMAIL_B }}

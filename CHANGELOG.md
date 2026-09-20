@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.5.0] - 2026-09-20
+
+### Added
+- OAuth 2.1 support through `client.oauth`: the authorization code flow with mandatory PKCE
+  (S256), token exchange and refresh, token revocation, OpenID Connect userinfo, and RFC 9728
+  / RFC 8414 discovery of the protected resource and its authorization server.
+- `OAuthPKCE` generates a code verifier and S256 challenge from 256 bits of secure randomness,
+  and `OAuthAuthorizationRequest` builds the authorization URL without ever placing the
+  verifier in it.
+- `OAuthCallback.validate(against:issuer:)` verifies a redirect before its code is exchanged,
+  comparing `state` in constant time and checking the RFC 9207 `iss` parameter.
+- `APIError.oauthError` exposes the flat `{error, error_description}` body that the OAuth
+  endpoints return in place of the API envelope.
+- `SignerVerificationMethod` and `SignerNotificationMethod` give the signer's verification and
+  notification channels typed values — `Email`, `Whatsapp`, and the ICP-Brasil A1/A3
+  `DigitalCertificate`. `SignerReference.signer(id:verification:notifications:step:)` and
+  `TemplateSigner(roleId:id:verification:notifications:step:)` accept them, and
+  `Signer.verification` and `Signer.notifications` read them back.
+
+### Security
+- The transport withholds `Authorization` and `X-Api-Key` from any request whose URL does not
+  share the base URL's origin, so a credential cannot reach the authorization server or any
+  other host through a mistaken absolute path.
+- An absolute request URL must be HTTPS and free of embedded credentials; anything else is
+  rejected as a `ValidationError` rather than resolved as a relative path.
+
+### Changed
+- `README.md` is a complete guide to the SDK in Portuguese, covering the full document
+  lifecycle, both sides of the signing flow, and OAuth.
+
 ## [1.4.0] - 2026-08-27
 
 ### Security

@@ -309,6 +309,37 @@ public final class TemplateSigner: NSObject, Encodable {
         self.step = step
     }
 
+    /// Creates a signer-to-role mapping with typed verification and
+    /// notification methods.
+    ///
+    /// Prefer this over the raw-string initializer: the API matches these
+    /// values exactly, so a typo is only caught by the server.
+    ///
+    /// - Parameters:
+    ///   - roleId: Template role ID.
+    ///   - id: Signer ID; required when creating a document.
+    ///   - verification: How the signer proves their identity. Omit for
+    ///     ``SignerVerificationMethod/email``.
+    ///   - notifications: Channels used to notify the signer. Omit for email only.
+    ///   - step: Optional one-based signing order. A
+    ///     ``SignerVerificationMethod/digitalCertificate`` signer must be alone
+    ///     in their step.
+    public convenience init(
+        roleId: String,
+        id: String? = nil,
+        verification: SignerVerificationMethod?,
+        notifications: [SignerNotificationMethod]? = nil,
+        step: Int? = nil
+    ) {
+        self.init(
+            roleId: roleId,
+            id: id,
+            verificationMethod: verification?.rawValue,
+            notificationMethods: notifications?.map(\.rawValue),
+            step: step.map(NSNumber.init(value:))
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case roleId              = "role_id"

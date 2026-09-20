@@ -9,3 +9,7 @@ DerivedData/
 .env.*
 !.env.example
 *.xcresult
+
+# Local agent instructions, not part of the distributed package
+AGENTS.md
+CLAUDE.md

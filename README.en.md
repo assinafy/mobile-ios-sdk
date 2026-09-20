@@ -15,8 +15,11 @@ typed models, and failures surface as four distinct Swift error types that bridg
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Configuring the client](#configuring-the-client)
+- [The four ways to authenticate](#the-four-ways-to-authenticate)
+- [OAuth 2.1 with PKCE](#oauth-21-with-pkce)
 - [How credentials are sent](#how-credentials-are-sent)
 - [The signing lifecycle](#the-signing-lifecycle)
+- [Signer verification methods](#signer-verification-methods)
 - [The signer's side of the flow](#the-signers-side-of-the-flow)
 - [Templates](#templates)
 - [Tags, fields, and untyped JSON](#tags-fields-and-untyped-json)
@@ -50,7 +53,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.4.0"
+        from: "1.5.0"
     ),
 ],
 targets: [
@@ -132,6 +135,155 @@ let session = try await publicClient.auth.login(
 )
 ```
 
+## The four ways to authenticate
+
+| Method | Who is authenticated | Where it belongs |
+| --- | --- | --- |
+| **API key** (`X-Api-Key`) | The workspace, permanently | A trusted back end |
+| **Bearer token** (`Authorization`) | The user who logged in | A distributed mobile app |
+| **OAuth 2.1** (`Authorization`) | An app acting **on behalf of** a user, with the scopes they approved | Third-party integrations, AI assistants |
+| **Signer access code** | A signer, for one document | The signing side |
+
+> **Pick the credential that matches where the code runs.** A permanent API key grants permanent
+> access to the entire workspace and belongs in a trusted back end — **never** in an app bundle,
+> where it can be extracted. Bearer tokens and OAuth tokens belong in mobile apps.
+
+OAuth is the right choice when the code is **not** the workspace owner: the user approves a named
+set of permissions on an Assinafy consent screen, and the resulting token is limited to those and
+to a single workspace. Whatever scopes it carries, an OAuth token never reaches billing, account
+lifecycle, credential management, or admin surfaces.
+
+## OAuth 2.1 with PKCE
+
+Authorization code flow with **mandatory PKCE (S256)**. A mobile app is a *public client*: it
+authenticates with PKCE and is never issued a client secret, since a secret shipped in an app
+bundle can be extracted from it.
+
+> **Production only.** The sandbox host does not yet expose the OAuth endpoints.
+
+### Scopes
+
+| Scope | Grants |
+| --- | --- |
+| `documents:read` | Read documents, pages, tags, signers, assignments, and activity |
+| `documents:write` | Create, update, and delete documents and manage their signers and assignments |
+| `templates:read` | Read templates, their pages, roles, fields, and tags |
+| `templates:write` | Create, update, and delete templates and their contents |
+| `account:read` | Read the workspace profile, theme, and logo |
+| `openid` | Identify the authenticated user and enable `/oauth/userinfo` |
+| `profile` | Include the user's name in the claims |
+| `email` | Include the email and its verification status in the claims |
+| `offline_access` | Receive a refresh token, to keep working without a fresh consent |
+
+Requesting a scope the user declines is not an error: the token comes back without it, and the
+first call that needs it answers `403` with a `WWW-Authenticate: Bearer
+error="insufficient_scope"` header naming what is missing.
+
+### 1. Discover the authorization server
+
+```swift
+let resource = try await client.oauth.protectedResourceMetadata()
+let server = try await client.oauth.authorizationServerMetadata(
+    issuer: resource.authorizationServers[0]
+)
+```
+
+Discovery is optional — `OAuthResource.defaultAuthorizationEndpoint` and `defaultIssuer` carry the
+production values — but the published metadata is authoritative, and both routes are public and
+carry no credential.
+
+### 2. Build the authorization URL
+
+```swift
+let request = OAuthAuthorizationRequest(
+    clientId: clientId,
+    redirectURI: "myapp://oauth-callback",
+    scopes: [.documentsRead, .documentsWrite, .offlineAccess],
+    resource: resource.resource
+)
+
+let url = request.authorizationURL(endpoint: server.authorizationEndpoint)!
+```
+
+`OAuthAuthorizationRequest` generates the PKCE pair and an unguessable `state` for you. **Keep
+`request` in memory** until the code is exchanged: it holds the `codeVerifier`, which never goes
+into the URL, onto disk, or into a log.
+
+Open `url` in an `ASWebAuthenticationSession`.
+
+### 3. Verify the callback
+
+```swift
+let code = try OAuthCallback(callbackURL: callbackURL)!
+    .validate(against: request, issuer: server.issuer)
+```
+
+`validate(against:issuer:)` rejects a callback where the server reported an error, compares
+`state` in constant time, and checks the RFC 9207 `iss` parameter. A mismatched `state` means the
+redirect did not come from the flow this app started, so the code is discarded unexchanged.
+
+### 4. Exchange the code for a token
+
+```swift
+let token = try await client.oauth.exchangeAuthorizationCode(
+    .authorizationCode(
+        code: code,
+        redirectURI: request.redirectURI,
+        codeVerifier: request.pkce.codeVerifier,
+        clientId: clientId,
+        resource: resource.resource
+    )
+)
+
+let userClient = AssinafyClient(token: token.accessToken)
+```
+
+### 5. Refresh and revoke
+
+```swift
+if token.isExpired(), let refresh = token.refreshToken {
+    let renewed = try await client.oauth.refreshAccessToken(
+        .refreshToken(refresh, clientId: clientId)
+    )
+}
+
+// On sign-out:
+try await client.oauth.revoke(
+    OAuthRevokePayload(token: token.accessToken, clientId: clientId)
+)
+```
+
+A `refreshToken` exists only when `offline_access` was both requested **and** consented; without
+one, send the user through the authorization flow again. Revocation always answers `200` for every
+token outcome — including a token that never existed, was already revoked, or is malformed — so
+the endpoint cannot be used to probe whether a token exists.
+
+### Who the user is
+
+```swift
+let claims = try await userClient.oauth.userInfo()
+print(claims.sub, claims.name as Any, claims.email as Any)
+```
+
+Requires `openid`; `name` requires `profile` and `email` requires `email`.
+
+### Failures
+
+OAuth errors arrive as an `APIError` carrying a typed `oauthError`:
+
+```swift
+do {
+    _ = try await client.oauth.exchangeAuthorizationCode(payload)
+} catch let error as APIError {
+    switch error.oauthError?.code {
+    case "invalid_grant":  break // expired, replayed code, or wrong verifier
+    case "invalid_client": break // unknown or disabled client_id
+    case "invalid_target": break // `resource` disagreeing with the authorized value
+    default: break
+    }
+}
+```
+
 ## How credentials are sent
 
 The v1 API places every operation in one of three authentication classes, and the SDK enforces
@@ -147,6 +299,10 @@ A client configured with a bearer token or API key does **not** transmit it to a
 Public operation. This means one client can serve both sides of a flow: the same instance can
 manage documents with an account credential and drive a signer through `assignments.sign(…)`
 without that credential leaving the routes that accept it.
+
+The rule holds by origin too: a request whose URL does not share the base URL's origin — such as
+OAuth discovery on the authorization server — loses its credential headers in the transport,
+whatever the client is configured with.
 
 Access codes are secrets. Treat a `signerAccessCode` exactly as you would a password: never log
 it, never persist it beyond the signing session, and never place it in a URL you share.
@@ -239,8 +395,8 @@ let assignment = try await client.assignments.create(
 
 Use `.virtual` for remote signing by notification, and `.collect` for in-person field
 collection, which additionally requires page field placements. For ordered signing, build
-signers with `SignerReference.descriptor(id:verificationMethod:notificationMethods:step:)`
-and assign each a `step`.
+signers with `SignerReference.signer(id:verification:notifications:step:)` and give each a
+`step`.
 
 ### Tracking and retrieving the result
 
@@ -283,6 +439,45 @@ It validates every signer — non-empty names, well-formed addresses, no duplica
 case-insensitive emails — before uploading, so bad input cannot leave an orphaned document
 behind. The remote steps are not transactional: if a later step fails, the document and signers
 already created remain available for retry or explicit cleanup.
+
+## Signer verification methods
+
+Set per signer when the assignment is created. Verification and notification are **coupled**: send
+one, both, or neither — the missing side is inferred. With neither, both default to `Email`.
+
+| Method | How it works | Cost per signer |
+| --- | --- | --- |
+| `.email` *(default)* | A one-time code (OTP) by email, required before signing | Free |
+| `.whatsapp` | A one-time code (OTP) over WhatsApp | Verification free; the notification costs 0.45 credits, paid plans only |
+| `.digitalCertificate` | The signer signs with their **own ICP-Brasil certificate (A1/A3)** through the Web PKI browser extension, producing a **qualified PAdES signature** | 2 credits |
+
+```swift
+let request = CreateAssignmentPayload(
+    method: .virtual,
+    signers: [
+        .signer(id: first.id, verification: .email, step: 1),
+        .signer(id: second.id, verification: .digitalCertificate, step: 2),
+    ]
+)
+```
+
+Allowed combinations: `.email` notifies by `.email`; `.whatsapp` notifies by `.whatsapp`;
+`.digitalCertificate` notifies by `.email` **or** `.whatsapp`. One notification method per signer.
+
+**A1 and A3** are the two ICP-Brasil certificate formats: A1 is a software file held on the
+signer's machine, A3 lives on a smart card or USB token. Both are presented through the same Web
+PKI extension, so the choice between them is the signer's and asks nothing of the integration.
+
+Digital certificates require the feature on the account (Standard and Pro plans), a CPF or CNPJ in
+`government_id`, and that the signer be **alone in their step**. A CPF requires that person's
+certificate — an e-CPF, or an e-CNPJ naming them as legal representative; a CNPJ requires an
+e-CNPJ for that company, from any of its representatives.
+
+> Because certificate signing happens through a handshake with the Web PKI browser extension, it
+> is not completed by this SDK's native signing calls — send the signer to the web signing page.
+
+Reading a signer back, `signer.verification` and `signer.notifications` return the typed values,
+and `nil` or a shortened list when the server sends something this SDK release does not know.
 
 ## The signer's side of the flow
 
@@ -537,6 +732,7 @@ status for `APIError`, `422` for `ValidationError`, the `URLError` code for `Net
 | Resource | Coverage |
 | --- | --- |
 | `client.auth` | Login, social login and linking, password operations, API-key management, current user, notification preferences, user statistics |
+| `client.oauth` | Discovery, PKCE authorization URL, code exchange, refresh, revocation, userinfo |
 | `client.workspaces` | Account CRUD, theme, statistics, logo upload/download/delete |
 | `client.documents` | Upload, list/search/get/rename/delete, processing status, pages, thumbnails, activities, artifacts, verification, template document creation, public token flow |
 | `client.signers` | Workspace signer CRUD, signer self-service, terms, verification, signature images, signer documents, batch sign and decline |

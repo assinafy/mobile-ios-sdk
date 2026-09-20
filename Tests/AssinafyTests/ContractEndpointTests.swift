@@ -366,4 +366,72 @@ final class ContractEndpointTests: XCTestCase {
         let items = mock.lastRequest?.queryItems ?? []
         XCTAssertTrue(items.contains(URLQueryItem(name: "reuse", value: "true")))
     }
+
+    // MARK: - Signer verification and notification methods
+
+    func testTypedSignerReferenceEncodesAPIVerificationMethods() throws {
+        let payload = CreateAssignmentPayload(
+            method: .virtual,
+            signers: [
+                .signer(id: "s1", verification: .email, notifications: [.email], step: 1),
+                .signer(id: "s2", verification: .whatsapp, notifications: [.whatsapp], step: 2),
+                .signer(id: "s3", verification: .digitalCertificate, notifications: [.email, .whatsapp], step: 3),
+            ]
+        )
+        let body = try buildAssignmentBody(payload)
+        let json = try JSONSerialization.jsonObject(
+            with: try JSONEncoder.assinafy.encode(body)
+        ) as? [String: Any]
+        let signers = try XCTUnwrap(json?["signers"] as? [[String: Any]])
+
+        XCTAssertEqual(signers.map { $0["verification_method"] as? String },
+                       ["Email", "Whatsapp", "DigitalCertificate"])
+        XCTAssertEqual(signers[2]["notification_methods"] as? [String], ["Email", "Whatsapp"])
+        XCTAssertEqual(signers.map { $0["step"] as? Int }, [1, 2, 3])
+    }
+
+    func testTypedTemplateSignerEncodesAPIVerificationMethods() throws {
+        let signer = TemplateSigner(
+            roleId: "role1",
+            id: "s1",
+            verification: .digitalCertificate,
+            notifications: [.whatsapp],
+            step: 1
+        )
+        let json = try JSONSerialization.jsonObject(
+            with: try JSONEncoder.assinafy.encode(signer)
+        ) as? [String: Any]
+        XCTAssertEqual(json?["role_id"] as? String, "role1")
+        XCTAssertEqual(json?["verification_method"] as? String, "DigitalCertificate")
+        XCTAssertEqual(json?["notification_methods"] as? [String], ["Whatsapp"])
+        XCTAssertEqual(json?["step"] as? Int, 1)
+    }
+
+    func testVerificationMethodRawValuesMatchTheAPIEnum() {
+        XCTAssertEqual(
+            SignerVerificationMethod.allCases.map(\.rawValue),
+            ["Email", "Whatsapp", "DigitalCertificate"]
+        )
+        XCTAssertEqual(
+            SignerNotificationMethod.allCases.map(\.rawValue),
+            ["Email", "Whatsapp"]
+        )
+    }
+
+    func testSignerDecodesTypedVerificationAndIgnoresUnknownValues() throws {
+        let known = try JSONDecoder.assinafy.decode(Signer.self, from: Data("""
+        {"id":"s1","full_name":"Ana","email":"ana@example.invalid",
+         "verification_method":"DigitalCertificate","notification_methods":["Email","Whatsapp"]}
+        """.utf8))
+        XCTAssertEqual(known.verification, .digitalCertificate)
+        XCTAssertEqual(known.notifications, [.email, .whatsapp])
+
+        let unknown = try JSONDecoder.assinafy.decode(Signer.self, from: Data("""
+        {"id":"s2","full_name":"Ana","email":"ana@example.invalid",
+         "verification_method":"Telepathy","notification_methods":["Email","Telegram"]}
+        """.utf8))
+        XCTAssertNil(unknown.verification, "an unknown method decodes to nil, not a crash")
+        XCTAssertEqual(unknown.notifications, [.email])
+        XCTAssertEqual(unknown.verificationMethod, "Telepathy", "the raw value is still readable")
+    }
 }

@@ -168,6 +168,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 /// - ``workspaces`` — Manage workspaces (accounts).
 /// - ``fields`` — Manage workspace field definitions and validation.
 /// - ``auth`` — Login, password reset, and API key management.
+/// - ``oauth`` — The OAuth 2.1 authorization code flow with PKCE.
 ///
 /// ## Objective-C
 /// ```objc
@@ -182,7 +183,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 public final class AssinafyClient: NSObject {
 
     /// The SDK version string included in the `User-Agent` header.
-    public static let sdkVersion = "1.4.0"
+    public static let sdkVersion = "1.5.0"
 
     // MARK: Resources
 
@@ -204,6 +205,8 @@ public final class AssinafyClient: NSObject {
     public let fields: FieldResource
     /// Manages login, password, social login, and API key endpoints.
     public let auth: AuthResource
+    /// Drives the OAuth 2.1 authorization code flow with PKCE.
+    public let oauth: OAuthResource
 
     private let http: HTTPClientProtocol
     private let config: AssinafyClientConfiguration
@@ -280,6 +283,7 @@ public final class AssinafyClient: NSObject {
         )
         fields      = FieldResource(http: http, defaultAccountId: accountId, logger: logger)
         auth        = AuthResource(http: http, defaultAccountId: accountId, logger: logger)
+        oauth       = OAuthResource(http: http, apiBaseURL: baseURL, logger: logger)
         super.init()
     }
 
@@ -333,6 +337,11 @@ public final class AssinafyClient: NSObject {
         workspaces  = WorkspaceResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         fields      = FieldResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         auth        = AuthResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
+        oauth       = OAuthResource(
+            http: http,
+            apiBaseURL: URL(string: AssinafyClientConfiguration.productionBaseURL)!,
+            logger: logger
+        )
         super.init()
     }
 

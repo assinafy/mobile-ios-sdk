@@ -326,17 +326,7 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
     }
 
     func buildURLRequest(from request: APIRequest) throws -> URLRequest {
-        let base = baseURL.absoluteString.hasSuffix("/")
-            ? baseURL
-            : URL(string: baseURL.absoluteString + "/")!
-
-        let pathStripped = request.path.hasPrefix("/")
-            ? String(request.path.dropFirst())
-            : request.path
-
-        guard var components = URLComponents(
-            string: base.appendingPathComponent(pathStripped).absoluteString
-        ) else {
+        guard var components = try resolvedComponents(for: request.path) else {
             throw ValidationError("Invalid URL path: \(request.path)")
         }
 
@@ -352,8 +342,13 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         urlRequest.httpMethod = request.method.httpValue
         urlRequest.httpBody   = request.body
 
+        // A credential leaves this process only when the request asked for it
+        // *and* the URL it is about to travel to shares the base URL's origin.
+        // OAuth discovery targets the API host root and the authorization
+        // server, so origin is no longer implied by the path being relative.
+        let mayCarryCredential = request.credential == .workspace && sameOrigin(url, baseURL)
         for (key, value) in defaultHeaders
-        where request.credential == .workspace || !Self.isCredentialHeader(key) {
+        where mayCarryCredential || !Self.isCredentialHeader(key) {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
         if request.body != nil || request.method != .get {
@@ -361,6 +356,33 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         }
 
         return urlRequest
+    }
+
+    /// Resolves an ``APIRequest/path`` to URL components.
+    ///
+    /// A path starting with `https://` is an absolute URL and is used as-is —
+    /// this is how OAuth discovery reaches `/.well-known/…` at the API host
+    /// root, outside the `/v1` base path, and the authorization server on its
+    /// own host. Every other path stays relative to the base URL.
+    private func resolvedComponents(for path: String) throws -> URLComponents? {
+        // Anything carrying a scheme, or a protocol-relative `//host`, is an
+        // absolute reference rather than a path under the base URL. Recognise
+        // the whole class, then require HTTPS — otherwise an `http://` value
+        // would silently resolve as a relative path and produce a request to
+        // the wrong URL instead of a clear rejection.
+        let isAbsoluteReference = path.hasPrefix("//")
+            || path.range(of: "^[A-Za-z][A-Za-z0-9+.-]*:", options: .regularExpression) != nil
+        if isAbsoluteReference {
+            guard let absolute = AssinafyClientConfiguration.normalisedBaseURL(path) else {
+                throw ValidationError("Absolute request URLs must be HTTPS and carry no credentials: \(path)")
+            }
+            return URLComponents(url: absolute, resolvingAgainstBaseURL: false)
+        }
+        let base = baseURL.absoluteString.hasSuffix("/")
+            ? baseURL
+            : URL(string: baseURL.absoluteString + "/")!
+        let stripped = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        return URLComponents(string: base.appendingPathComponent(stripped).absoluteString)
     }
 
     /// Header names that carry an Assinafy workspace credential.

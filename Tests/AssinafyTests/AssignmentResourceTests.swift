@@ -132,16 +132,31 @@ final class AssignmentPayloadTests: XCTestCase {
         }
     }
 
-    func testCollectEstimateDoesNotRequireSigners() throws {
+    func testCollectEstimateSendsSignersAlongsideEntries() throws {
         let field = AssignmentField(signerId: "s1", fieldId: "f1", displaySettings: settings)
         let payload = CreateAssignmentPayload(
             method: .collect,
-            signers: [],
+            signers: [.descriptor(verificationMethod: "DigitalCertificate")],
             entries: [AssignmentEntry(pageId: "p1", fields: [field])]
         )
         let body = try buildAssignmentEstimateBody(payload)
-        XCTAssertNil(body.signers)
+        // collect is priced per signer too, so the channels must reach the API.
+        XCTAssertEqual(body.signers?[0].verificationMethod, "DigitalCertificate")
         XCTAssertEqual(body.entries?.count, 1)
+    }
+
+    // The API refuses a signer-less estimate in either mode.
+    func testEveryEstimateRequiresAtLeastOneSigner() {
+        let field = AssignmentField(signerId: "s1", fieldId: "f1", displaySettings: settings)
+        for payload in [
+            CreateAssignmentPayload(method: .collect, signers: [],
+                                    entries: [AssignmentEntry(pageId: "p1", fields: [field])]),
+            CreateAssignmentPayload(method: .virtual, signers: [])
+        ] {
+            XCTAssertThrowsError(try buildAssignmentEstimateBody(payload)) { error in
+                XCTAssertTrue(error is ValidationError)
+            }
+        }
     }
 
     func testRejectsInvalidDisplaySettingsGeometry() {

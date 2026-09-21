@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.0] - 2026-09-21
+
+### Fixed
+- `buildAssignmentEstimateBody` now requires at least one signer in both methods and always sends
+  the `signers` key. The published contract marks `signers` as required only for `virtual`, but the
+  API prices per signer in both modes and answers a signer-less estimate with
+  `400 "Pelo menos um signatários precisa ser informado."` The builder nil'd the key when the list
+  was empty, so a `collect` estimate could never be priced.
+
 ## [1.5.0] - 2026-09-20
 
 ### Added

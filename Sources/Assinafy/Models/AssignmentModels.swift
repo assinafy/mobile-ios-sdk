@@ -553,8 +553,11 @@ func buildAssignmentBody(_ payload: CreateAssignmentPayload) throws -> Assignmen
 }
 
 func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> AssignmentEstimateBody {
-    if payload.method == .virtual, payload.signers.isEmpty {
-        throw ValidationError("Virtual assignment estimates require at least one signer")
+    // The contract marks `signers` required only for `virtual`, but the API prices per signer in
+    // both modes and answers a signer-less body with
+    // 400 "Pelo menos um signatários precisa ser informado."
+    if payload.signers.isEmpty {
+        throw ValidationError("Assignment estimates require at least one signer")
     }
     let signers = payload.signers.map { reference -> AssignmentEstimateSignerBody in
         switch reference {
@@ -573,7 +576,7 @@ func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> A
     }
     return AssignmentEstimateBody(
         method: payload.method.stringValue,
-        signers: signers.isEmpty ? nil : signers,
+        signers: signers,
         entries: entries
     )
 }

@@ -3,7 +3,7 @@
 ## [1.7.0] - 2026-09-23
 
 ### Added
-- `OAuthScope.webhooksWrite` requests permission to configure and deactivate a workspace webhook subscription.
+- `OAuthScope.webhooksWrite` can be passed to the existing `scopeStrings` initializer to request permission to configure and deactivate a workspace webhook subscription.
 
 ## [1.6.0] - 2026-09-21
 

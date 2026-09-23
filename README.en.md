@@ -176,6 +176,8 @@ bundle can be extracted from it.
 | `email` | Include the email and its verification status in the claims |
 | `offline_access` | Receive a refresh token, to keep working without a fresh consent |
 
+Pass `OAuthScope.webhooksWrite` through `OAuthAuthorizationRequest`'s `scopeStrings` initializer when requesting webhook access.
+
 Requesting a scope the user declines is not an error: the token comes back without it, and the
 first call that needs it answers `403` with a `WWW-Authenticate: Bearer
 error="insufficient_scope"` header naming what is missing.

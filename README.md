@@ -174,6 +174,8 @@ extraído dele.
 | `email` | Incluir o e-mail e seu status de verificação nas claims |
 | `offline_access` | Receber um refresh token, para continuar funcionando sem novo consentimento |
 
+Passe `OAuthScope.webhooksWrite` pelo inicializador `scopeStrings` de `OAuthAuthorizationRequest` ao solicitar acesso a webhooks.
+
 Pedir um escopo que o usuário recuse não é erro: o token volta sem ele, e a primeira chamada que
 precisar dele responde `403` com o header `WWW-Authenticate: Bearer error="insufficient_scope"`
 nomeando o que falta.

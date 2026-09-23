@@ -62,8 +62,12 @@ final class OAuthResourceTests: XCTestCase {
     // MARK: - Authorization URL
 
     func testAuthorizationURLCarriesEveryRequiredParameter() throws {
-        let request = makeRequest(
-            scopes: [.documentsRead, .webhooksWrite, .offlineAccess],
+        let request = OAuthAuthorizationRequest(
+            clientId: "client-123",
+            redirectURI: "myapp://oauth-callback",
+            scopeStrings: [OAuthScope.documentsRead.rawValue, OAuthScope.webhooksWrite, OAuthScope.offlineAccess.rawValue],
+            pkce: OAuthPKCE(),
+            state: "state-123",
             resource: "https://api.assinafy.com.br"
         )
         let url = try XCTUnwrap(

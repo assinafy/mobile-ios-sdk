@@ -257,7 +257,7 @@ client authentication answers `401 invalid_client`.
   "resource": "https://api.assinafy.com.br",
   "authorization_servers": ["https://auth.assinafy.com.br"],
   "scopes_supported": ["documents:read", "documents:write", "templates:read",
-                       "templates:write", "account:read", "openid", "profile", "email"],
+                       "templates:write", "account:read", "webhooks:write", "openid", "profile", "email"],
   "bearer_methods_supported": ["header"]
 }
 ```
@@ -275,7 +275,7 @@ The authorization server's own document does list it.
   "userinfo_endpoint": "https://api.assinafy.com.br/v1/oauth/userinfo",
   "jwks_uri": "https://auth.assinafy.com.br/.well-known/jwks.json",
   "scopes_supported": ["documents:read", "documents:write", "templates:read",
-                       "templates:write", "account:read", "openid", "profile",
+                       "templates:write", "account:read", "webhooks:write", "openid", "profile",
                        "email", "offline_access"],
   "response_types_supported": ["code"],
   "grant_types_supported": ["authorization_code", "refresh_token"],
@@ -294,6 +294,7 @@ The authorization server's own document does list it.
 | `templates:read` | Read templates, their pages, roles, fields, and tags |
 | `templates:write` | Create, update, and delete templates, their pages, roles, fields, and tags |
 | `account:read` | Read the workspace profile, theme, and logo |
+| `webhooks:write` | Configure and deactivate the workspace webhook subscription |
 | `openid` | Identify the user and enable `GET /oauth/userinfo` |
 | `profile` | Include the user's name in `id_token` and userinfo claims |
 | `email` | Include the user's email and verification status in the claims |
@@ -1275,7 +1276,3 @@ ASSINAFY_TEST_EMAIL_B="recipient-b@example.test"
 
 Use two distinct controlled recipients. Never commit credentials, account IDs,
 signer access codes, personal addresses, or captured API payloads.
-The GitHub `Live Sandbox` workflow runs read-only checks weekly and the complete
-mutation suite for `v*` tags or manual mutation runs. Complete CI runs set
-`ASSINAFY_REQUIRE_LIVE_ASSIGNMENT=1`, so insufficient sandbox assignment
-resources fail instead of skipping the release check.

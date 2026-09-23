@@ -53,7 +53,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.5.0"
+        from: "1.7.0"
     ),
 ],
 targets: [
@@ -170,6 +170,7 @@ bundle can be extracted from it.
 | `templates:read` | Read templates, their pages, roles, fields, and tags |
 | `templates:write` | Create, update, and delete templates and their contents |
 | `account:read` | Read the workspace profile, theme, and logo |
+| `webhooks:write` | Configure and deactivate the workspace webhook subscription |
 | `openid` | Identify the authenticated user and enable `/oauth/userinfo` |
 | `profile` | Include the user's name in the claims |
 | `email` | Include the email and its verification status in the claims |
@@ -778,12 +779,6 @@ swift test --filter AssinafyTests.AssinafyLiveTests
 ```
 
 Never commit live credentials, access codes, passwords, or recipient addresses.
-
-The `Live Sandbox` workflow reads its secrets from a GitHub environment. It runs the read-only
-suite on every push to `main` and weekly on a schedule, and the complete mutation suite for
-every `v*` release tag or when a maintainer requests one. Because live tests skip themselves
-when credentials are absent — and a skipped run still exits zero — the workflow fails unless at
-least one live test actually ran.
 
 ## Versioning
 

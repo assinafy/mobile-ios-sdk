@@ -57,7 +57,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.5.0"
+        from: "1.7.0"
     ),
 ],
 targets: [
@@ -168,6 +168,7 @@ extraído dele.
 | `templates:read` | Ler templates, suas páginas, papéis, campos e tags |
 | `templates:write` | Criar, atualizar e excluir templates e seu conteúdo |
 | `account:read` | Ler o perfil, o tema e o logo do workspace |
+| `webhooks:write` | Configurar e desativar a assinatura de webhooks do workspace |
 | `openid` | Identificar o usuário autenticado e habilitar `/oauth/userinfo` |
 | `profile` | Incluir o nome do usuário nas claims |
 | `email` | Incluir o e-mail e seu status de verificação nas claims |
@@ -803,12 +804,6 @@ swift test --filter AssinafyTests.AssinafyLiveTests
 ```
 
 Nunca versione credenciais, códigos de acesso, senhas ou endereços de destinatários.
-
-O workflow `Live Sandbox` lê seus segredos de um environment do GitHub. Roda a suíte somente
-leitura a cada push na `main` e semanalmente por agendamento, e a suíte completa de mutação a cada
-tag `v*` ou quando um mantenedor solicita. Como testes ao vivo se pulam sozinhos quando faltam
-credenciais — e uma execução toda pulada ainda sai com código zero — o workflow falha a menos que
-ao menos um teste ao vivo tenha de fato rodado.
 
 ## Versionamento
 

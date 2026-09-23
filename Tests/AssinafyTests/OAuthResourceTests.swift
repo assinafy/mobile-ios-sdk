@@ -63,7 +63,7 @@ final class OAuthResourceTests: XCTestCase {
 
     func testAuthorizationURLCarriesEveryRequiredParameter() throws {
         let request = makeRequest(
-            scopes: [.documentsRead, .documentsWrite, .offlineAccess],
+            scopes: [.documentsRead, .webhooksWrite, .offlineAccess],
             resource: "https://api.assinafy.com.br"
         )
         let url = try XCTUnwrap(
@@ -82,7 +82,7 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertEqual(items["state"], request.state)
         XCTAssertEqual(items["code_challenge"], request.pkce.codeChallenge)
         XCTAssertEqual(items["code_challenge_method"], "S256")
-        XCTAssertEqual(items["scope"], "documents:read documents:write offline_access")
+        XCTAssertEqual(items["scope"], "documents:read webhooks:write offline_access")
         XCTAssertEqual(items["resource"], "https://api.assinafy.com.br")
     }
 

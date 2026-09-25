@@ -10,9 +10,10 @@ import Foundation
 /// never reach billing, account lifecycle, credential management, or admin
 /// surfaces — those remain exclusive to `apiKeyAuth`/`bearerAuth`.
 ///
-/// Requesting a scope the user declines is not an error: the token simply comes
-/// back without it, and the first call that needs it answers `403` with a
-/// `WWW-Authenticate: Bearer error="insufficient_scope"` header naming it.
+/// The user approves everything requested, or nothing, so request the minimum
+/// and read ``OAuthTokenResponse/scope`` for what was granted. A call made
+/// without the scope it needs answers `403`, and ``APIError/insufficientScope``
+/// names the scope to add when asking the user to connect again.
 public enum OAuthScope: String, Sendable, CaseIterable {
     /// Read documents, their pages, tags, signers, assignments and activity.
     case documentsRead = "documents:read"
@@ -111,7 +112,9 @@ extension OAuthPKCE: @unchecked Sendable {}
 public final class OAuthAuthorizationRequest: NSObject {
     /// The client identifier issued when the integration was registered.
     public let clientId: String
-    /// The exact redirect URI registered for ``clientId``.
+    /// The exact redirect URI registered for ``clientId``: an `https://` URI,
+    /// matched character for character. Custom schemes and `http://localhost`
+    /// cannot be registered.
     public let redirectURI: String
     /// Scopes to request. See ``OAuthScope``.
     public let scopes: [String]
@@ -254,38 +257,41 @@ public final class OAuthCallback: NSObject {
     /// Verifies the callback against the request that produced it and returns
     /// the authorization code.
     ///
-    /// Checks, in order: that the server did not report an error, that `state`
-    /// matches ``OAuthAuthorizationRequest/state`` in constant time, and that a
-    /// code is present. A mismatched `state` means the redirect did not come
-    /// from the flow this app started, so the code is discarded unexchanged.
+    /// Checks `state` against ``OAuthAuthorizationRequest/state`` in constant
+    /// time and the RFC 9207 `iss` parameter against the issuer **before
+    /// anything else**, on an approval and an error redirect alike. A callback
+    /// failing either check did not come from the flow this app started, so
+    /// nothing in it is used. Only then does it surface the server's error or
+    /// return the code.
     ///
     /// - Parameters:
     ///   - request: The request whose ``OAuthAuthorizationRequest/state`` must match.
-    ///   - issuer: When non-`nil`, also requires the server's RFC 9207 `iss`
-    ///     parameter to equal it. Assinafy's authorization server always sends
-    ///     `iss`, so passing ``OAuthAuthorizationServerMetadata/issuer`` here
-    ///     additionally defends against a mix-up between authorization servers.
+    ///   - issuer: The issuer `iss` must equal, normally
+    ///     ``OAuthAuthorizationServerMetadata/issuer``. `nil` checks against
+    ///     ``OAuthResource/defaultIssuer``. Assinafy sends `iss` on every
+    ///     redirect, so a callback without it is rejected.
     /// - Returns: The authorization code, ready to exchange.
-    /// - Throws: ``APIError`` carrying the server's OAuth error, or
-    ///   ``ValidationError`` when the callback fails verification.
+    /// - Throws: ``ValidationError`` when `state` or `iss` does not match or no
+    ///   code is present, or ``APIError`` whose ``APIError/oauthError`` carries
+    ///   the server's error (`access_denied`, `invalid_scope`,
+    ///   `invalid_request`, `unsupported_response_type`, `invalid_target`).
     public func validate(
         against request: OAuthAuthorizationRequest,
         issuer: String? = nil
     ) throws -> String {
+        guard let state, constantTimeEquals(state, request.state) else {
+            throw ValidationError("OAuth callback state does not match the authorization request")
+        }
+        let expectedIssuer = issuer.flatMap { $0.isBlank ? nil : $0 } ?? OAuthResource.defaultIssuer
+        guard let received = self.issuer, constantTimeEquals(received, expectedIssuer) else {
+            throw ValidationError("OAuth callback issuer does not match the authorization server")
+        }
         if let error {
             throw APIError(
                 statusCode: 400,
                 message: errorDescription ?? error,
                 responseData: ["error": error, "error_description": errorDescription as Any]
             )
-        }
-        guard let state, constantTimeEquals(state, request.state) else {
-            throw ValidationError("OAuth callback state does not match the authorization request")
-        }
-        if let issuer, !issuer.isBlank {
-            guard let received = self.issuer, constantTimeEquals(received, issuer) else {
-                throw ValidationError("OAuth callback issuer does not match the authorization server")
-            }
         }
         guard let code, !code.isBlank else {
             throw ValidationError("OAuth callback contained no authorization code")
@@ -389,10 +395,14 @@ public final class OAuthTokenPayload: NSObject, Encodable {
     /// Builds a `refresh_token` exchange.
     ///
     /// - Parameters:
-    ///   - refreshToken: The refresh token issued alongside a previous access token.
+    ///   - refreshToken: The most recently issued refresh token. Every refresh
+    ///     retires the one it sends, and sending a retired one ends the whole
+    ///     connection.
     ///   - clientId: The registered client identifier.
     ///   - clientSecret: Confidential clients only; omit in a mobile app.
-    ///   - resource: Optional RFC 8707 resource indicator.
+    ///   - resource: Optional RFC 8707 resource indicator. It may repeat the
+    ///     value sent to the authorize endpoint but never change it, or the
+    ///     refresh fails `invalid_target`.
     @objc public static func refreshToken(
         _ refreshToken: String,
         clientId: String,
@@ -514,12 +524,23 @@ public final class OAuthTokenResponse: NSObject, Decodable {
     /// Present only when ``OAuthScope/offlineAccess`` was both requested and
     /// consented. Without one, the user must authorize again once the access
     /// token expires.
+    ///
+    /// Valid for 30 days, and every refresh returns a new one with a fresh
+    /// 30 days while retiring the one it sent: persist the new value before
+    /// doing anything else with the response. Sending a retired refresh token
+    /// ends the whole connection.
     public let refreshToken: String?
     /// The space-separated scopes of the **access** token. `offline_access` is
-    /// a request-time signal rather than a permission, so it never appears here.
+    /// a request-time signal rather than a permission, so it never appears here;
+    /// whether a refresh token was issued is ``refreshToken`` being non-`nil`.
     public let scope: String?
     /// A signed OIDC `id_token` (RS256), present only when ``OAuthScope/openID``
     /// was granted.
+    ///
+    /// The SDK does not validate it. Before trusting its claims, verify the
+    /// signature with the key matching its `kid` from the issuer's JWKS, and
+    /// that `iss` is the issuer, `aud` your client ID, and `exp` in the future;
+    /// or read the claims from ``OAuthResource/userInfo()``.
     public let idToken: String?
     /// When this response was decoded, which is the clock the SDK has closest
     /// to the moment the server issued the token.
@@ -812,5 +833,20 @@ public extension APIError {
             code: code,
             description: object["error_description"] as? String
         )
+    }
+
+    /// The scope a `403` names in its
+    /// `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` challenge.
+    ///
+    /// Ask the user to connect again requesting this scope as well; retrying
+    /// the call cannot succeed. `nil` for every other failure: a `403` without
+    /// this challenge means another workspace, the user's own role, or an area
+    /// OAuth tokens never reach.
+    var insufficientScope: String? {
+        guard statusCode == 403, let challenge = wwwAuthenticate,
+              challenge.range(of: #"error="?insufficient_scope"#, options: .regularExpression) != nil,
+              let start = challenge.range(of: #"(^|[\s,])scope=""#, options: .regularExpression)?.upperBound,
+              let end = challenge[start...].firstIndex(of: "\"") else { return nil }
+        return String(challenge[start..<end])
     }
 }

@@ -42,10 +42,51 @@ final class HTTPClientTests: XCTestCase {
     private final class RedirectState: @unchecked Sendable {
         private let lock = NSLock()
         private var recorded: [URLRequest] = []
+        private var status = 302
 
-        func reset() { lock.withLock { recorded = [] } }
+        func reset(status: Int = 302) { lock.withLock { recorded = []; self.status = status } }
+        func redirectStatus() -> Int { lock.withLock { status } }
         func record(_ request: URLRequest) { lock.withLock { recorded.append(request) } }
         func requests() -> [URLRequest] { lock.withLock { recorded } }
+    }
+
+    /// Redirects every request to the same path under `/moved` on the same
+    /// origin, with the status set by `reset(status:)`, and answers there with
+    /// a token response, so a followed redirect looks like a success.
+    private final class SameOriginRedirectURLProtocol: URLProtocol, @unchecked Sendable {
+        static let state = RedirectState()
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            Self.state.record(request)
+            let url = request.url!
+            guard !url.path.hasPrefix("/moved") else {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: Data(
+                    #"{"access_token":"at-2","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-2"}"#.utf8
+                ))
+                client?.urlProtocolDidFinishLoading(self)
+                return
+            }
+            var redirect = request
+            redirect.url = URL(string: "https://sandbox.example.test/moved" + url.path)!
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: Self.state.redirectStatus(),
+                httpVersion: nil,
+                headerFields: ["Location": redirect.url!.absoluteString]
+            )!
+            client?.urlProtocol(self, wasRedirectedTo: redirect, redirectResponse: response)
+            // What an HTTP load does when the redirect is refused: the 3xx
+            // itself completes the task. A followed redirect ignores it.
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
     }
 
     private final class RedirectURLProtocol: URLProtocol, @unchecked Sendable {
@@ -164,15 +205,46 @@ final class HTTPClientTests: XCTestCase {
     }
 
     func testPerformMapsTransportFailure() async {
-        StubURLProtocol.state.set { _ in throw URLError(.timedOut) }
+        // A refused TLS 1.0/1.1 handshake is a connection error, never an HTTP status.
+        for code in [URLError.Code.timedOut, .secureConnectionFailed] {
+            StubURLProtocol.state.set { _ in throw URLError(code) }
 
-        do {
-            _ = try await transport().perform(.get("/timeout"))
-            XCTFail("Expected NetworkError")
-        } catch let error as NetworkError {
-            XCTAssertNotNil(error.underlyingError)
-        } catch {
-            XCTFail("Expected NetworkError, got \(error)")
+            do {
+                _ = try await transport().perform(.get("/timeout"))
+                XCTFail("Expected NetworkError")
+            } catch let error as NetworkError {
+                XCTAssertEqual((error.underlyingError as? URLError)?.code, code)
+            } catch {
+                XCTFail("Expected NetworkError, got \(error)")
+            }
+        }
+    }
+
+    func testInsufficientScopeIsReadFromTheWWWAuthenticateChallenge() async {
+        let challenges: [(Int, String?, String?)] = [
+            (403, #"Bearer error="insufficient_scope", scope="documents:write", resource_metadata="https://api.assinafy.com.br/.well-known/oauth-protected-resource""#, "documents:write"),
+            (403, nil, nil),
+            (401, #"Bearer error="invalid_token""#, nil),
+        ]
+        for (status, challenge, expected) in challenges {
+            StubURLProtocol.state.set { request in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: status,
+                    httpVersion: nil,
+                    headerFields: challenge.map { ["WWW-Authenticate": $0] }
+                )!
+                return (response, Data(#"{"status":\#(status),"message":"Forbidden","data":null}"#.utf8))
+            }
+
+            do {
+                _ = try await transport().perform(.get("/documents"))
+                XCTFail("Expected APIError")
+            } catch let error as APIError {
+                XCTAssertEqual(error.insufficientScope, expected, "\(status) \(challenge ?? "no challenge")")
+            } catch {
+                XCTFail("Expected APIError, got \(error)")
+            }
         }
     }
 
@@ -256,6 +328,49 @@ final class HTTPClientTests: XCTestCase {
         XCTAssertEqual(requests.last?.url?.host, "downloads.example.test")
         XCTAssertNil(requests.last?.value(forHTTPHeaderField: "X-Api-Key"))
         XCTAssertNil(requests.last?.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testOAuthTokenRequestsRefuseRedirects() async {
+        // A 307 or 308 repeats the POST body, and the refresh token in it may
+        // already be retired: the 3xx must come back as an error, unfollowed.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SameOriginRedirectURLProtocol.self]
+        configuration.timeoutIntervalForRequest = 5
+        let baseURL = URL(string: "https://sandbox.example.test/v1")!
+        let oauth = OAuthResource(
+            http: URLSessionHTTPClient(
+                baseURL: baseURL,
+                defaultHeaders: [:],
+                session: URLSession(configuration: configuration)
+            ),
+            apiBaseURL: baseURL
+        )
+        let calls: [(String, () async throws -> Void)] = [
+            ("exchange", {
+                _ = try await oauth.exchangeAuthorizationCode(.authorizationCode(
+                    code: "code-1",
+                    redirectURI: "https://app.example.invalid/oauth/callback",
+                    codeVerifier: OAuthPKCE().codeVerifier,
+                    clientId: "client-123"
+                ))
+            }),
+            ("refresh", { _ = try await oauth.refreshAccessToken(.refreshToken("rt-1", clientId: "client-123")) }),
+            ("revoke", { try await oauth.revoke(OAuthRevokePayload(token: "rt-1", clientId: "client-123")) }),
+        ]
+        for status in [307, 308] {
+            for (name, call) in calls {
+                SameOriginRedirectURLProtocol.state.reset(status: status)
+                do {
+                    try await call()
+                    XCTFail("\(name) followed a \(status)")
+                } catch let error as APIError {
+                    XCTAssertEqual(error.statusCode, status, name)
+                } catch {
+                    XCTFail("\(name): expected APIError, got \(error)")
+                }
+                XCTAssertEqual(SameOriginRedirectURLProtocol.state.requests().count, 1, "\(name) \(status)")
+            }
+        }
     }
 
     func testCrossOriginRedirectRejectsRequestBody() {

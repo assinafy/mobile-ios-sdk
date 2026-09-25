@@ -145,9 +145,9 @@ with no `client_secret`, and every `clientSecret` parameter below stays `nil`.
 | --- | --- | --- | --- |
 | `protectedResourceMetadata()` | Public | `GET {host}/.well-known/oauth-protected-resource` at the **host root**, outside `/v1` | Flat object -> `OAuthProtectedResourceMetadata` |
 | `authorizationServerMetadata(issuer:)` | Public | `GET {issuer}/.well-known/oauth-authorization-server` on the authorization server's own host | Flat object -> `OAuthAuthorizationServerMetadata` |
-| `exchangeAuthorizationCode(_:)` | Public | `POST /oauth/token`; JSON body below with `grant_type=authorization_code` | Flat object -> `OAuthTokenResponse` |
-| `refreshAccessToken(_:)` | Public | `POST /oauth/token`; JSON body below with `grant_type=refresh_token` | Flat object -> `OAuthTokenResponse` |
-| `revoke(_:)` | Public | `POST /oauth/revoke`; JSON `token`, `client_id` required, optional `token_type_hint`, `client_secret` | Empty `200`; returns `Void` |
+| `exchangeAuthorizationCode(_:)` | Public | `POST /oauth/token`; form body below with `grant_type=authorization_code` | Flat object -> `OAuthTokenResponse` |
+| `refreshAccessToken(_:)` | Public | `POST /oauth/token`; form body below with `grant_type=refresh_token` | Flat object -> `OAuthTokenResponse` |
+| `revoke(_:)` | Public | `POST /oauth/revoke`; form fields `token`, `client_id` required, optional `token_type_hint`, `client_secret` | Empty `200`; returns `Void` |
 | `userInfo()` | Account | `GET /oauth/userinfo`, presenting the OAuth access token as the bearer credential | Flat claims object -> `OAuthUserInfo` |
 
 `authorizationURL(for:)` and `OAuthAuthorizationRequest.authorizationURL(endpoint:)`
@@ -162,7 +162,7 @@ endpoint (`https://auth.assinafy.com.br/oauth/authorize`):
 | --- | --- |
 | `response_type` | Always `code` |
 | `client_id` | The registered client identifier |
-| `redirect_uri` | The registered redirect URI, matched exactly |
+| `redirect_uri` | The registered `https://` redirect URI, matched exactly |
 | `state` | 43 BASE64URL characters of CSPRNG output, single-use |
 | `code_challenge` | BASE64URL(SHA256(`code_verifier`)) |
 | `code_challenge_method` | Always `S256` |
@@ -170,33 +170,31 @@ endpoint (`https://auth.assinafy.com.br/oauth/authorize`):
 | `resource` | RFC 8707 resource indicator; omitted when `nil` |
 
 The `code_verifier` is **never** sent here. `OAuthCallback.validate(against:issuer:)`
-then checks the callback: it throws `APIError` carrying the server's `error`,
-`ValidationError` on a `state` mismatch (compared in constant time), on an `iss`
-mismatch when an issuer is supplied, or when no code is present.
+then checks the callback, `state` and `iss` first on approvals and error
+redirects alike: it throws `ValidationError` on a `state` mismatch (compared in
+constant time) or on a missing `iss` or one other than the expected issuer
+(`OAuthResource.defaultIssuer` when none is passed); then `APIError` carrying
+the server's `error`; then `ValidationError` when no code is present.
 
 ### Token request
 
-```json
-{
-  "grant_type": "authorization_code",
-  "code": "ac_7f3c1d92b4a64e08",
-  "redirect_uri": "myapp://oauth-callback",
-  "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-  "client_id": "cli_2b9e44d1",
-  "resource": "https://api.assinafy.com.br"
-}
+The body is `application/x-www-form-urlencoded`, fields sorted by name, with
+every character outside `A-Z a-z 0-9 - . _ ~` percent-encoded:
+
+```text
+client_id=cli_2b9e44d1&code=ac_7f3c1d92b4a64e08&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk&grant_type=authorization_code&redirect_uri=https%3A%2F%2Fapp.example.test%2Foauth%2Fcallback&resource=https%3A%2F%2Fapi.assinafy.com.br
 ```
 
-```json
-{
-  "grant_type": "refresh_token",
-  "refresh_token": "rt_6a2f08c5e1b74d39",
-  "client_id": "cli_2b9e44d1"
-}
+```text
+client_id=cli_2b9e44d1&grant_type=refresh_token&refresh_token=rt_6a2f08c5e1b74d39
 ```
 
 `code`, `redirect_uri`, `code_verifier`, `refresh_token`, `client_secret`, and
-`resource` are omitted when `nil`. The SDK validates locally before sending:
+`resource` are omitted when `nil`. Each request is sent once, follows no
+redirect, and is never retried: a code is single-use and expires 60 seconds
+after approval, and a retried or redirected refresh could resend a refresh token
+the first attempt already retired. A `3xx` answer throws `APIError` carrying
+that status. The SDK validates locally before sending:
 `client_id` must be non-blank; the authorization-code grant requires a non-blank
 `code` and `redirect_uri` and a `code_verifier` of 43–128 characters; the
 refresh grant requires a non-blank `refresh_token`. Any other `grant_type` is
@@ -216,22 +214,36 @@ rejected as `ValidationError`.
 ```
 
 `refresh_token` is present only when `offline_access` was requested **and**
-consented. `id_token` is present only when `openid` was granted. `scope` lists
-the access token's scopes and never contains `offline_access`, which is a
-request-time signal rather than a permission. `OAuthTokenResponse` adds
-`issuedAt` (decode time), `expiresAt`, `scopes`, and `isExpired(leeway:)`,
-defaulting to 60 seconds of headroom.
+consented. `id_token` is present only when `openid` was granted; the SDK does
+not validate it. `scope` lists the access token's scopes and never contains
+`offline_access`, which is a request-time signal rather than a permission, so
+whether a refresh token was issued is read from `refresh_token`, never `scope`.
+`OAuthTokenResponse` adds `issuedAt` (decode time), `expiresAt`, `scopes`, and
+`isExpired(leeway:)`, defaulting to 60 seconds of headroom.
+
+Every refresh returns a new `refresh_token`, valid for a fresh 30 days, and
+retires the one sent; a connection expires only after 30 days without a
+refresh. `refreshAccessToken(_:)` throws `AssinafySDKError` when a successful
+response carries no `refresh_token`, a blank one, or the one sent. Persist the
+new refresh token before using the response, and never send a retired one:
+reuse ends the whole connection. Refresh one at a time per connection.
+
+A refresh that fails without an OAuth error — a timeout, lost connection,
+cancellation, `3xx`, `5xx`, or a response without a new refresh token — may
+still have retired the token sent. Continue only with a different refresh token
+saved since; if the stored one is still the token sent, never send it again and
+ask the user to connect again. Only a `NetworkError` whose underlying `URLError`
+code is `cannotFindHost`, `dnsLookupFailed`, `cannotConnectToHost`,
+`secureConnectionFailed`, or a `serverCertificate…` code shows that the request
+never left, so only that failure is safe to retry.
 
 ### Revocation request
 
-```json
-{
-  "token": "at_9d41c7be20f5486a",
-  "token_type_hint": "access_token",
-  "client_id": "cli_2b9e44d1"
-}
+```text
+client_id=cli_2b9e44d1&token=rt_6a2f08c5e1b74d39&token_type_hint=refresh_token
 ```
 
+Revoke the refresh token saved last; every earlier one is already retired.
 Every token outcome answers `200` — revoked, already revoked, unknown, or
 malformed — so the endpoint cannot reveal whether a token exists. Only failed
 client authentication answers `401 invalid_client`.
@@ -302,7 +314,10 @@ The authorization server's own document does list it.
 
 An OAuth token cannot reach billing, account lifecycle, credential management,
 or admin surfaces regardless of its scopes. A missing scope answers `403` with
-`WWW-Authenticate: Bearer error="insufficient_scope"` naming it.
+`WWW-Authenticate: Bearer error="insufficient_scope", scope="…"`;
+`APIError.insufficientScope` returns that scope, to request when the user
+connects again. It is `nil` for a `403` without the challenge (another
+workspace, the user's role, or an area OAuth tokens never reach).
 
 ### Error surface
 
@@ -311,7 +326,7 @@ Failures are flat, not enveloped. `APIError.oauthError` exposes them as
 
 | Status | `error` | Cause |
 | --- | --- | --- |
-| `400` | `invalid_grant` | Bad, expired, replayed, or wrong-client code; a `code_verifier` outside the 43–128 unreserved-character grammar; `redirect_uri` mismatch; a refresh token whose authorization no longer includes `offline_access` |
+| `400` | `invalid_grant` | Bad, expired, replayed, or wrong-client code; a `code_verifier` outside the 43–128 unreserved-character grammar; `redirect_uri` mismatch; a refresh token already used, expired, or revoked, or issued before the user approved the app again with different permissions. On a refresh the connection is over: ask the user to connect again |
 | `400` | `invalid_target` | A `resource` this server does not issue tokens for, or one disagreeing with the authorized value |
 | `400` | `unsupported_grant_type` | A grant type the server does not implement |
 | `401` | `invalid_client` | Unknown or disabled client, or failed client authentication. The description never reveals whether the `client_id` exists |
@@ -846,7 +861,8 @@ channel was used. The four verification counters add to `signature_requests`.
   `created_at: date-time`. Swift callers receive lossless `payloadJSON` and
   `originJSON` values. The `payload` and `origin` properties are compatibility
   strings produced by `JSONValue.stringValue`.
-- `DocumentVerification`: `hash: string`, `id?: string`, `status?: string`,
+- `DocumentVerification`: `hash: string`, `id?: string`,
+  `agreement_code?: string` (printed on the document certificate), `status?: string`,
   `page_count?: string`, `signer_count?: string`, `completed_count?: integer`,
   `completed_at?: date-time`, `verified_at: date-time`, `is_valid: boolean`,
   `message: string`. Unknown or invalid hashes return `is_valid: false` with
@@ -1077,7 +1093,8 @@ the operations marked Public or Signer in the tables above.
 
 `HTTPClientProtocol.perform(_:)` is the public transport seam. The built-in
 `URLSessionHTTPClient(baseURL:defaultHeaders:timeout:)` uses an ephemeral
-session with cookies and URL caching disabled. Its initializer validates an
+session with cookies and URL caching disabled that requires TLS 1.2 or newer.
+It never retries a request. Its initializer validates an
 absolute HTTPS base URL without credentials/query/fragment and a finite,
 positive timeout. `perform(_:)` resolves the request path against that base,
 applies the default headers — withholding `Authorization` and `X-Api-Key`
@@ -1107,6 +1124,10 @@ For accepted cross-origin redirects the transport preserves only `Accept`,
 `X-Api-Key`, `Cookie`, and every unknown custom header. HTTP downgrades,
 credential-bearing destination URLs, and cross-origin body redirects are
 refused.
+
+`POST /oauth/token` and `POST /oauth/revoke` bypass this policy and refuse
+every redirect, because their body carries a code or token: the `3xx` itself
+becomes the response and is thrown as `APIError`.
 
 ## Errors
 
@@ -1197,7 +1218,7 @@ surfaced as `APIError`.
 
 | Swift error | When thrown | Important properties | `NSError` bridge |
 | --- | --- | --- | --- |
-| `APIError` | Non-2xx HTTP, or a response envelope whose `status` is outside 200...299 | `statusCode`, `message`, raw `responseData`, `context`, `workspaceDeletionRestrictions` | Domain `ASFErrorDomain.api`; code is HTTP status; `userInfo["responseData"]` when present. |
+| `APIError` | Non-2xx HTTP, or a response envelope whose `status` is outside 200...299 | `statusCode`, `message`, raw `responseData`, `context`, `workspaceDeletionRestrictions`, `oauthError`, `insufficientScope` | Domain `ASFErrorDomain.api`; code is HTTP status; `userInfo["responseData"]`, the raw `WWW-Authenticate` challenge as `userInfo["wwwAuthenticate"]`, and the scope a `403` `insufficient_scope` challenge names as `userInfo["insufficientScope"]`, each when present. |
 | `ValidationError` | Invalid local configuration, identifier, account resolution, payload, PDF/PNG bytes, or helper option | `message`, field-level `errors`, `context` | Domain `ASFErrorDomain.validation`; code `422`; `userInfo["errors"]`. |
 | `NetworkError` | URL loading failed before a valid HTTP response, or response was not HTTP | `message`, `underlyingError` | Domain `ASFErrorDomain.network`; code is the underlying `URLError.Code`, otherwise `notConnectedToInternet`; includes `NSUnderlyingErrorKey`. |
 | `AssinafySDKError` | Missing/undecodable success data, polling timeout/terminal state, failed post-delivery lookup, or another SDK contract failure | `message`, structured `context`, `underlyingError` | Domain `ASFErrorDomain.sdk`; code `-1`; context is merged into `userInfo`; includes `NSUnderlyingErrorKey` when present. |

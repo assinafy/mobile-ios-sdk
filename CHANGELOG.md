@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased]
+
+## [1.8.0] - 2026-09-25
+
+### Added
+- `DocumentVerification.agreementCode` exposes the `agreement_code` printed on the document
+  certificate, with an `init(signatureHash:id:agreementCode:status:…)` initializer alongside the
+  existing one.
+- `APIError.insufficientScope` returns the scope named by a `403`
+  `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` challenge, so an app can ask the
+  user to connect again with that scope added.
+- An `APIError` bridged to `NSError` carries `userInfo["insufficientScope"]` and the raw challenge
+  as `userInfo["wwwAuthenticate"]`, so Objective-C callers can read the missing scope.
+
+### Changed
+- `POST /oauth/token` and `POST /oauth/revoke` send `application/x-www-form-urlencoded` bodies, the
+  encoding RFC 6749 and RFC 7009 define.
+- `refreshAccessToken(_:)` throws `AssinafySDKError` when a successful response carries no new
+  refresh token, a blank one, or the one sent: the token sent is retired either way.
+
+### Security
+- `OAuthCallback.validate(against:issuer:)` checks `state` and `iss` before anything else, on error
+  redirects too, so a forged `error=` redirect is rejected rather than reported as the user's
+  decision. Without an `issuer:` argument it checks `iss` against `OAuthResource.defaultIssuer`,
+  and a callback without `iss` is rejected.
+- `POST /oauth/token` and `POST /oauth/revoke` follow no redirect: a `3xx` throws `APIError` rather
+  than sending the code or token again.
+
+### Documentation
+- The OAuth refresh example saves the renewed tokens first, builds a new client from the new access
+  token, and revokes the refresh token saved last. After a refresh fails without an OAuth error, a
+  saved refresh token that is still the one sent is never sent again: the user connects again.
+  Only failures before the request left — DNS, a refused connection, the TLS handshake — are safe
+  to retry.
+
 ## [1.7.1] - 2026-09-25
 
 ### Security

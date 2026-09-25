@@ -277,6 +277,7 @@ final class DocumentResourceTests: XCTestCase {
         mock.stubEnvelope([
             "hash": "hash-1",
             "id": "doc1",
+            "agreement_code": "550E8400-E29B-41D4-A716-446655440000",
             "status": "certificated",
             "page_count": "2",
             "signer_count": "3",
@@ -289,6 +290,7 @@ final class DocumentResourceTests: XCTestCase {
         let result = try await resource.verifyDetails(signatureHash: "hash-1")
         XCTAssertEqual(result.signatureHash, "hash-1")
         XCTAssertEqual(result.id, "doc1")
+        XCTAssertEqual(result.agreementCode, "550E8400-E29B-41D4-A716-446655440000")
         XCTAssertEqual(result.status, "certificated")
         XCTAssertEqual(result.pageCount, "2")
         XCTAssertEqual(result.signerCount, "3")

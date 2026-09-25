@@ -58,7 +58,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.7.1"
+        from: "1.8.0"
     ),
 ],
 targets: [
@@ -177,9 +177,12 @@ extraído dele.
 
 Passe `OAuthScope.webhooksWrite` pelo inicializador `scopeStrings` de `OAuthAuthorizationRequest` ao solicitar acesso a webhooks.
 
-Pedir um escopo que o usuário recuse não é erro: o token volta sem ele, e a primeira chamada que
-precisar dele responde `403` com o header `WWW-Authenticate: Bearer error="insufficient_scope"`
-nomeando o que falta.
+O usuário aprova tudo o que foi pedido ou nada: peça o mínimo e leia `scope` na resposta do token
+para saber o que foi concedido. Uma chamada sem o escopo que exige responde `403` com
+`WWW-Authenticate: Bearer error="insufficient_scope", scope="…"`, e `APIError.insufficientScope`
+devolve esse escopo: peça ao usuário para conectar de novo incluindo-o, porque repetir a chamada não
+resolve. Um `403` sem esse desafio indica outro workspace, o papel do próprio usuário ou uma área que
+tokens OAuth nunca alcançam.
 
 ### 1. Descubra o servidor de autorização
 
@@ -199,7 +202,7 @@ públicas e não carregam credencial alguma.
 ```swift
 let pedido = OAuthAuthorizationRequest(
     clientId: clientId,
-    redirectURI: "meuapp://oauth-callback",
+    redirectURI: "https://meuapp.exemplo.invalid/oauth/callback",
     scopes: [.documentsRead, .documentsWrite, .offlineAccess],
     resource: recurso.resource
 )
@@ -211,7 +214,11 @@ let url = pedido.authorizationURL(endpoint: servidor.authorizationEndpoint)!
 memória** até a troca do código: ele carrega o `codeVerifier`, que nunca vai para a URL, para o
 disco ou para um log.
 
-Abra `url` numa `ASWebAuthenticationSession`.
+O `redirectURI` precisa ser um endereço `https://` cadastrado na aplicação, idêntico caractere a
+caractere: a Assinafy não aceita esquema próprio (`meuapp://`) nem `http://localhost`. Abra `url`
+numa `ASWebAuthenticationSession`; no iOS 17.4+ e no macOS 14.4+, `callback: .https(host:path:)`
+recebe o retorno num host dos domínios associados do app. Em versões anteriores, a página `https://`
+cadastrada pode repassar o retorno inteiro para o esquema próprio do app.
 
 ### 3. Verifique o retorno
 
@@ -220,9 +227,11 @@ let codigo = try OAuthCallback(callbackURL: callbackURL)!
     .validate(against: pedido, issuer: servidor.issuer)
 ```
 
-`validate(against:issuer:)` recusa um retorno em que o servidor relatou erro, compara o `state` em
-tempo constante e confere o parâmetro `iss` (RFC 9207). Um `state` divergente significa que o
-redirect não veio do fluxo que este app iniciou, e o código é descartado sem ser trocado.
+`validate(against:issuer:)` confere antes de tudo o `state`, em tempo constante, e o parâmetro `iss`
+(RFC 9207) — tanto na aprovação quanto num retorno de erro. Um `state` ou `iss` divergente significa
+que o redirect não veio do fluxo que este app iniciou, e nada nele é usado. Só então o método lança o
+erro relatado pelo servidor (`access_denied`, `invalid_scope`, …) ou devolve o código. Sem `issuer:`,
+o `iss` é comparado com `OAuthResource.defaultIssuer`.
 
 ### 4. Troque o código por um token
 
@@ -237,28 +246,70 @@ let token = try await client.oauth.exchangeAuthorizationCode(
     )
 )
 
-let clienteDoUsuario = AssinafyClient(token: token.accessToken)
+var clienteDoUsuario = AssinafyClient(token: token.accessToken)
+let workspaceId = try await clienteDoUsuario.workspaces.list().data[0].id
 ```
+
+O código vale uma única vez e expira 60 segundos depois da aprovação: troque-o na hora e, se a troca
+falhar, comece uma nova autorização — o SDK nunca repete a requisição. Com um token OAuth,
+`workspaces.list()` devolve exatamente o workspace que o usuário escolheu. Guarde `workspaceId` junto
+dos tokens e use-o como `defaultAccountId` ou `accountId:`: uma conexão vale para um único
+workspace, e qualquer outro responde `403`, mesmo que o usuário pertença a ele.
 
 ### 5. Renove e revogue
 
 ```swift
-if token.isExpired(), let refresh = token.refreshToken {
-    let novo = try await client.oauth.refreshAccessToken(
-        .refreshToken(refresh, clientId: clientId)
-    )
-}
+// Grave os tokens assim que chegarem, junto de `workspaceId`.
+try gravarTokens(token)
 
-// No logout:
-try await client.oauth.revoke(
-    OAuthRevokePayload(token: token.accessToken, clientId: clientId)
+// Quando o access token expirar, ou uma chamada responder 401: envie o último refresh token gravado.
+let enviado = try refreshTokenGravado()
+let novo = try await client.oauth.refreshAccessToken(
+    .refreshToken(enviado, clientId: clientId)
 )
+try gravarTokens(novo)   // antes de tudo: `enviado` já está aposentado
+clienteDoUsuario = AssinafyClient(token: novo.accessToken, defaultAccountId: workspaceId)
+
+// Quando o usuário desconectar: revogue o último refresh token gravado e apague os tokens.
+let ultimo = try refreshTokenGravado()
+try await client.oauth.revoke(OAuthRevokePayload(token: ultimo, clientId: clientId))
+try apagarTokens()
 ```
 
+`gravarTokens`, `refreshTokenGravado` e `apagarTokens` representam o armazenamento do próprio app
+no Keychain. Um cliente guarda o token com que foi criado, então crie um novo a cada access token
+renovado.
+
 `refreshToken` só existe quando `offline_access` foi pedido **e** consentido; sem ele, conduza o
-usuário pelo fluxo de autorização novamente. A revogação sempre responde `200` para qualquer
-desfecho de token — inclusive um token inexistente, já revogado ou malformado — de modo que o
-endpoint não possa ser usado para descobrir se um token existe.
+usuário pelo fluxo de autorização novamente quando o access token expirar, e revogue o access token
+quando ele desconectar.
+
+Cada renovação devolve um **novo** `refreshToken` e aposenta o enviado, e reutilizar um refresh
+token aposentado encerra a conexão inteira: todos os tokens param de funcionar e o usuário precisa
+conectar de novo. Por isso, grave os novos tokens antes de fazer qualquer outra coisa com a
+resposta, envie sempre o último refresh token gravado e faça uma renovação por vez em cada conexão.
+Uma resposta de sucesso sem um novo refresh token lança `AssinafySDKError`. O SDK envia cada
+requisição de token uma única vez e não segue redirects: um `3xx` chega como `APIError`.
+
+**Quando uma renovação falha sem um erro OAuth** — timeout, conexão perdida, cancelamento, `3xx` ou
+`5xx`, resposta sem novo refresh token —, o servidor pode já ter aposentado o token enviado, porque
+uma resposta perdida é indistinguível de uma requisição que nunca chegou. Releia o refresh token
+gravado e só continue se um token *diferente* tiver sido gravado desde então. Se ainda for o token
+enviado, nunca o envie de novo: peça ao usuário para conectar de novo. Só podem ser repetidas as
+falhas que comprovadamente aconteceram antes de a requisição sair: um `NetworkError` cujo
+`underlyingError` é um `URLError` com código `.cannotFindHost`, `.dnsLookupFailed`,
+`.cannotConnectToHost`, `.secureConnectionFailed` ou um dos códigos `.serverCertificate…`.
+
+Um refresh token vale **30 dias**, e cada renovação devolve um novo com mais 30 dias: a conexão só
+expira se o app passar 30 dias sem renovar. Um `401` da API significa token expirado ou revogado:
+renove uma vez e, se falhar, peça ao usuário para conectar de novo. `invalid_grant` na renovação
+significa que a conexão acabou (token já usado ou expirado, acesso revogado, ou nova aprovação com
+outras permissões) — peça para conectar de novo em vez de repetir.
+
+Ao desconectar, revogue o último refresh token gravado (ou o access token, quando não houver um):
+todos os anteriores já estão aposentados. A revogação sempre responde `200` para qualquer desfecho
+de token — inclusive um token inexistente, já revogado ou malformado — de modo que o endpoint não
+possa ser usado para descobrir se um token existe.
 
 ### Quem é o usuário
 
@@ -710,9 +761,11 @@ do {
 As requisições passam por uma `URLSession` efêmera com cookies e cache de URL desligados, de modo
 que o SDK não grava credencial nem resposta em disco.
 
-Redirects são restritos. Redirects de mesma origem são seguidos sem alteração. Um redirect para
-outra origem só é aceito quando é HTTPS, o método é `GET` ou `HEAD` e não há corpo — o que cobre
-downloads de artefatos servidos por outro host. Nesse redirect sobrevivem apenas `Accept`,
+Redirects são restritos. `POST /oauth/token` e `POST /oauth/revoke` não seguem nenhum: o corpo
+carrega um código ou token, então um `3xx` chega como `APIError` em vez de enviá-lo de novo. Os
+demais redirects de mesma origem são seguidos sem alteração. Um redirect para outra origem só é
+aceito quando é HTTPS, o método é `GET` ou `HEAD` e não há corpo — o que cobre downloads de
+artefatos servidos por outro host. Nesse redirect sobrevivem apenas `Accept`,
 `Accept-Encoding`, `Accept-Language`, `Range`, `If-Range` e `User-Agent`; `Authorization`,
 `X-Api-Key`, `Cookie` e todo header desconhecido são removidos. Downgrades para HTTP, URLs de
 destino com informação de usuário e redirects para outra origem carregando corpo são recusados de
@@ -743,7 +796,15 @@ ASFAssinafyClient *client = [[ASFAssinafyClient alloc]
 Erros Swift fazem bridge para `NSError` sob os domínios de `ASFErrorDomain`. `code` carrega o
 status HTTP em `APIError`, `422` em `ValidationError`, o código de `URLError` em `NetworkError` e
 `-1` em `AssinafySDKError`; os detalhes chegam em `userInfo` sob `responseData`, `errors` e
-`NSUnderlyingErrorKey`.
+`NSUnderlyingErrorKey`. Um `APIError` também traz o desafio `WWW-Authenticate` bruto sob
+`wwwAuthenticate` e, num `403` `insufficient_scope`, o escopo que falta sob `insufficientScope`:
+
+```objc
+NSString *escopo = error.userInfo[@"insufficientScope"];
+if (escopo != nil) {
+    // Peça ao usuário para conectar de novo, solicitando também `escopo`.
+}
+```
 
 ## Mapa de recursos
 

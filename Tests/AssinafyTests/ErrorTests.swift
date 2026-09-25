@@ -19,6 +19,26 @@ final class ErrorTests: XCTestCase {
         XCTAssertEqual(nsError.localizedDescription, "Bad request")
     }
 
+    func testAPIErrorBridgesTheWWWAuthenticateChallengeToNSError() {
+        // Objective-C reads the missing scope from userInfo, not the Swift property.
+        let challenge = #"Bearer error="insufficient_scope", scope="documents:write""#
+        var forbidden = APIError(statusCode: 403, message: "Forbidden")
+        forbidden.wwwAuthenticate = challenge
+        var info = (forbidden as NSError).userInfo
+        XCTAssertEqual(info["insufficientScope"] as? String, "documents:write")
+        XCTAssertEqual(info["wwwAuthenticate"] as? String, challenge)
+
+        var unauthorized = APIError(statusCode: 401, message: "Unauthorized")
+        unauthorized.wwwAuthenticate = #"Bearer error="invalid_token""#
+        info = (unauthorized as NSError).userInfo
+        XCTAssertNil(info["insufficientScope"])
+        XCTAssertEqual(info["wwwAuthenticate"] as? String, #"Bearer error="invalid_token""#)
+
+        info = (APIError(statusCode: 403, message: "Forbidden") as NSError).userInfo
+        XCTAssertNil(info["insufficientScope"])
+        XCTAssertNil(info["wwwAuthenticate"])
+    }
+
     func testWorkspaceDeletionRestrictionsAreTyped() {
         let error = APIError(
             statusCode: 400,

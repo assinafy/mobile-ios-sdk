@@ -16,10 +16,13 @@ final class OAuthResourceTests: XCTestCase {
         )
     }
 
+    /// Decodes the `application/x-www-form-urlencoded` body the `/oauth` routes send.
     private func body(_ request: APIRequest?) -> [String: Any] {
-        guard let data = request?.body,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
-        return json
+        var form = URLComponents()
+        form.percentEncodedQuery = request?.body.flatMap { String(data: $0, encoding: .utf8) }
+        var fields: [String: Any] = [:]
+        for item in form.queryItems ?? [] { fields[item.name] = item.value }
+        return fields
     }
 
     private func makeRequest(
@@ -113,6 +116,7 @@ final class OAuthResourceTests: XCTestCase {
         let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
         let code = try callback.validate(against: request, issuer: "https://auth.assinafy.com.br")
         XCTAssertEqual(code, "abc123")
+        XCTAssertEqual(try callback.validate(against: request), "abc123", "nil checks the production issuer")
     }
 
     func testCallbackRejectsMismatchedState() throws {
@@ -132,20 +136,35 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertThrowsError(try callback.validate(against: request))
     }
 
-    func testCallbackRejectsMismatchedIssuer() throws {
+    func testCallbackRejectsMismatchedOrMissingIssuer() throws {
         let request = makeRequest()
-        let url = URL(string: "myapp://oauth-callback?code=abc&state=\(request.state)&iss=https://evil.example")!
-        let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
-        XCTAssertThrowsError(
-            try callback.validate(against: request, issuer: "https://auth.assinafy.com.br")
-        )
-        // Without an expected issuer the same callback verifies on state alone.
-        XCTAssertEqual(try callback.validate(against: request), "abc")
+        for query in ["code=abc&state=\(request.state)&iss=https://evil.example", "code=abc&state=\(request.state)"] {
+            let callback = try XCTUnwrap(OAuthCallback(callbackURL: URL(string: "myapp://oauth-callback?\(query)")!))
+            XCTAssertThrowsError(
+                try callback.validate(against: request, issuer: "https://auth.assinafy.com.br")
+            )
+            XCTAssertThrowsError(try callback.validate(against: request), "nil still checks `iss`")
+        }
+    }
+
+    func testErrorCallbackIsCheckedForStateAndIssuerFirst() throws {
+        // An `error=` redirect that fails `state` or `iss` is not this app's to act on.
+        let request = makeRequest()
+        for query in [
+            "error=access_denied&state=forged&iss=https://auth.assinafy.com.br",
+            "error=access_denied&state=\(request.state)&iss=https://evil.example",
+            "error=access_denied&state=\(request.state)",
+        ] {
+            let callback = try XCTUnwrap(OAuthCallback(callbackURL: URL(string: "myapp://oauth-callback?\(query)")!))
+            XCTAssertThrowsError(try callback.validate(against: request)) { error in
+                XCTAssertTrue(error is ValidationError, "\(query) got \(type(of: error))")
+            }
+        }
     }
 
     func testCallbackSurfacesServerReportedError() throws {
         let request = makeRequest()
-        let url = URL(string: "myapp://oauth-callback?error=access_denied&error_description=User%20declined&state=\(request.state)")!
+        let url = URL(string: "myapp://oauth-callback?error=access_denied&error_description=User%20declined&state=\(request.state)&iss=https://auth.assinafy.com.br")!
         let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
         XCTAssertThrowsError(try callback.validate(against: request)) { error in
             guard let apiError = error as? APIError else {
@@ -158,7 +177,7 @@ final class OAuthResourceTests: XCTestCase {
 
     func testCallbackWithoutCodeOrErrorIsRejected() throws {
         let request = makeRequest()
-        let url = URL(string: "myapp://oauth-callback?state=\(request.state)")!
+        let url = URL(string: "myapp://oauth-callback?state=\(request.state)&iss=https://auth.assinafy.com.br")!
         let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
         XCTAssertThrowsError(try callback.validate(against: request))
     }
@@ -188,6 +207,7 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.method, .post)
         XCTAssertEqual(mock.lastRequest?.path, "/oauth/token")
         XCTAssertEqual(mock.lastRequest?.credential, .withheld)
+        XCTAssertEqual(mock.lastRequest?.contentType, "application/x-www-form-urlencoded")
         let sent = body(mock.lastRequest)
         XCTAssertEqual(sent["grant_type"] as? String, "authorization_code")
         XCTAssertEqual(sent["code"] as? String, "code-1")
@@ -240,9 +260,14 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertFalse(token.isExpired(leeway: 0))
     }
 
-    func testRefreshAccessTokenPostsRefreshGrant() async throws {
-        mock.stubJSON(["access_token": "at-2", "token_type": "Bearer", "expires_in": 3600])
-        _ = try await oauth.refreshAccessToken(
+    func testRefreshAccessTokenPostsRefreshGrantAndReturnsTheRotatedToken() async throws {
+        mock.stubJSON([
+            "access_token": "at-2",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "refresh_token": "rt-2",
+        ])
+        let renewed = try await oauth.refreshAccessToken(
             .refreshToken("rt-1", clientId: "client-123")
         )
         XCTAssertEqual(mock.lastRequest?.path, "/oauth/token")
@@ -251,6 +276,54 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertEqual(sent["refresh_token"] as? String, "rt-1")
         XCTAssertNil(sent["code"])
         XCTAssertNil(sent["code_verifier"])
+        XCTAssertNil(sent["client_secret"], "a public client must not send a secret")
+        XCTAssertEqual(renewed.refreshToken, "rt-2", "the caller must receive the replacement to persist")
+    }
+
+    func testRefreshWithoutANewRefreshTokenIsAContractError() async {
+        // The token sent is retired either way, so a "success" that does not
+        // replace it leaves nothing the caller may send next.
+        for replacement: String? in [nil, "", "  ", "rt-1"] {
+            var response: [String: Any] = ["access_token": "at-2", "token_type": "Bearer", "expires_in": 3600]
+            response["refresh_token"] = replacement
+            mock.stubJSON(response)
+            do {
+                _ = try await oauth.refreshAccessToken(.refreshToken("rt-1", clientId: "client-123"))
+                XCTFail("Expected AssinafySDKError for refresh_token \(replacement.debugDescription)")
+            } catch let error as AssinafySDKError {
+                XCTAssertFalse(error.message.contains("rt-1"), "token values stay out of messages")
+                XCTAssertFalse(error.message.contains("at-2"), "token values stay out of messages")
+            } catch {
+                XCTFail("Expected AssinafySDKError, got \(type(of: error))")
+            }
+        }
+        XCTAssertEqual(mock.allRequests.count, 4, "each refresh is sent once")
+    }
+
+    func testTokenBodyPercentEncodesEverythingOutsideTheUnreservedSet() async throws {
+        mock.stubJSON(["access_token": "at-2", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "rt-2"])
+        _ = try await oauth.refreshAccessToken(
+            .refreshToken("rt+1/2=&x", clientId: "client-123", resource: "https://api.assinafy.com.br")
+        )
+        XCTAssertEqual(
+            mock.lastRequest?.body.flatMap { String(data: $0, encoding: .utf8) },
+            "client_id=client-123&grant_type=refresh_token&refresh_token=rt%2B1%2F2%3D%26x"
+                + "&resource=https%3A%2F%2Fapi.assinafy.com.br"
+        )
+    }
+
+    func testTokenCallsAreSentOnceAndNeverRetried() async {
+        // A retried refresh would resend a refresh token the first attempt may
+        // already have retired, which ends the whole connection.
+        mock.stub(error: NetworkError("timed out", underlyingError: URLError(.timedOut)))
+        mock.stubJSON(["access_token": "at-2", "token_type": "Bearer", "expires_in": 3600])
+        do {
+            _ = try await oauth.refreshAccessToken(.refreshToken("rt-1", clientId: "client-123"))
+            XCTFail("Expected NetworkError")
+        } catch {
+            XCTAssertTrue(error is NetworkError, "got \(type(of: error))")
+        }
+        XCTAssertEqual(mock.allRequests.count, 1)
     }
 
     func testTokenPayloadValidationRejectsIncompleteGrants() async {
@@ -307,6 +380,7 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.method, .post)
         XCTAssertEqual(mock.lastRequest?.path, "/oauth/revoke")
         XCTAssertEqual(mock.lastRequest?.credential, .withheld)
+        XCTAssertEqual(mock.lastRequest?.contentType, "application/x-www-form-urlencoded")
         let sent = body(mock.lastRequest)
         XCTAssertEqual(sent["token"] as? String, "at-1")
         XCTAssertEqual(sent["client_id"] as? String, "client-123")

@@ -20,7 +20,10 @@ public protocol AssinafyErrorProtocol: Error {
 /// `NSError.code` contains the HTTP status for API errors, `422` for local
 /// validation, the underlying `URLError.Code` for network failures, or `-1`
 /// for SDK contract errors. Details are available in `userInfo` under
-/// `responseData`, `errors`, and `NSUnderlyingErrorKey` as applicable.
+/// `responseData`, `errors`, and `NSUnderlyingErrorKey` as applicable. An
+/// API error adds `wwwAuthenticate`, the response's raw `WWW-Authenticate`
+/// challenge, and `insufficientScope`, the scope a `403` challenge names
+/// (``APIError/insufficientScope``), when present.
 @objc public final class ASFErrorDomain: NSObject {
     @objc public static let api        = "com.assinafy.sdk.APIError"
     @objc public static let validation = "com.assinafy.sdk.ValidationError"
@@ -73,6 +76,9 @@ public struct APIError: AssinafyErrorProtocol, LocalizedError {
     public let message: String
     /// The raw response data, if available.
     public let responseData: Any?
+    /// The response's `WWW-Authenticate` challenge, read through ``insufficientScope``
+    /// and bridged to `NSError` as `userInfo["wwwAuthenticate"]`.
+    var wwwAuthenticate: String?
 
     public var context: [String: Any] {
         ["statusCode": statusCode, "responseData": responseData as Any]
@@ -131,6 +137,8 @@ extension APIError: CustomNSError {
     public var errorUserInfo: [String: Any] {
         var info: [String: Any] = [NSLocalizedDescriptionKey: message]
         if let data = responseData { info["responseData"] = data }
+        if let challenge = wwwAuthenticate { info["wwwAuthenticate"] = challenge }
+        if let scope = insufficientScope { info["insufficientScope"] = scope }
         return info
     }
 }

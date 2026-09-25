@@ -45,6 +45,12 @@ public struct APIRequest: Sendable {
     public let contentType: String
     /// The credential class of this request. Defaults to ``Credential/workspace``.
     public let credential: Credential
+    /// `false` for a request that must reach the server at most once, such as
+    /// the OAuth token and revocation requests: a `307` or `308` repeats the
+    /// body, and with it a refresh token the first attempt may have retired.
+    /// `URLSessionHTTPClient` then refuses every redirect and throws the `3xx`
+    /// as an ``APIError``.
+    var followsRedirects = true
 
     /// Creates an HTTP request.
     /// - Parameters:
@@ -100,7 +106,7 @@ public struct APIRequest: Sendable {
     /// `security: [signerAccessCode]`, so a client configured with an API key
     /// or bearer token never transmits it to a route that cannot use it.
     public func withoutWorkspaceCredential() -> APIRequest {
-        APIRequest(
+        var copy = APIRequest(
             method: method,
             path: path,
             queryItems: queryItems,
@@ -108,6 +114,8 @@ public struct APIRequest: Sendable {
             contentType: contentType,
             credential: .withheld
         )
+        copy.followsRedirects = followsRedirects
+        return copy
     }
 
     /// Creates a GET request for `path` with optional query parameters.
@@ -297,7 +305,10 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: urlRequest, delegate: self)
+            (data, response) = try await session.data(
+                for: urlRequest,
+                delegate: request.followsRedirects ? self : RedirectRefusal()
+            )
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch let error as URLError {
@@ -318,7 +329,9 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
             } else {
                 parsed = String(data: data, encoding: .utf8)
             }
-            throw APIError.from(statusCode: httpResponse.statusCode, responseData: parsed)
+            var error = APIError.from(statusCode: httpResponse.statusCode, responseData: parsed)
+            error.wwwAuthenticate = httpResponse.value(forHTTPHeaderField: "WWW-Authenticate")
+            throw error
         }
         return APIResponse(
             data: data,
@@ -429,6 +442,20 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         return request
     }
 
+}
+
+/// The task delegate of a request whose ``APIRequest/followsRedirects`` is
+/// `false`. Refusing the redirect makes the `3xx` itself the response.
+private final class RedirectRefusal: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
 }
 
 private func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {

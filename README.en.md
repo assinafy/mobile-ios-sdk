@@ -54,7 +54,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.7.1"
+        from: "1.8.0"
     ),
 ],
 targets: [
@@ -179,9 +179,12 @@ bundle can be extracted from it.
 
 Pass `OAuthScope.webhooksWrite` through `OAuthAuthorizationRequest`'s `scopeStrings` initializer when requesting webhook access.
 
-Requesting a scope the user declines is not an error: the token comes back without it, and the
-first call that needs it answers `403` with a `WWW-Authenticate: Bearer
-error="insufficient_scope"` header naming what is missing.
+The user approves everything requested, or nothing: request the minimum, and read `scope` in the
+token response for what was granted. A call made without the scope it needs answers `403` with
+`WWW-Authenticate: Bearer error="insufficient_scope", scope="…"`, and `APIError.insufficientScope`
+returns that scope: ask the user to connect again with it added, because retrying cannot succeed. A
+`403` without that challenge means another workspace, the user's own role, or an area OAuth tokens
+never reach.
 
 ### 1. Discover the authorization server
 
@@ -201,7 +204,7 @@ carry no credential.
 ```swift
 let request = OAuthAuthorizationRequest(
     clientId: clientId,
-    redirectURI: "myapp://oauth-callback",
+    redirectURI: "https://myapp.example.invalid/oauth/callback",
     scopes: [.documentsRead, .documentsWrite, .offlineAccess],
     resource: resource.resource
 )
@@ -213,7 +216,11 @@ let url = request.authorizationURL(endpoint: server.authorizationEndpoint)!
 `request` in memory** until the code is exchanged: it holds the `codeVerifier`, which never goes
 into the URL, onto disk, or into a log.
 
-Open `url` in an `ASWebAuthenticationSession`.
+The `redirectURI` must be an `https://` address registered for the application, matched character
+for character: Assinafy accepts no custom scheme (`myapp://`) and no `http://localhost`. Open `url`
+in an `ASWebAuthenticationSession`; on iOS 17.4+ and macOS 14.4+, `callback: .https(host:path:)`
+receives the redirect on a host in the app's associated domains. On earlier versions, the registered
+`https://` page can forward the whole redirect to the app's custom scheme.
 
 ### 3. Verify the callback
 
@@ -222,9 +229,11 @@ let code = try OAuthCallback(callbackURL: callbackURL)!
     .validate(against: request, issuer: server.issuer)
 ```
 
-`validate(against:issuer:)` rejects a callback where the server reported an error, compares
-`state` in constant time, and checks the RFC 9207 `iss` parameter. A mismatched `state` means the
-redirect did not come from the flow this app started, so the code is discarded unexchanged.
+`validate(against:issuer:)` checks `state`, in constant time, and the RFC 9207 `iss` parameter
+before anything else — on an approval and an error redirect alike. A mismatched `state` or `iss`
+means the redirect did not come from the flow this app started, and nothing in it is used. Only then
+does it throw the server's reported error (`access_denied`, `invalid_scope`, …) or return the code.
+Without `issuer:`, `iss` is checked against `OAuthResource.defaultIssuer`.
 
 ### 4. Exchange the code for a token
 
@@ -239,28 +248,71 @@ let token = try await client.oauth.exchangeAuthorizationCode(
     )
 )
 
-let userClient = AssinafyClient(token: token.accessToken)
+var userClient = AssinafyClient(token: token.accessToken)
+let workspaceId = try await userClient.workspaces.list().data[0].id
 ```
+
+The code is single-use and expires 60 seconds after approval: exchange it at once, and if the
+exchange fails, start a new authorization — the SDK never retries the request. With an OAuth token,
+`workspaces.list()` returns exactly the workspace the user picked. Store `workspaceId` next to the
+tokens and use it as `defaultAccountId` or `accountId:`: a connection covers one workspace, and any
+other answers `403`, even one the same user belongs to.
 
 ### 5. Refresh and revoke
 
 ```swift
-if token.isExpired(), let refresh = token.refreshToken {
-    let renewed = try await client.oauth.refreshAccessToken(
-        .refreshToken(refresh, clientId: clientId)
-    )
-}
+// Save the tokens as soon as they arrive, next to `workspaceId`.
+try saveTokens(token)
 
-// On sign-out:
-try await client.oauth.revoke(
-    OAuthRevokePayload(token: token.accessToken, clientId: clientId)
+// When the access token expires, or a call answers 401: send the refresh token saved last.
+let sent = try savedRefreshToken()
+let renewed = try await client.oauth.refreshAccessToken(
+    .refreshToken(sent, clientId: clientId)
 )
+try saveTokens(renewed)   // first: `sent` is retired now
+userClient = AssinafyClient(token: renewed.accessToken, defaultAccountId: workspaceId)
+
+// When the user disconnects: revoke the refresh token saved last, then delete the tokens.
+let latest = try savedRefreshToken()
+try await client.oauth.revoke(OAuthRevokePayload(token: latest, clientId: clientId))
+try deleteSavedTokens()
 ```
 
+`saveTokens`, `savedRefreshToken`, and `deleteSavedTokens` stand for the app's own Keychain
+storage. A client keeps the token it was created with, so build a new one from every renewed access
+token.
+
 A `refreshToken` exists only when `offline_access` was both requested **and** consented; without
-one, send the user through the authorization flow again. Revocation always answers `200` for every
-token outcome — including a token that never existed, was already revoked, or is malformed — so
-the endpoint cannot be used to probe whether a token exists.
+one, send the user through the authorization flow again when the access token expires, and revoke
+the access token when they disconnect.
+
+Every refresh returns a **new** `refreshToken` and retires the one sent, and reusing a retired
+refresh token ends the whole connection: every token stops working and the user must connect again.
+So save the new tokens before doing anything else with the response, always send the refresh token
+saved last, and refresh one at a time per connection. A successful response without a new refresh
+token throws `AssinafySDKError`. The SDK sends each token request exactly once and follows no
+redirect: a `3xx` arrives as an `APIError`.
+
+**When a refresh fails without an OAuth error** — a timeout, a lost connection, a cancellation, a
+`3xx` or `5xx`, a response without a new refresh token — the server may still have retired the token
+sent, because a lost response looks the same as a request that never arrived. Re-read the saved
+refresh token and continue only if a *different* one has been saved since. If it is still the token
+sent, never send it again: ask the user to connect again. Only failures that provably happened
+before the request left are safe to retry: a `NetworkError` whose `underlyingError` is a `URLError`
+with code `.cannotFindHost`, `.dnsLookupFailed`, `.cannotConnectToHost`, `.secureConnectionFailed`,
+or one of the `.serverCertificate…` codes.
+
+A refresh token is valid for **30 days**, and every refresh returns a new one with a fresh 30 days:
+a connection only expires if the app goes 30 days without refreshing. An API `401` means the access
+token expired or was revoked: refresh once, and if that fails, ask the user to connect again.
+`invalid_grant` on a refresh means the connection is over (token already used or expired, access
+revoked, or approved again with different permissions) — ask the user to connect again instead of
+retrying.
+
+When the user disconnects, revoke the refresh token saved last (or the access token when there is
+none): every earlier one is already retired. Revocation always answers `200` for every token
+outcome — including a token that never existed, was already revoked, or is malformed — so the
+endpoint cannot be used to probe whether a token exists.
 
 ### Who the user is
 
@@ -696,9 +748,11 @@ do {
 Requests go through an ephemeral `URLSession` with cookies and URL caching disabled, so no
 credential or response is written to disk by the SDK.
 
-Redirects are constrained. Same-origin redirects are followed unchanged. A cross-origin
-redirect is accepted only when it is HTTPS, the method is `GET` or `HEAD`, and there is no
-body — which covers artifact downloads served from another host. On such a redirect only
+Redirects are constrained. `POST /oauth/token` and `POST /oauth/revoke` follow none: their body
+carries a code or token, so a `3xx` arrives as an `APIError` rather than sending it again. Other
+same-origin redirects are followed unchanged. A cross-origin redirect is accepted only when it is
+HTTPS, the method is `GET` or `HEAD`, and there is no body — which covers artifact downloads
+served from another host. On such a redirect only
 `Accept`, `Accept-Encoding`, `Accept-Language`, `Range`, `If-Range`, and `User-Agent` survive;
 `Authorization`, `X-Api-Key`, `Cookie`, and every unknown header are stripped. HTTP downgrades,
 destination URLs containing user information, and cross-origin redirects carrying a body are
@@ -729,7 +783,16 @@ ASFAssinafyClient *client = [[ASFAssinafyClient alloc]
 Swift errors bridge to `NSError` under the domains in `ASFErrorDomain`. `code` carries the HTTP
 status for `APIError`, `422` for `ValidationError`, the `URLError` code for `NetworkError`, and
 `-1` for `AssinafySDKError`; details arrive in `userInfo` under `responseData`, `errors`, and
-`NSUnderlyingErrorKey`.
+`NSUnderlyingErrorKey`. An `APIError` also carries the raw `WWW-Authenticate` challenge under
+`wwwAuthenticate` and, for a `403` `insufficient_scope`, the missing scope under
+`insufficientScope`:
+
+```objc
+NSString *scope = error.userInfo[@"insufficientScope"];
+if (scope != nil) {
+    // Ask the user to connect again, requesting `scope` as well.
+}
+```
 
 ## Resource map
 

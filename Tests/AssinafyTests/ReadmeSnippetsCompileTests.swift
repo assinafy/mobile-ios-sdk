@@ -257,7 +257,10 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
     private func oauthFlow(
         client: AssinafyClient,
         clientId: String,
-        callbackURL: URL
+        callbackURL: URL,
+        saveTokens: (OAuthTokenResponse) throws -> Void,
+        savedRefreshToken: () throws -> String,
+        deleteSavedTokens: () throws -> Void
     ) async throws {
         let resource = try await client.oauth.protectedResourceMetadata()
         let server = try await client.oauth.authorizationServerMetadata(
@@ -266,7 +269,7 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
 
         let request = OAuthAuthorizationRequest(
             clientId: clientId,
-            redirectURI: "myapp://oauth-callback",
+            redirectURI: "https://myapp.example.invalid/oauth/callback",
             scopes: [.documentsRead, .documentsWrite, .offlineAccess],
             resource: resource.resource
         )
@@ -286,17 +289,21 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
             )
         )
 
-        let userClient = AssinafyClient(token: token.accessToken)
+        var userClient = AssinafyClient(token: token.accessToken)
+        let workspaceId = try await userClient.workspaces.list().data[0].id
 
-        if token.isExpired(), let refresh = token.refreshToken {
-            _ = try await client.oauth.refreshAccessToken(
-                .refreshToken(refresh, clientId: clientId)
-            )
-        }
+        try saveTokens(token)
 
-        try await client.oauth.revoke(
-            OAuthRevokePayload(token: token.accessToken, clientId: clientId)
+        let sent = try savedRefreshToken()
+        let renewed = try await client.oauth.refreshAccessToken(
+            .refreshToken(sent, clientId: clientId)
         )
+        try saveTokens(renewed)
+        userClient = AssinafyClient(token: renewed.accessToken, defaultAccountId: workspaceId)
+
+        let latest = try savedRefreshToken()
+        try await client.oauth.revoke(OAuthRevokePayload(token: latest, clientId: clientId))
+        try deleteSavedTokens()
 
         let claims = try await userClient.oauth.userInfo()
         print(claims.sub, claims.name as Any, claims.email as Any)
@@ -313,6 +320,7 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
             case "invalid_target": break
             default: break
             }
+            _ = error.insufficientScope
         } catch {}
     }
 

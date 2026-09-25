@@ -651,6 +651,8 @@ public final class DocumentVerification: NSObject {
     public let signatureHash: String?
     /// Matching document ID, when found.
     public let id: String?
+    /// Agreement code printed on the document certificate, when found.
+    public let agreementCode: String?
     /// Raw document status, when found.
     public let status: String?
     /// Number of pages, represented as a string by the API.
@@ -668,19 +670,8 @@ public final class DocumentVerification: NSObject {
     /// Human-readable explanation, especially when ``isValid`` is `false`.
     public let message: String?
 
-    /// Creates a document-verification result.
-    /// - Parameters:
-    ///   - signatureHash: Hash checked by the verification endpoint.
-    ///   - id: Matching document ID.
-    ///   - status: Matching document status.
-    ///   - pageCount: Page count returned by the API.
-    ///   - signerCount: Required signer count returned by the API.
-    ///   - completedCount: Number of completed signers.
-    ///   - completedAt: ISO-8601 signing completion time.
-    ///   - verifiedAt: ISO-8601 verification time.
-    ///   - isValid: Whether certification is valid.
-    ///   - message: Verification explanation.
-    public init(
+    /// Creates a document-verification result without an agreement code.
+    public convenience init(
         signatureHash: String? = nil,
         id: String? = nil,
         status: String? = nil,
@@ -692,8 +683,50 @@ public final class DocumentVerification: NSObject {
         isValid: Bool,
         message: String? = nil
     ) {
+        self.init(
+            signatureHash: signatureHash,
+            id: id,
+            agreementCode: nil,
+            status: status,
+            pageCount: pageCount,
+            signerCount: signerCount,
+            completedCount: completedCount,
+            completedAt: completedAt,
+            verifiedAt: verifiedAt,
+            isValid: isValid,
+            message: message
+        )
+    }
+
+    /// Creates a document-verification result.
+    /// - Parameters:
+    ///   - signatureHash: Hash checked by the verification endpoint.
+    ///   - id: Matching document ID.
+    ///   - agreementCode: Agreement code printed on the document certificate.
+    ///   - status: Matching document status.
+    ///   - pageCount: Page count returned by the API.
+    ///   - signerCount: Required signer count returned by the API.
+    ///   - completedCount: Number of completed signers.
+    ///   - completedAt: ISO-8601 signing completion time.
+    ///   - verifiedAt: ISO-8601 verification time.
+    ///   - isValid: Whether certification is valid.
+    ///   - message: Verification explanation.
+    public init(
+        signatureHash: String? = nil,
+        id: String? = nil,
+        agreementCode: String?,
+        status: String? = nil,
+        pageCount: String? = nil,
+        signerCount: String? = nil,
+        completedCount: Int? = nil,
+        completedAt: String? = nil,
+        verifiedAt: String? = nil,
+        isValid: Bool,
+        message: String? = nil
+    ) {
         self.signatureHash = signatureHash
         self.id = id
+        self.agreementCode = agreementCode
         self.status = status
         self.pageCount = pageCount
         self.signerCount = signerCount
@@ -711,6 +744,7 @@ extension DocumentVerification: Decodable {
     enum CodingKeys: String, CodingKey {
         case signatureHash = "hash"
         case id, status, message, verified
+        case agreementCode = "agreement_code"
         case pageCount = "page_count"
         case signerCount = "signer_count"
         case completedCount = "completed_count"
@@ -727,6 +761,7 @@ extension DocumentVerification: Decodable {
         self.init(
             signatureHash: try c.decodeIfPresent(String.self, forKey: .signatureHash),
             id: try c.decodeIfPresent(String.self, forKey: .id),
+            agreementCode: try c.decodeIfPresent(String.self, forKey: .agreementCode),
             status: try c.decodeIfPresent(String.self, forKey: .status),
             pageCount: try decodeFlexibleOptionalString(from: c, forKey: .pageCount),
             signerCount: try decodeFlexibleOptionalString(from: c, forKey: .signerCount),

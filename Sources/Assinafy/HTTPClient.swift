@@ -256,8 +256,10 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         )
     }
 
-    private static func makeSession(timeout: TimeInterval) -> URLSession {
+    static func makeSession(timeout: TimeInterval) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
+        // The API rejects TLS 1.0 and 1.1; ATS does not cover command-line tools.
+        config.tlsMinimumSupportedProtocolVersion = .TLSv12
         config.timeoutIntervalForRequest = timeout
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never

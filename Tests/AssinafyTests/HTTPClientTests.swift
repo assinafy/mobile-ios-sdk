@@ -125,6 +125,11 @@ final class HTTPClientTests: XCTestCase {
         XCTAssertEqual(String(data: response.data, encoding: .utf8), "{\"ok\":true}")
     }
 
+    func testDefaultSessionRequiresTLS12() {
+        let session = URLSessionHTTPClient.makeSession(timeout: 30)
+        XCTAssertEqual(session.configuration.tlsMinimumSupportedProtocolVersion, .TLSv12)
+    }
+
     func testPerformPreservesJSONAndTextErrorBodies() async {
         StubURLProtocol.state.set { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 422, httpVersion: nil, headerFields: nil)!

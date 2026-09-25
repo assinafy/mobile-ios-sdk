@@ -41,6 +41,7 @@ typed models, and failures surface as four distinct Swift error types that bridg
 | macOS | 12.0+ |
 | Swift | 6.3+ (language mode 6) |
 | Xcode | 26.6+ |
+| TLS | 1.2+ (the SDK refuses TLS 1.0 and 1.1) |
 
 Swift and Xcode have no LTS release channel. These are the current stable toolchain versions
 this package builds and tests against.
@@ -53,7 +54,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.7.0"
+        from: "1.7.1"
     ),
 ],
 targets: [

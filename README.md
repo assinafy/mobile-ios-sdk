@@ -45,6 +45,7 @@ Sem dependências de terceiros: apenas Foundation e CryptoKit.
 | macOS | 12.0+ |
 | Swift | 6.3+ (modo de linguagem 6) |
 | Xcode | 26.6+ |
+| TLS | 1.2+ (o SDK recusa TLS 1.0 e 1.1) |
 
 Swift e Xcode não têm canal de release LTS. Estas são as versões estáveis atuais da toolchain
 contra as quais este pacote é compilado e testado.
@@ -57,7 +58,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.7.0"
+        from: "1.7.1"
     ),
 ],
 targets: [

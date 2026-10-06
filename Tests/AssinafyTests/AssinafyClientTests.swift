@@ -163,8 +163,8 @@ final class AssinafyClientTests: XCTestCase {
         let mock = MockHTTPClient()
         let client = AssinafyClient(http: mock, defaultAccountId: "acc")
         let options = AssinafyClient.UploadOptions(signers: [
-            .init(name: "First", email: "Signer@example.com"),
-            .init(name: "Second", email: "signer@example.com"),
+            .init(name: "First", email: "Signer@example.invalid"),
+            .init(name: "Second", email: "signer@example.invalid"),
         ])
 
         await assertThrowsValidationError {
@@ -184,7 +184,7 @@ final class AssinafyClientTests: XCTestCase {
             "account_id": "acc",
             "name": "document.pdf",
             "status": "metadata_ready",
-            "artifacts": ["original": "https://example.com/original.pdf"],
+            "artifacts": ["original": "https://example.invalid/original.pdf"],
             "pages": [],
             "created_at": "2026-08-21T12:00:00Z",
             "updated_at": "2026-08-21T12:00:00Z"
@@ -195,7 +195,7 @@ final class AssinafyClientTests: XCTestCase {
         mock.stubEnvelope([
             "id": "signer-1",
             "full_name": "Example Signer",
-            "email": "signer@example.com"
+            "email": "signer@example.invalid"
         ])
         mock.stubEnvelope([
             "id": "assignment-1",
@@ -206,7 +206,7 @@ final class AssinafyClientTests: XCTestCase {
         let result = try await client.uploadAndRequestSignatures(
             documentData: Data("%PDF-1.4\n".utf8),
             options: AssinafyClient.UploadOptions(signers: [
-                .init(name: "Example Signer", email: "signer@example.com")
+                .init(name: "Example Signer", email: "signer@example.invalid")
             ])
         )
 

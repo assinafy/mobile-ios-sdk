@@ -148,4 +148,56 @@ public final class TemplateResource: BaseResource, @unchecked Sendable {
         withVoidCompletion({ try await self.delete(templateId: templateId, accountId: accountId) }, completion: completion)
     }
 
+    /// Completion form of `create`; delivers the result on the main queue.
+    @objc(createWithName:pdfData:accountId:completion:)
+    public func create(
+        name: String,
+        pdfData: Data,
+        accountId: String?,
+        completion: @escaping (TemplateDetails?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.create(name: name, pdfData: pdfData, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `update`; delivers the result on the main queue.
+    @objc(updateWithTemplateId:payload:accountId:completion:)
+    public func update(
+        templateId: String,
+        payload: UpdateTemplatePayload,
+        accountId: String?,
+        completion: @escaping (TemplateDetails?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.update(templateId: templateId, payload: payload, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @nonobjc
+    public func list(
+        params: ListParams,
+        accountId: String?,
+        completion: @escaping ([TemplateListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @objc(listWithTemplateListParams:accountId:completion:)
+    public func list(
+        params: TemplateListParams,
+        accountId: String?,
+        completion: @escaping ([TemplateListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Accepts wire query names and delivers list items on the main queue.
+    @objc(listWithQuery:accountId:completion:)
+    public func list(
+        query: [String: String],
+        accountId: String?,
+        completion: @escaping ([TemplateListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: ListParams(extra: query), accountId: accountId) }, completion: completion)
+    }
+
 }

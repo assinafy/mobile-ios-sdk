@@ -19,6 +19,10 @@ final class BaseResourceTests: XCTestCase {
             try await call("probe signer", request: .get("/probe"))
         }
 
+        func resend() async throws -> ResendNotificationResponse {
+            try await call("probe resend", request: .put("/probe"))
+        }
+
         func void() async throws {
             try await callVoid("probe void", request: .put("/probe"))
         }
@@ -119,6 +123,20 @@ final class BaseResourceTests: XCTestCase {
             XCTAssertEqual(error.message, "invalid signer")
         } catch {
             XCTFail("Expected APIError, got \(error)")
+        }
+    }
+
+    func testMalformedObjectEnvelopeCannotDecodeAsFlatResponse() async {
+        for value: Any in [[], "invalid", NSNull()] {
+            let mock = MockHTTPClient()
+            mock.stubJSON(["status": 200, "message": "ok", "data": value])
+            let resource = ProbeResource(http: mock)
+            do {
+                _ = try await resource.resend()
+                XCTFail("Expected malformed envelope to throw")
+            } catch {
+                XCTAssertTrue(error is AssinafySDKError)
+            }
         }
     }
 

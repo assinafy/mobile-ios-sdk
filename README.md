@@ -47,8 +47,9 @@ Sem dependências de terceiros: apenas Foundation e CryptoKit.
 | Xcode | 26.6+ |
 | TLS | 1.2+ (o SDK recusa TLS 1.0 e 1.1) |
 
-Swift e Xcode não têm canal de release LTS. Estas são as versões estáveis atuais da toolchain
-contra as quais este pacote é compilado e testado.
+Swift e Xcode não têm canal de release LTS. O pacote mantém Swift 6.3 como versão mínima
+e usa o modo de linguagem 6. As versões suportadas de Swift e Xcode são validadas
+com concorrência estrita e avisos tratados como erros.
 
 ## Instalação
 
@@ -58,7 +59,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.8.0"
+        from: "1.9.0"
     ),
 ],
 targets: [
@@ -159,6 +160,25 @@ autentica-se por PKCE e nunca recebe um client secret — um segredo embarcado n
 extraído dele.
 
 > **Disponível apenas em produção.** O host de sandbox ainda não expõe os endpoints OAuth.
+
+### Cadastre e conecte o aplicativo
+
+No painel Assinafy, abra **Integrações → Aplicações OAuth**, cadastre uma aplicação
+**pública**, seu nome, o callback HTTPS e os escopos necessários. Guarde o `client_id`;
+o aplicativo iOS não recebe nem armazena `client_secret`. Use um domínio de callback
+que você controla e configure os domínios associados e a entrega do retorno no app.
+
+Para desenvolvimento, um servidor de callback local pode receber o retorno por um
+túnel HTTPS temporário do Cloudflare. Cadastre a URL exata do túnel antes da autorização;
+se a URL mudar, atualize o cadastro. A descoberta, o login e o consentimento usam os
+hosts de produção. O usuário seleciona um workspace e aprova os escopos.
+
+Depois do callback, valide estado e emissor, troque o código uma vez, identifique o
+workspace escolhido e crie o cliente com esse `defaultAccountId`. Guarde tokens no
+Keychain, separados por conexão e workspace. Não registre códigos, verificadores,
+access tokens ou refresh tokens. Serializar refreshes e persistir a rotação é
+responsabilidade do app. Ao desconectar, revogue o último refresh token e remova os
+tokens locais; para conectar novamente, crie um novo pedido PKCE e `state`.
 
 ### Escopos
 
@@ -833,6 +853,10 @@ comportamento de compatibilidade e o modelo de erro.
 | Sandbox | `https://sandbox.assinafy.com.br/v1` |
 
 Os endpoints OAuth existem apenas em produção.
+
+
+[`docs/PAYLOADS.md`](docs/PAYLOADS.md) traz exemplos JSON completos de requisições
+e respostas, junto da referência de cada método.
 
 ## Testes
 

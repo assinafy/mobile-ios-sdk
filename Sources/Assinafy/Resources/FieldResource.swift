@@ -246,4 +246,80 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
     ) {
         withVoidCompletion({ try await self.delete(fieldId: fieldId, accountId: accountId) }, completion: completion)
     }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @objc(listWithFieldListParams:accountId:completion:)
+    public func list(
+        params: FieldListParams,
+        accountId: String?,
+        completion: @escaping ([FieldDefinition]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `update`; delivers the result on the main queue.
+    @objc(updateWithFieldId:payload:accountId:completion:)
+    public func update(
+        fieldId: String,
+        payload: UpdateFieldPayload,
+        accountId: String?,
+        completion: @escaping (FieldDefinition?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.update(fieldId: fieldId, payload: payload, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `validate`; delivers the result on the main queue.
+    @objc(validateWithFieldId:value:signerAccessCode:accountId:completion:)
+    public func validate(
+        fieldId: String,
+        value: String,
+        signerAccessCode: String?,
+        accountId: String?,
+        completion: @escaping (FieldValidationResult?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.validate(fieldId: fieldId, value: value, signerAccessCode: signerAccessCode, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `validate`; delivers the result on the main queue.
+    @nonobjc
+    public func validate(
+        fieldId: String,
+        value: JSONValue,
+        signerAccessCode: String?,
+        accountId: String?,
+        completion: @escaping (FieldValidationResult?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.validate(fieldId: fieldId, value: value, signerAccessCode: signerAccessCode, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `validateMultiple`; delivers the result on the main queue.
+    @objc(validateMultipleWithItems:signerAccessCode:accountId:completion:)
+    public func validateMultiple(
+        items: [FieldValidateMultipleItem],
+        signerAccessCode: String?,
+        accountId: String?,
+        completion: @escaping ([FieldValidationResult]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.validateMultiple(items: items, signerAccessCode: signerAccessCode, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `validateMultiple`; delivers the result on the main queue.
+    @nonobjc
+    public func validateMultiple(
+        items: [FieldJSONValidationItem],
+        signerAccessCode: String?,
+        accountId: String?,
+        completion: @escaping ([FieldValidationResult]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.validateMultiple(items: items, signerAccessCode: signerAccessCode, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `listFieldTypes`; delivers the result on the main queue.
+    @objc(listFieldTypesWithCompletion:)
+    public func listFieldTypes(
+        completion: @escaping ([FieldTypeInfo]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.listFieldTypes() }, completion: completion)
+    }
+
 }

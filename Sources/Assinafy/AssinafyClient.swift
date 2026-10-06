@@ -163,7 +163,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 /// - ``signers`` — Create and look up signers.
 /// - ``assignments`` — Create and manage signing assignments.
 /// - ``webhooks`` — Register and query webhook subscriptions.
-/// - ``templates`` — Browse reusable document templates.
+/// - ``templates`` — Create, browse, update and delete document templates.
 /// - ``tags`` — Manage workspace tags and document tag attachments.
 /// - ``workspaces`` — Manage workspaces (accounts).
 /// - ``fields`` — Manage workspace field definitions and validation.
@@ -173,7 +173,8 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 /// ## Objective-C
 /// ```objc
 /// ASFAssinafyClient *client = [[ASFAssinafyClient alloc] initWithApiKey:@"key"
-///                                                         defaultAccountId:@"acc"];
+///                                                         defaultAccountId:@"acc"
+///                                                                  baseURL:@"https://api.assinafy.com.br/v1"];
 /// [client.signers getSignerWithId:@"sig_id" accountId:nil completion:^(Signer *s, NSError *e) {
 ///     NSLog(@"%@", s.fullName);
 /// }];
@@ -183,7 +184,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 public final class AssinafyClient: NSObject {
 
     /// The SDK version string included in the `User-Agent` header.
-    public static let sdkVersion = "1.8.0"
+    public static let sdkVersion = "1.9.0"
 
     // MARK: Resources
 
@@ -195,7 +196,7 @@ public final class AssinafyClient: NSObject {
     public let assignments: AssignmentResource
     /// Manages webhook subscriptions and delivery history.
     public let webhooks: WebhookResource
-    /// Provides read access to document templates.
+    /// Manages reusable document templates.
     public let templates: TemplateResource
     /// Manages workspace tags and document tag attachments.
     public let tags: TagResource
@@ -445,6 +446,22 @@ public final class AssinafyClient: NSObject {
             payload: payload
         )
         return (document, assignment)
+    }
+
+    /// Uploads, waits for processing, creates signers and requests signatures.
+    /// Delivers both results or the error on the main queue.
+    @objc(uploadAndRequestSignaturesWithDocumentData:options:accountId:completion:)
+    public func uploadAndRequestSignatures(
+        documentData: Data,
+        options: UploadOptions,
+        accountId: String?,
+        completion: @escaping (DocumentUploadResponse?, Assignment?, Error?) -> Void
+    ) {
+        documents.withCompletion({
+            try await self.uploadAndRequestSignatures(documentData: documentData, options: options, accountId: accountId)
+        }, completion: { result, error in
+            completion(result?.document, result?.assignment, error)
+        })
     }
 
     /// Builds the browser URL that starts the social-login (OAuth) flow.

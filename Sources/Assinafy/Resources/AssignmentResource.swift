@@ -279,6 +279,138 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
             try await self.resendNotification(documentId: documentId, assignmentId: assignmentId, signerId: signerId)
         }, completion: completion)
     }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @nonobjc
+    public func list(
+        params: ListParams,
+        accountId: String?,
+        completion: @escaping ([Assignment]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `create`; delivers the result on the main queue.
+    @nonobjc
+    public func create(
+        documentId: String,
+        payload: CreateAssignmentPayload,
+        completion: @escaping (Assignment?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.create(documentId: documentId, payload: payload) }, completion: completion)
+    }
+
+    /// Completion form of `estimateCost`; delivers the result on the main queue.
+    @nonobjc
+    public func estimateCost(
+        documentId: String,
+        payload: CreateAssignmentPayload,
+        completion: @escaping (CostEstimate?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.estimateCost(documentId: documentId, payload: payload) }, completion: completion)
+    }
+
+    /// Completion form of `resetExpiration`; delivers the result on the main queue.
+    @objc(resetExpirationWithDocumentId:assignmentId:expiresAt:completion:)
+    public func resetExpiration(
+        documentId: String,
+        assignmentId: String,
+        expiresAt: String?,
+        completion: @escaping (Assignment?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.resetExpiration(documentId: documentId, assignmentId: assignmentId, expiresAt: expiresAt) }, completion: completion)
+    }
+
+    /// Completion form of `resetExpiration`; delivers the result on the main queue.
+    @objc(resetExpirationWithDocumentId:assignmentId:newExpiresAt:completion:)
+    public func resetExpiration(
+        documentId: String,
+        assignmentId: String,
+        newExpiresAt: String,
+        completion: @escaping (Assignment?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.resetExpiration(documentId: documentId, assignmentId: assignmentId, newExpiresAt: newExpiresAt) }, completion: completion)
+    }
+
+    /// Completion form of `estimateResendCost`; delivers the result on the main queue.
+    @objc(estimateResendCostWithDocumentId:assignmentId:signerId:completion:)
+    public func estimateResendCost(
+        documentId: String,
+        assignmentId: String,
+        signerId: String,
+        completion: @escaping (CostEstimate?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.estimateResendCost(documentId: documentId, assignmentId: assignmentId, signerId: signerId) }, completion: completion)
+    }
+
+    /// Completion form of `sign`; delivers the result on the main queue.
+    @objc(signWithDocumentId:assignmentId:signerAccessCode:fields:completion:)
+    public func sign(
+        documentId: String,
+        assignmentId: String,
+        signerAccessCode: String,
+        fields: [SignAssignmentField],
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.sign(documentId: documentId, assignmentId: assignmentId, signerAccessCode: signerAccessCode, fields: fields) }, completion: completion)
+    }
+
+    /// Completion form of `decline`; delivers the result on the main queue.
+    @objc(declineWithDocumentId:assignmentId:signerAccessCode:reason:completion:)
+    public func decline(
+        documentId: String,
+        assignmentId: String,
+        signerAccessCode: String,
+        reason: String,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.decline(documentId: documentId, assignmentId: assignmentId, signerAccessCode: signerAccessCode, reason: reason) }, completion: completion)
+    }
+
+    /// Completion form of `listWhatsappNotifications`; delivers the result on the main queue.
+    @objc(listWhatsappNotificationsWithDocumentId:assignmentId:completion:)
+    public func listWhatsappNotifications(
+        documentId: String,
+        assignmentId: String,
+        completion: @escaping ([WhatsappNotification]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.listWhatsappNotifications(documentId: documentId, assignmentId: assignmentId) }, completion: completion)
+    }
+
+    /// Accepts the documented JSON assignment payload and delivers the result on the main queue.
+    @objc(createAssignmentForDocument:payloadJSON:completion:)
+    public func create(
+        documentId: String,
+        payloadJSON: Data,
+        completion: @escaping (Assignment?, Error?) -> Void
+    ) {
+        withCompletion({
+            try await self.create(documentId: documentId, payload: CreateAssignmentPayload(jsonData: payloadJSON))
+        }, completion: completion)
+    }
+
+    /// Accepts the documented JSON assignment payload and delivers the result on the main queue.
+    @objc(estimateAssignmentCostForDocument:payloadJSON:completion:)
+    public func estimateCost(
+        documentId: String,
+        payloadJSON: Data,
+        completion: @escaping (CostEstimate?, Error?) -> Void
+    ) {
+        withCompletion({
+            try await self.estimateCost(documentId: documentId, payload: CreateAssignmentPayload(jsonData: payloadJSON))
+        }, completion: completion)
+    }
+
+    /// Accepts wire query names and delivers list items on the main queue.
+    @objc(listWithQuery:accountId:completion:)
+    public func list(
+        query: [String: String],
+        accountId: String?,
+        completion: @escaping ([Assignment]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: ListParams(extra: query), accountId: accountId) }, completion: completion)
+    }
+
 }
 
 private struct ResetExpirationPayload: Encodable {

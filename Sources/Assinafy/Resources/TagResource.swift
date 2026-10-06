@@ -334,4 +334,80 @@ public final class TagResource: BaseResource, @unchecked Sendable {
             return name
         }
     }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @objc(listWithTagListParams:accountId:completion:)
+    public func list(
+        params: TagListParams,
+        accountId: String?,
+        completion: @escaping ([Tag]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `deleteAndReturnStatus`; delivers the result on the main queue.
+    @objc(deleteAndReturnStatusWithTagId:force:accountId:completion:)
+    public func deleteAndReturnStatus(
+        tagId: String,
+        force: Bool,
+        accountId: String?,
+        completion: @escaping (NSNumber?, Error?) -> Void
+    ) {
+        withCompletion({ NSNumber(value: try await self.deleteAndReturnStatus(tagId: tagId, force: force, accountId: accountId)) }, completion: completion)
+    }
+
+    /// Completion form of `listDocumentTags`; delivers the result on the main queue.
+    @objc(listDocumentTagsWithDocumentId:accountId:completion:)
+    public func listDocumentTags(
+        documentId: String,
+        accountId: String?,
+        completion: @escaping ([Tag]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.listDocumentTags(documentId: documentId, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `replaceDocumentTags`; delivers the result on the main queue.
+    @objc(replaceDocumentTagsWithDocumentId:tagIds:accountId:completion:)
+    public func replaceDocumentTags(
+        documentId: String,
+        tagIds: [String],
+        accountId: String?,
+        completion: @escaping ([Tag]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.replaceDocumentTags(documentId: documentId, tagIds: tagIds, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `appendDocumentTags`; delivers the result on the main queue.
+    @objc(appendDocumentTagsWithDocumentId:tagIds:accountId:completion:)
+    public func appendDocumentTags(
+        documentId: String,
+        tagIds: [String],
+        accountId: String?,
+        completion: @escaping ([Tag]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.appendDocumentTags(documentId: documentId, tagIds: tagIds, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `detachDocumentTag`; delivers the result on the main queue.
+    @objc(detachDocumentTagWithDocumentId:tagId:accountId:completion:)
+    public func detachDocumentTag(
+        documentId: String,
+        tagId: String,
+        accountId: String?,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.detachDocumentTag(documentId: documentId, tagId: tagId, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `detachDocumentTagAndReturnStatus`; delivers the result on the main queue.
+    @objc(detachDocumentTagAndReturnStatusWithDocumentId:tagId:accountId:completion:)
+    public func detachDocumentTagAndReturnStatus(
+        documentId: String,
+        tagId: String,
+        accountId: String?,
+        completion: @escaping (NSNumber?, Error?) -> Void
+    ) {
+        withCompletion({ NSNumber(value: try await self.detachDocumentTagAndReturnStatus(documentId: documentId, tagId: tagId, accountId: accountId)) }, completion: completion)
+    }
+
 }

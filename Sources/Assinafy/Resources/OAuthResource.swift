@@ -158,7 +158,10 @@ public final class OAuthResource: BaseResource, @unchecked Sendable {
     public func exchangeAuthorizationCode(
         _ payload: OAuthTokenPayload
     ) async throws -> OAuthTokenResponse {
-        try await token(payload, label: "Failed to exchange authorization code")
+        guard payload.grantType == "authorization_code" else {
+            throw ValidationError("Authorization code exchange requires the authorization_code grant")
+        }
+        return try await token(payload, label: "Failed to exchange authorization code")
     }
 
     /// Exchanges a refresh token for a new access token.
@@ -201,6 +204,9 @@ public final class OAuthResource: BaseResource, @unchecked Sendable {
     public func refreshAccessToken(
         _ payload: OAuthTokenPayload
     ) async throws -> OAuthTokenResponse {
+        guard payload.grantType == "refresh_token" else {
+            throw ValidationError("Access token refresh requires the refresh_token grant")
+        }
         let renewed = try await token(payload, label: "Failed to refresh access token")
         // The sent token is retired now; a response without its replacement
         // leaves the caller nothing it may send next.

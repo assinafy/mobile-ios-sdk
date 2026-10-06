@@ -395,7 +395,7 @@ final class AssignmentResourceTests: XCTestCase {
             "method": "virtual",
             "signers": [],
             "copy_receivers": [
-                ["id": "s2", "full_name": "Eric Flores", "email": "eric@example.com"],
+                ["id": "s2", "full_name": "Eric Flores", "email": "eric@example.invalid"],
             ],
         ])
         let assignment = try await resource.create(

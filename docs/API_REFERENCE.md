@@ -1,12 +1,13 @@
 # Assinafy iOS SDK API reference
 
 This reference documents every public Swift `async` SDK operation, its exact
-HTTP request, decoded result, compatibility behavior, and error surface. The
-authoritative API sources are the
+HTTP request, decoded result, compatibility behavior, and error surface.
+[Complete JSON payload examples](PAYLOADS.md) cover request bodies and response
+objects. The authoritative API sources are the
 [Assinafy API documentation](https://api.assinafy.com.br/v1/docs) and its
 [OpenAPI document](https://api.assinafy.com.br/v1/docs/openapi.json).
 
-Examples in this file are synthetic. They use reserved `example.test` addresses
+Examples in this file are synthetic. They use reserved `example.invalid` addresses
 and illustrative opaque IDs; none were copied from a customer, production, or
 sandbox account.
 
@@ -71,7 +72,7 @@ let client = AssinafyClient(configuration: configuration)
 | `init(apiKey:token:baseURL:defaultAccountId:timeout:logger:)` | Full Swift initializer. Both credentials may be `nil` for public operations, but they may not both be non-`nil`. |
 | `init(apiKey:token:baseURL:defaultAccountId:timeout:)` | Objective-C-compatible initializer using `NoopLogger`. |
 | `validate()` | Validates configuration immediately. The client also retains any validation failure and throws it before every request. |
-| `AssinafyClient(configuration:)` | Designated client initializer. Exposes `auth`, `workspaces`, `signers`, `documents`, `assignments`, `templates`, `tags`, `fields`, and `webhooks`. |
+| `AssinafyClient(configuration:)` | Designated client initializer. Exposes `auth`, `workspaces`, `signers`, `documents`, `assignments`, `templates`, `tags`, `fields`, `webhooks`, and `oauth`. |
 | `AssinafyClient(apiKey:defaultAccountId:baseURL:)` | API-key convenience initializer, including a custom base URL. API keys are intended for trusted backend or controlled tooling, not distributed apps. |
 | `AssinafyClient(token:defaultAccountId:)` | Bearer-token convenience initializer using the production base URL. Use the full configuration initializer when a bearer token must target another host. |
 | `AssinafyClient.sdkVersion` | SDK version included as `assinafy-ios-sdk/{version}` in `User-Agent`. |
@@ -172,17 +173,21 @@ endpoint (`https://auth.assinafy.com.br/oauth/authorize`):
 The `code_verifier` is **never** sent here. `OAuthCallback.validate(against:issuer:)`
 then checks the callback, `state` and `iss` first on approvals and error
 redirects alike: it throws `ValidationError` on a `state` mismatch (compared in
-constant time) or on a missing `iss` or one other than the expected issuer
+constant time) on duplicate security parameters or conflicting `code`/`error`, or on a missing `iss` or one other than the expected issuer
 (`OAuthResource.defaultIssuer` when none is passed); then `APIError` carrying
 the server's `error`; then `ValidationError` when no code is present.
 
 ### Token request
 
+A PKCE verifier contains 43–128 unreserved ASCII characters (`A-Z`, `a-z`,
+`0-9`, `-`, `.`, `_`, `~`). The exchange method accepts only the authorization-code
+grant, and refresh accepts only the refresh-token grant; validation precedes I/O.
+
 The body is `application/x-www-form-urlencoded`, fields sorted by name, with
 every character outside `A-Z a-z 0-9 - . _ ~` percent-encoded:
 
 ```text
-client_id=cli_2b9e44d1&code=ac_7f3c1d92b4a64e08&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk&grant_type=authorization_code&redirect_uri=https%3A%2F%2Fapp.example.test%2Foauth%2Fcallback&resource=https%3A%2F%2Fapi.assinafy.com.br
+client_id=cli_2b9e44d1&code=ac_7f3c1d92b4a64e08&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk&grant_type=authorization_code&redirect_uri=https%3A%2F%2Fapp.example.invalid%2Foauth%2Fcallback&resource=https%3A%2F%2Fapi.assinafy.com.br
 ```
 
 ```text
@@ -254,7 +259,7 @@ client authentication answers `401 invalid_client`.
 {
   "sub": "d6zqpbyog2v3xvxerwn8la94",
   "name": "Maria Silva",
-  "email": "maria@example.test",
+  "email": "maria@example.invalid",
   "email_verified": true
 }
 ```
@@ -370,7 +375,7 @@ signer code exactly where shown.
 | `list(params:accountId:)` | Account | `GET /accounts/{accountId}/signers`; v1 values are optional `search`, `page`, `per-page`; generic `ListParams` also forwards nonempty compatibility `sort` and caller-defined `extra` | `PaginatedResult<Signer>` |
 | `update(signerId:payload:accountId:)` | Account | `PUT /accounts/{accountId}/signers/{signerId}`; partial `full_name`, `email`, `whatsapp_phone_number`, `government_id` | Updated `Signer` |
 | `delete(signerId:accountId:)` | Account | `DELETE /accounts/{accountId}/signers/{signerId}` | Documented `data: []`; returns `Void` |
-| `findByEmail(_:accountId:)` | Account | Helper over signer list with `search={email}&per-page=100`; filters returned emails case-insensitively | Matching `Signer?`; a 404 becomes `nil` |
+| `findByEmail(_:accountId:)` | Account | Helper over signer list with `search={email}&per-page=100`; follows pagination headers and filters returned emails case-insensitively | Matching `Signer?`; a 404 becomes `nil` |
 | `getSelf(signerAccessCode:)` | Signer | `GET /signers/self?signer-access-code={code}` | `SignerSelf` -> `SignerSelfInfo` |
 | `acceptTerms(signerAccessCode:)` | Signer | `PUT /signers/accept-terms?signer-access-code={code}`; no JSON body | Bare envelope. The source-compatible `AcceptTermsResponse` is synthesized as `fullName: ""`, `email: ""`, `hasAcceptedTerms: true`; a legacy response body is still decoded. |
 | `acceptTermsWithoutResponse(signerAccessCode:)` | Signer | Same request as `acceptTerms(signerAccessCode:)` | Canonical bare-envelope handling; returns `Void` |
@@ -703,6 +708,12 @@ complete encoded shape for public request models and query containers.
   nonnegative and width/height/font size must be positive. The deprecated
   assignment-field initializer accepts a JSON string, decodes it locally to
   this object, and never sends a JSON-encoded string.
+- `CreateAssignmentPayload.init(jsonData:)`: decodes the creation JSON shape,
+  including descriptor signers and collect entries, for the `payloadJSON`
+  Objective-C adapters. Unknown `method` values fail locally. Creation and
+  estimation then apply the same validation as typed Swift requests. Malformed
+  JSON or incompatible field types throw standard `DecodingError`; the completion
+  adapter delivers it as an error on the main queue.
 - `CreateAssignmentPayload.withSignerIds(...)`: local convenience constructor
   for virtual assignments using signer IDs. It performs no request itself.
 - Assignment estimation derives a narrower body from
@@ -1231,6 +1242,7 @@ The public constructors are
 `AssinafySDKError(_:context:underlyingError:)`. All SDK-defined error types
 conform to `AssinafyErrorProtocol`, which exposes `message` and `context`.
 
+A malformed envelope cannot fall through to flat-object decoding.
 Typed methods require decodable success `data`; a successful envelope without
 it throws `AssinafySDKError`. List methods require an array. `Void` methods
 accept an empty or non-JSON 2xx body and reject a JSON envelope carrying a
@@ -1247,15 +1259,27 @@ These are the explicit resource selectors:
 
 | Resource | Completion selectors |
 | --- | --- |
-| Auth | `loginWithPayload:completion:`, `getAPIKeyWithCompletion:`, `createAPIKeyWithPayload:completion:`, `currentUserWithCompletion:`, `getNotificationPreferencesWithCompletion:`, `updateNotificationPreferences:completion:`, `statsWithParams:completion:`, `linkSocialLogin:completion:` |
-| Workspaces | `createWorkspace:completion:`, `listWorkspacesWithCompletion:`, `getWorkspaceWithId:completion:`, `updateWorkspaceWithId:payload:completion:`, `deleteWorkspaceWithId:force:completion:`, `themeWithAccountId:completion:`, `statsWithParams:accountId:completion:`, `downloadLogoWithAccountId:completion:`, `uploadLogo:filename:contentType:accountId:completion:`, `deleteLogoWithAccountId:completion:` |
-| Signers | `createSigner:accountId:completion:`, `getSignerWithId:accountId:completion:`, `updateSignerWithId:payload:accountId:completion:`, `deleteSignerWithId:accountId:completion:`, `findSignerByEmail:accountId:completion:` |
-| Documents | `uploadDocument:accountId:completion:`, `listDocumentsWithAccountId:completion:`, `getDocumentWithId:completion:`, `deleteDocumentWithId:completion:`, `renameDocumentWithId:name:completion:`, `searchDocumentsWithTerm:status:accountId:completion:` |
-| Assignments | `listAssignmentsWithAccountId:completion:`, `createAssignmentForDocument:signerIds:completion:`, `resendNotificationForDocument:assignmentId:signerId:completion:` |
-| Templates | `listTemplatesWithAccountId:completion:`, `getTemplateWithId:accountId:completion:`, `deleteTemplateWithId:accountId:completion:` |
-| Tags | `listTagsWithAccountId:completion:`, `createTag:accountId:completion:`, `updateTagWithId:payload:accountId:completion:`, `deleteTagWithId:force:accountId:completion:` |
-| Fields | `createField:accountId:completion:`, `listFieldsWithAccountId:completion:`, `getFieldWithId:accountId:completion:`, `deleteFieldWithId:accountId:completion:` |
-| Webhooks | `registerWebhook:accountId:completion:`, `getWebhookWithAccountId:completion:`, `deleteWebhookWithAccountId:completion:`, `inactivateWebhookWithAccountId:completion:`, `inactivateWebhookAndReturnWithAccountId:completion:`, `listDispatchesWithAccountId:completion:` |
+| Assignment | `listAssignmentsWithAccountId:completion:`, `createAssignmentForDocument:signerIds:completion:`, `resendNotificationForDocument:assignmentId:signerId:completion:`, `resetExpirationWithDocumentId:assignmentId:expiresAt:completion:`, `resetExpirationWithDocumentId:assignmentId:newExpiresAt:completion:`, `estimateResendCostWithDocumentId:assignmentId:signerId:completion:`, `signWithDocumentId:assignmentId:signerAccessCode:fields:completion:`, `declineWithDocumentId:assignmentId:signerAccessCode:reason:completion:`, `listWhatsappNotificationsWithDocumentId:assignmentId:completion:`, `createAssignmentForDocument:payloadJSON:completion:`, `estimateAssignmentCostForDocument:payloadJSON:completion:`, `listWithQuery:accountId:completion:` |
+| Auth | `loginWithPayload:completion:`, `getAPIKeyWithCompletion:`, `createAPIKeyWithPayload:completion:`, `currentUserWithCompletion:`, `getNotificationPreferencesWithCompletion:`, `updateNotificationPreferences:completion:`, `statsWithParams:completion:`, `linkSocialLogin:completion:`, `socialLoginWithPayload:completion:`, `currentUserProfileWithCompletion:`, `changePasswordWithPayload:completion:`, `changePasswordAndReturnResponseWithPayload:completion:`, `requestPasswordResetWithPayload:completion:`, `requestPasswordResetAndReturnResponseWithPayload:completion:`, `resetPasswordWithPayload:completion:`, `resetPasswordAndReturnResponseWithPayload:completion:`, `deleteAPIKeyWithCompletion:` |
+| Document | `uploadDocument:accountId:completion:`, `listDocumentsWithAccountId:completion:`, `getDocumentWithId:completion:`, `deleteDocumentWithId:completion:`, `renameDocumentWithId:name:completion:`, `searchDocumentsWithTerm:status:accountId:completion:`, `uploadWithData:options:completion:`, `listWithDocumentListParams:accountId:completion:`, `searchWithSearch:status:page:perPage:accountId:completion:`, `waitUntilReadyWithDocumentId:options:completion:`, `downloadArtifactWithDocumentId:artifact:completion:`, `downloadThumbnailWithDocumentId:completion:`, `downloadPageWithDocumentId:pageId:completion:`, `activitiesWithDocumentId:completion:`, `createFromTemplateWithTemplateId:signers:options:accountId:completion:`, `estimateCostFromTemplateWithTemplateId:signers:accountId:completion:`, `verifyWithSignatureHash:completion:`, `verifyDetailsWithSignatureHash:completion:`, `isFullySignedWithDocumentId:completion:`, `getSigningProgressWithDocumentId:completion:`, `listStatusesWithCompletion:`, `getPublicInfoWithDocumentId:completion:`, `sendPublicSignTokenWithDocumentId:payload:completion:`, `sendPublicSignTokenWithDocumentId:email:completion:`, `confirmSignerDataWithDocumentId:signerAccessCode:payload:completion:`, `confirmSignerDataAndReturnSignerWithDocumentId:signerAccessCode:payload:completion:`, `listWithQuery:accountId:completion:` |
+| Field | `createField:accountId:completion:`, `listFieldsWithAccountId:completion:`, `getFieldWithId:accountId:completion:`, `deleteFieldWithId:accountId:completion:`, `listWithFieldListParams:accountId:completion:`, `updateWithFieldId:payload:accountId:completion:`, `validateWithFieldId:value:signerAccessCode:accountId:completion:`, `validateMultipleWithItems:signerAccessCode:accountId:completion:`, `listFieldTypesWithCompletion:` |
+| OAuth | `protectedResourceMetadataWithCompletion:`, `authorizationServerMetadataWithIssuer:completion:`, `exchangeAuthorizationCode:completion:`, `refreshAccessToken:completion:`, `revokeToken:completion:`, `userInfoWithCompletion:` |
+| Signer | `createSigner:accountId:completion:`, `getSignerWithId:accountId:completion:`, `updateSignerWithId:payload:accountId:completion:`, `deleteSignerWithId:accountId:completion:`, `findSignerByEmail:accountId:completion:`, `getSelfWithSignerAccessCode:completion:`, `acceptTermsWithSignerAccessCode:completion:`, `acceptTermsWithoutResponseWithSignerAccessCode:completion:`, `verifyEmailWithPayload:completion:`, `uploadSignatureWithSignerAccessCode:type:imageData:reuse:completion:`, `downloadSignatureWithSignerAccessCode:type:completion:`, `getCurrentDocumentWithSignerId:signerAccessCode:completion:`, `listSignerDocumentsWithSignerId:signerAccessCode:params:completion:`, `searchSignerDocumentsWithSignerId:signerAccessCode:search:status:completion:`, `signMultipleDocumentsWithSignerAccessCode:documentIds:completion:`, `declineMultipleDocumentsWithSignerAccessCode:documentIds:reason:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:signerAccessCode:completion:`, `getSigningDocumentWithSignerAccessCode:hasAcceptedTerms:completion:`, `listWithQuery:accountId:completion:` |
+| Tag | `listTagsWithAccountId:completion:`, `createTag:accountId:completion:`, `updateTagWithId:payload:accountId:completion:`, `deleteTagWithId:force:accountId:completion:`, `listWithTagListParams:accountId:completion:`, `deleteAndReturnStatusWithTagId:force:accountId:completion:`, `listDocumentTagsWithDocumentId:accountId:completion:`, `replaceDocumentTagsWithDocumentId:tagIds:accountId:completion:`, `appendDocumentTagsWithDocumentId:tagIds:accountId:completion:`, `detachDocumentTagWithDocumentId:tagId:accountId:completion:`, `detachDocumentTagAndReturnStatusWithDocumentId:tagId:accountId:completion:` |
+| Template | `listTemplatesWithAccountId:completion:`, `getTemplateWithId:accountId:completion:`, `deleteTemplateWithId:accountId:completion:`, `createWithName:pdfData:accountId:completion:`, `updateWithTemplateId:payload:accountId:completion:`, `listWithTemplateListParams:accountId:completion:`, `listWithQuery:accountId:completion:` |
+| Webhook | `registerWebhook:accountId:completion:`, `getWebhookWithAccountId:completion:`, `deleteWebhookWithAccountId:completion:`, `inactivateWebhookWithAccountId:completion:`, `inactivateWebhookAndReturnWithAccountId:completion:`, `listDispatchesWithAccountId:completion:`, `listEventTypesWithCompletion:`, `listDispatchesWithWebhookDispatchListParams:accountId:completion:`, `retryDispatchWithDispatchId:accountId:completion:` |
+| Workspace | `createWorkspace:completion:`, `listWorkspacesWithCompletion:`, `getWorkspaceWithId:completion:`, `updateWorkspaceWithId:payload:completion:`, `deleteWorkspaceWithId:force:completion:`, `themeWithAccountId:completion:`, `statsWithParams:accountId:completion:`, `downloadLogoWithAccountId:completion:`, `uploadLogo:filename:contentType:accountId:completion:`, `deleteLogoWithAccountId:completion:`, `listWithQuery:completion:` |
+
+`ListParams` completion overloads remain Swift-only; Objective-C uses the
+`query:` dictionary overload, with exact wire names such as `per-page`.
+`CreateAssignmentPayload` completion overloads remain Swift-only; Objective-C
+uses `payloadJSON:` (`NSData`) with the creation JSON shape. Boolean results
+are nullable `NSNumber` values; nil means failure. `getSigningDocument` accepts
+nullable `NSNumber` for the optional terms flag. JSON-preserving field overloads
+remain Swift-only, with the string value API available to Objective-C.
+The high-level client exposes
+`uploadAndRequestSignaturesWithDocumentData:options:accountId:completion:`,
+returning separate document and assignment arguments on the main queue.
 
 The explicitly named non-resource initializers are
 `initWithAPIKey:token:baseURL:defaultAccountId:timeout:` on configuration,
@@ -1287,12 +1311,13 @@ ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1" \
 swift test --filter AssinafyTests.AssinafyLiveTests
 ```
 
-Mutation tests remain skipped unless all of the following are also set:
+Resource mutation tests require `ASSINAFY_RUN_LIVE_MUTATIONS=1`. Invitation
+and disposable-workspace tests also require two distinct recipients:
 
 ```sh
 ASSINAFY_RUN_LIVE_MUTATIONS=1 \
-ASSINAFY_TEST_EMAIL_A="recipient-a@example.test" \
-ASSINAFY_TEST_EMAIL_B="recipient-b@example.test"
+ASSINAFY_TEST_EMAIL_A="recipient-a@example.invalid" \
+ASSINAFY_TEST_EMAIL_B="recipient-b@example.invalid"
 ```
 
 Use two distinct controlled recipients. Never commit credentials, account IDs,

@@ -97,6 +97,14 @@ public final class OAuthPKCE: NSObject {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
     }
+
+    static func isValidVerifier(_ value: String) -> Bool {
+        (43...128).contains(value.utf8.count)
+            && value.utf8.allSatisfy {
+                (65...90).contains($0) || (97...122).contains($0)
+                    || (48...57).contains($0) || [45, 46, 95, 126].contains($0)
+            }
+    }
 }
 
 extension OAuthPKCE: @unchecked Sendable {}
@@ -181,6 +189,7 @@ public final class OAuthAuthorizationRequest: NSObject {
     ///   `endpoint` is not an absolute HTTPS URL.
     @objc public func authorizationURL(endpoint: String) -> URL? {
         guard !clientId.isBlank, !redirectURI.isBlank, !state.isBlank,
+              OAuthPKCE.isValidVerifier(pkce.codeVerifier),
               let base = AssinafyClientConfiguration.normalisedBaseURL(endpoint),
               var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             return nil
@@ -228,12 +237,15 @@ public final class OAuthCallback: NSObject {
     /// Parses the query string of a redirect URI the app received.
     ///
     /// - Parameter callbackURL: The URL delivered to the app's redirect handler.
-    /// - Returns: `nil` when `callbackURL` is not a URL.
+    /// - Returns: `nil` when the URL cannot be parsed or a response parameter is repeated.
     @objc public convenience init?(callbackURL: URL) {
         guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
             return nil
         }
         let items = components.queryItems ?? []
+        for name in ["code", "state", "iss", "error", "error_description"] {
+            guard items.filter({ $0.name == name }).count <= 1 else { return nil }
+        }
         func value(_ name: String) -> String? {
             items.first { $0.name == name }?.value.flatMap { $0.isBlank ? nil : $0 }
         }
@@ -285,6 +297,9 @@ public final class OAuthCallback: NSObject {
         let expectedIssuer = issuer.flatMap { $0.isBlank ? nil : $0 } ?? OAuthResource.defaultIssuer
         guard let received = self.issuer, constantTimeEquals(received, expectedIssuer) else {
             throw ValidationError("OAuth callback issuer does not match the authorization server")
+        }
+        guard code == nil || error == nil else {
+            throw ValidationError("OAuth callback contained both a code and an error")
         }
         if let error {
             throw APIError(
@@ -440,9 +455,9 @@ public final class OAuthTokenPayload: NSObject, Encodable {
             guard redirectURI?.isBlank == false else {
                 throw ValidationError("OAuth redirect URI is required")
             }
-            guard let verifier = codeVerifier, (43...128).contains(verifier.count) else {
+            guard let verifier = codeVerifier, OAuthPKCE.isValidVerifier(verifier) else {
                 throw ValidationError(
-                    "OAuth code verifier must be 43-128 characters (RFC 7636)"
+                    "OAuth code verifier must be 43-128 unreserved ASCII characters (RFC 7636)"
                 )
             }
         case "refresh_token":

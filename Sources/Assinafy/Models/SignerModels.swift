@@ -154,7 +154,7 @@ extension SignerNotificationHistory: Decodable {
 /// ```swift
 /// let payload = CreateSignerPayload(
 ///     fullName: "John Doe",
-///     email: "john@example.com",
+///     email: "john@example.invalid",
 ///     whatsappPhoneNumber: "+5548999990000"
 /// )
 /// let signer = try await client.signers.create(payload)

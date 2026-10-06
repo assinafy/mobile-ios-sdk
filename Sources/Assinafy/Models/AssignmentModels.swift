@@ -444,6 +444,39 @@ public struct CreateAssignmentPayload: Sendable {
         self.copyReceivers = copyReceivers
     }
 
+    /// Decodes the JSON request shape used by assignment creation.
+    ///
+    /// This lets Objective-C callers supply descriptor signers and collect-field
+    /// placements through the resource's `payloadJSON` completion methods.
+    /// Encoding and request validation still use the same Swift implementation.
+    ///
+    /// - Parameter jsonData: A JSON object using the assignment creation wire keys.
+    /// - Throws: `DecodingError` for malformed JSON or incompatible field types,
+    ///   or `ValidationError` for an unsupported signing method.
+    public init(jsonData: Data) throws {
+        let body = try JSONDecoder.assinafy.decode(AssignmentPayloadBody.self, from: jsonData)
+        guard body.method == "virtual" || body.method == "collect" else {
+            throw ValidationError("Assignment method must be virtual or collect")
+        }
+        self.init(
+            method: AssignmentMethod(string: body.method),
+            signers: body.signers.map {
+                .descriptor(id: $0.id, verificationMethod: $0.verificationMethod,
+                            notificationMethods: $0.notificationMethods, step: $0.step)
+            },
+            entries: body.entries?.map { entry in
+                AssignmentEntry(pageId: entry.pageId, fields: entry.fields.map { field in
+                    if let settings = field.displaySettings {
+                        return AssignmentField(signerId: field.signerId, fieldId: field.fieldId,
+                                               displaySettings: settings)
+                    }
+                    return AssignmentField(signerId: field.signerId, fieldId: field.fieldId)
+                })
+            },
+            message: body.message, expiresAt: body.expiresAt, copyReceivers: body.copyReceivers
+        )
+    }
+
     /// Convenience initialiser for the common case of passing signer ID strings.
     public static func withSignerIds(
         _ ids: [String],
@@ -465,7 +498,7 @@ public struct CreateAssignmentPayload: Sendable {
 
 // MARK: - Internal body
 
-struct AssignmentFieldBody: Encodable {
+struct AssignmentFieldBody: Codable {
     let signerId: String
     let fieldId: String
     let displaySettings: DisplaySettings?
@@ -477,7 +510,7 @@ struct AssignmentFieldBody: Encodable {
     }
 }
 
-struct AssignmentEntryBody: Encodable {
+struct AssignmentEntryBody: Codable {
     let pageId: String
     let fields: [AssignmentFieldBody]
 
@@ -487,7 +520,7 @@ struct AssignmentEntryBody: Encodable {
     }
 }
 
-struct AssignmentSignerBody: Encodable {
+struct AssignmentSignerBody: Codable {
     let id: String?
     let verificationMethod: String?
     let notificationMethods: [String]?
@@ -500,7 +533,7 @@ struct AssignmentSignerBody: Encodable {
     }
 }
 
-struct AssignmentPayloadBody: Encodable {
+struct AssignmentPayloadBody: Codable {
     let method: String
     let signers: [AssignmentSignerBody]
     let entries: [AssignmentEntryBody]?
@@ -584,10 +617,10 @@ func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> A
 private func buildSignerBody(_ ref: SignerReference) throws -> AssignmentSignerBody {
     switch ref {
     case .id(let id):
-        guard !id.isEmpty else { throw ValidationError("Signer ID cannot be empty") }
+        guard !id.isBlank else { throw ValidationError("Signer ID cannot be empty") }
         return AssignmentSignerBody(id: id, verificationMethod: nil, notificationMethods: nil, step: nil)
     case .descriptor(let id, let vm, let nm, let step):
-        let hasId = id?.isEmpty == false
+        let hasId = id?.isBlank == false
         guard hasId else { throw ValidationError("Signer ID is required when creating an assignment") }
         return AssignmentSignerBody(id: hasId ? id : nil, verificationMethod: vm, notificationMethods: nm, step: step)
     }

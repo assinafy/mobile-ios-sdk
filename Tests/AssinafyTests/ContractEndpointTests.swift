@@ -84,7 +84,7 @@ final class ContractEndpointTests: XCTestCase {
     func testCurrentUserUsesUsersSelf() async throws {
         let resource = AuthResource(http: mock, defaultAccountId: nil)
         mock.stubEnvelope([
-            "user": ["id": "u1", "name": "Bill", "email": "bill@example.com",
+            "user": ["id": "u1", "name": "Bill", "email": "bill@example.invalid",
                      "created_at": "2026-01-01", "is_password_set": true],
             "accounts": [["id": "a1", "name": "Acme", "roles": ["owner"],
                           "is_delete_allowed": true, "created_at": "2026-01-01"]],

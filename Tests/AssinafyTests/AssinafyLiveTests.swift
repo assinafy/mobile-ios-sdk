@@ -457,7 +457,7 @@ final class AssinafyLiveTests: XCTestCase {
         try requiresMutationOptIn()
         let client = try liveClient()
         let localPart = "ios-sdk-live-\(UUID().uuidString.lowercased())"
-        let email = "\(localPart)@example.com"
+        let email = "\(localPart)@example.invalid"
         var createdSignerId: String?
 
         do {

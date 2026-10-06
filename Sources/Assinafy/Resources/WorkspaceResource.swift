@@ -21,7 +21,7 @@ public final class WorkspaceResource: BaseResource, @unchecked Sendable {
 
     /// Creates a new workspace.
     ///
-    /// - Parameter payload: Name and branding options for the workspace.
+    /// - Parameter payload: Name and notification sender type for the workspace.
     /// - Returns: The created ``WorkspaceResponse``.
     public func create(_ payload: CreateWorkspacePayload) async throws -> WorkspaceResponse {
         let request = if usesSandboxCompatibility {
@@ -53,7 +53,7 @@ public final class WorkspaceResource: BaseResource, @unchecked Sendable {
         return try await call("Failed to fetch workspace", request: .get("/accounts/\(wid)"))
     }
 
-    /// Updates a workspace's name or branding colours.
+    /// Updates a workspace's name or notification sender type.
     ///
     /// - Parameters:
     ///   - workspaceId: The workspace identifier.
@@ -253,4 +253,24 @@ public final class WorkspaceResource: BaseResource, @unchecked Sendable {
     ) {
         withVoidCompletion({ try await self.deleteLogo(accountId: accountId) }, completion: completion)
     }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @nonobjc
+    public func list(
+        params: ListParams,
+        completion: @escaping ([WorkspaceListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params) }, completion: completion)
+    }
+
+    /// Accepts wire query names and delivers list items on the main queue.
+    /// Workspace listing does not send query parameters to the API.
+    @objc(listWithQuery:completion:)
+    public func list(
+        query: [String: String],
+        completion: @escaping ([WorkspaceListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: ListParams(extra: query)) }, completion: completion)
+    }
+
 }

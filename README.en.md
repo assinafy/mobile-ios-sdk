@@ -43,8 +43,9 @@ typed models, and failures surface as four distinct Swift error types that bridg
 | Xcode | 26.6+ |
 | TLS | 1.2+ (the SDK refuses TLS 1.0 and 1.1) |
 
-Swift and Xcode have no LTS release channel. These are the current stable toolchain versions
-this package builds and tests against.
+Swift and Xcode have no LTS release channel. The package retains Swift 6.3 as its
+minimum and uses Swift 6 language mode. Supported toolchains are checked with strict
+concurrency and warnings treated as errors.
 
 ## Installation
 
@@ -54,7 +55,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.8.0"
+        from: "1.9.0"
     ),
 ],
 targets: [
@@ -161,6 +162,26 @@ authenticates with PKCE and is never issued a client secret, since a secret ship
 bundle can be extracted from it.
 
 > **Production only.** The sandbox host does not yet expose the OAuth endpoints.
+
+### Register and connect the application
+
+In the Assinafy dashboard, open **Integrations → OAuth applications** and register
+a **public** application with its name, exact HTTPS callback and necessary scopes.
+Keep the `client_id`; an iOS application receives and stores no `client_secret`.
+Use a callback domain you control, configure associated domains, and deliver the
+callback to the application.
+
+For development, a local callback server can receive the redirect through a
+temporary Cloudflare HTTPS tunnel. Register its exact URL before authorization;
+update registration when the tunnel URL changes. Discovery, login and consent
+use production hosts. The user selects one workspace and approves the scopes.
+
+After the callback, validate state and issuer, exchange the code once, identify
+the selected workspace and create a client with that `defaultAccountId`. Store
+tokens in Keychain per connection and workspace. Never log codes, verifiers,
+access tokens or refresh tokens. The app serializes refreshes and persists token
+rotation. On disconnect, revoke the latest refresh token and remove local tokens;
+a new connection starts with a fresh PKCE request and `state`.
 
 ### Scopes
 
@@ -811,6 +832,10 @@ if (scope != nil) {
 
 [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) documents every method's authentication class,
 exact HTTP path, request payload, response payload, compatibility behavior, and error model.
+
+
+[`docs/PAYLOADS.md`](docs/PAYLOADS.md) provides complete JSON request and response
+examples alongside the method reference.
 
 ## Testing
 

@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [1.9.0] - 2026-10-05
+
+### Added
+
+- Main-queue completion methods for resource operations and the upload/signature workflow.
+- Objective-C query dictionaries and JSON assignment payload adapters.
+- Complete JSON request and response examples in `docs/PAYLOADS.md`.
+
+### Security
+
+- OAuth callbacks reject duplicate security parameters and simultaneous code/error outcomes.
+- PKCE verifiers require the RFC 7636 ASCII grammar; token methods require their matching grant type.
+- Malformed response envelopes fail decoding instead of being interpreted as flat responses.
+
+### Fixed
+
+- Blank signer IDs, document names, signing-token recipients and verification codes fail before I/O.
+- Signer reuse searches subsequent result pages using pagination metadata.
+- Polling intervals reject the floating-point boundary that would overflow nanosecond conversion.
 
 ## [1.8.0] - 2026-09-25
 

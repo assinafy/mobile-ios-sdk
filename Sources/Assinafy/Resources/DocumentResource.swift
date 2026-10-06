@@ -157,7 +157,7 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
     @discardableResult
     public func rename(documentId: String, name: String) async throws -> DocumentDetails {
         let did = try requireId(documentId, name: "Document ID")
-        guard !name.isEmpty else {
+        guard !name.isBlank else {
             throw ValidationError("Document name is required")
         }
         guard name.count <= 255 else {
@@ -184,12 +184,12 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         let largestSleepSeconds = Double(UInt64.max) / 1_000_000_000
         guard maxWaitSeconds.isFinite,
               maxWaitSeconds > 0,
-              maxWaitSeconds <= largestSleepSeconds else {
+              maxWaitSeconds < largestSleepSeconds else {
             throw ValidationError("Maximum wait must be a finite positive interval")
         }
         guard pollIntervalSeconds.isFinite,
               pollIntervalSeconds > 0,
-              pollIntervalSeconds <= largestSleepSeconds else {
+              pollIntervalSeconds < largestSleepSeconds else {
             throw ValidationError("Poll interval must be a finite positive interval")
         }
         let elapsed: @Sendable () -> TimeInterval
@@ -524,6 +524,8 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         documentId: String,
         payload: SendTokenPayload
     ) async throws {
+        guard !payload.recipient.isBlank else { throw ValidationError("Signing token recipient is required") }
+        if payload.channel == .email { _ = try validateEmail(payload.recipient) }
         let path = "/public/documents/\(documentId)/send-token"
         let request: APIRequest
         if usesSandboxCompatibility {
@@ -601,6 +603,225 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
     ) {
         withListCompletion({ try await self.search(search: search, status: status, accountId: accountId) },
                            completion: completion)
+    }
+
+    /// Completion form of `upload`; delivers the result on the main queue.
+    @objc(uploadWithData:options:completion:)
+    public func upload(
+        _ data: Data,
+        options: DocumentUploadOptions?,
+        completion: @escaping (DocumentUploadResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.upload(data, options: options) }, completion: completion)
+    }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @nonobjc
+    public func list(
+        params: ListParams,
+        accountId: String?,
+        completion: @escaping ([DocumentListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @objc(listWithDocumentListParams:accountId:completion:)
+    public func list(
+        params: DocumentListParams,
+        accountId: String?,
+        completion: @escaping ([DocumentListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `search`; delivers the result on the main queue.
+    @objc(searchWithSearch:status:page:perPage:accountId:completion:)
+    public func search(
+        search: String?,
+        status: String?,
+        page: Int,
+        perPage: Int,
+        accountId: String?,
+        completion: @escaping ([DocumentListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.search(search: search, status: status, page: page, perPage: perPage, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `waitUntilReady`; delivers the result on the main queue.
+    @objc(waitUntilReadyWithDocumentId:options:completion:)
+    public func waitUntilReady(
+        documentId: String,
+        options: WaitUntilReadyOptions,
+        completion: @escaping (DocumentUploadResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.waitUntilReady(documentId: documentId, options: options) }, completion: completion)
+    }
+
+    /// Completion form of `downloadArtifact`; delivers the result on the main queue.
+    @objc(downloadArtifactWithDocumentId:artifact:completion:)
+    public func downloadArtifact(
+        documentId: String,
+        artifact: DocumentArtifactName,
+        completion: @escaping (Data?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.downloadArtifact(documentId: documentId, artifact: artifact) }, completion: completion)
+    }
+
+    /// Completion form of `downloadThumbnail`; delivers the result on the main queue.
+    @objc(downloadThumbnailWithDocumentId:completion:)
+    public func downloadThumbnail(
+        documentId: String,
+        completion: @escaping (Data?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.downloadThumbnail(documentId: documentId) }, completion: completion)
+    }
+
+    /// Completion form of `downloadPage`; delivers the result on the main queue.
+    @objc(downloadPageWithDocumentId:pageId:completion:)
+    public func downloadPage(
+        documentId: String,
+        pageId: String,
+        completion: @escaping (Data?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.downloadPage(documentId: documentId, pageId: pageId) }, completion: completion)
+    }
+
+    /// Completion form of `activities`; delivers the result on the main queue.
+    @objc(activitiesWithDocumentId:completion:)
+    public func activities(
+        documentId: String,
+        completion: @escaping ([DocumentActivity]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.activities(documentId: documentId) }, completion: completion)
+    }
+
+    /// Completion form of `createFromTemplate`; delivers the result on the main queue.
+    @objc(createFromTemplateWithTemplateId:signers:options:accountId:completion:)
+    public func createFromTemplate(
+        templateId: String,
+        signers: [TemplateSigner],
+        options: CreateDocumentFromTemplateOptions?,
+        accountId: String?,
+        completion: @escaping (DocumentUploadResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.createFromTemplate(templateId: templateId, signers: signers, options: options, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `estimateCostFromTemplate`; delivers the result on the main queue.
+    @objc(estimateCostFromTemplateWithTemplateId:signers:accountId:completion:)
+    public func estimateCostFromTemplate(
+        templateId: String,
+        signers: [TemplateSigner],
+        accountId: String?,
+        completion: @escaping (CostEstimate?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.estimateCostFromTemplate(templateId: templateId, signers: signers, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `verify`; delivers the result on the main queue.
+    @objc(verifyWithSignatureHash:completion:)
+    public func verify(
+        signatureHash: String,
+        completion: @escaping (NSNumber?, Error?) -> Void
+    ) {
+        withCompletion({ NSNumber(value: try await self.verify(signatureHash: signatureHash)) }, completion: completion)
+    }
+
+    /// Completion form of `verifyDetails`; delivers the result on the main queue.
+    @objc(verifyDetailsWithSignatureHash:completion:)
+    public func verifyDetails(
+        signatureHash: String,
+        completion: @escaping (DocumentVerification?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.verifyDetails(signatureHash: signatureHash) }, completion: completion)
+    }
+
+    /// Completion form of `isFullySigned`; delivers the result on the main queue.
+    @objc(isFullySignedWithDocumentId:completion:)
+    public func isFullySigned(
+        documentId: String,
+        completion: @escaping (NSNumber?, Error?) -> Void
+    ) {
+        withCompletion({ NSNumber(value: try await self.isFullySigned(documentId: documentId)) }, completion: completion)
+    }
+
+    /// Completion form of `getSigningProgress`; delivers the result on the main queue.
+    @objc(getSigningProgressWithDocumentId:completion:)
+    public func getSigningProgress(
+        documentId: String,
+        completion: @escaping (SigningProgress?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.getSigningProgress(documentId: documentId) }, completion: completion)
+    }
+
+    /// Completion form of `listStatuses`; delivers the result on the main queue.
+    @objc(listStatusesWithCompletion:)
+    public func listStatuses(
+        completion: @escaping ([DocumentStatusInfo]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.listStatuses() }, completion: completion)
+    }
+
+    /// Completion form of `getPublicInfo`; delivers the result on the main queue.
+    @objc(getPublicInfoWithDocumentId:completion:)
+    public func getPublicInfo(
+        documentId: String,
+        completion: @escaping (PublicDocumentInfo?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.getPublicInfo(documentId: documentId) }, completion: completion)
+    }
+
+    /// Completion form of `sendPublicSignToken`; delivers the result on the main queue.
+    @objc(sendPublicSignTokenWithDocumentId:payload:completion:)
+    public func sendPublicSignToken(
+        documentId: String,
+        payload: SendTokenPayload,
+        completion: @escaping (SendTokenResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.sendPublicSignToken(documentId: documentId, payload: payload) }, completion: completion)
+    }
+
+    /// Completion form of `sendPublicSignToken`; delivers the result on the main queue.
+    @objc(sendPublicSignTokenWithDocumentId:email:completion:)
+    public func sendPublicSignToken(
+        documentId: String,
+        email: String,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.sendPublicSignToken(documentId: documentId, email: email) }, completion: completion)
+    }
+
+    /// Completion form of `confirmSignerData`; delivers the result on the main queue.
+    @objc(confirmSignerDataWithDocumentId:signerAccessCode:payload:completion:)
+    public func confirmSignerData(
+        documentId: String,
+        signerAccessCode: String,
+        payload: ConfirmSignerDataPayload,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.confirmSignerData(documentId: documentId, signerAccessCode: signerAccessCode, payload: payload) }, completion: completion)
+    }
+
+    /// Completion form of `confirmSignerDataAndReturnSigner`; delivers the result on the main queue.
+    @objc(confirmSignerDataAndReturnSignerWithDocumentId:signerAccessCode:payload:completion:)
+    public func confirmSignerDataAndReturnSigner(
+        documentId: String,
+        signerAccessCode: String,
+        payload: ConfirmSignerDataPayload,
+        completion: @escaping (Signer?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.confirmSignerDataAndReturnSigner(documentId: documentId, signerAccessCode: signerAccessCode, payload: payload) }, completion: completion)
+    }
+
+    /// Accepts wire query names and delivers list items on the main queue.
+    @objc(listWithQuery:accountId:completion:)
+    public func list(
+        query: [String: String],
+        accountId: String?,
+        completion: @escaping ([DocumentListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: ListParams(extra: query), accountId: accountId) }, completion: completion)
     }
 
 }

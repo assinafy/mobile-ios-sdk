@@ -46,7 +46,7 @@ final class SignerResourceTests: XCTestCase {
         }
         await assertThrowsValidationError {
             _ = try await self.resource.create(
-                CreateSignerPayload(fullName: "Test", email: " test@example.com ")
+                CreateSignerPayload(fullName: "Test", email: " test@example.invalid ")
             )
         }
         XCTAssertTrue(mock.allRequests.isEmpty)
@@ -106,9 +106,9 @@ final class SignerResourceTests: XCTestCase {
     }
 
     func testCreateReuseExistingSignerByEmail() async throws {
-        mock.stubEnvelopeList([signerDict(id: "existing", email: "john@example.com")])
+        mock.stubEnvelopeList([signerDict(id: "existing", email: "john@example.invalid")])
         let result = try await resource.create(
-            CreateSignerPayload(fullName: "John", email: "john@example.com")
+            CreateSignerPayload(fullName: "John", email: "john@example.invalid")
         )
         XCTAssertEqual(result.id, "existing")
         XCTAssertEqual(mock.lastRequest?.method, .get, "Should reuse existing — no POST expected")
@@ -118,7 +118,7 @@ final class SignerResourceTests: XCTestCase {
         mock.stubEnvelopeList([])
         mock.stubEnvelope(signerDict(id: "123"))
         _ = try await resource.create(
-            CreateSignerPayload(fullName: "John", email: "john@example.com", whatsappPhoneNumber: "+5548999990000")
+            CreateSignerPayload(fullName: "John", email: "john@example.invalid", whatsappPhoneNumber: "+5548999990000")
         )
         guard let body = mock.lastRequest?.body,
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
@@ -134,7 +134,7 @@ final class SignerResourceTests: XCTestCase {
         mock.stubEnvelopeList([])
         mock.stubEnvelope(signerDict(id: "123"))
         _ = try await resource.create(
-            CreateSignerPayload(fullName: "John", email: "john@example.com")
+            CreateSignerPayload(fullName: "John", email: "john@example.invalid")
         )
         guard let body = mock.lastRequest?.body,
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
@@ -150,9 +150,9 @@ final class SignerResourceTests: XCTestCase {
 
     func testListPassesSearchViaQueryItems() async throws {
         mock.stubEnvelopeList([])
-        _ = try await resource.list(params: ListParams(perPage: 25, search: "john@example.com"))
+        _ = try await resource.list(params: ListParams(perPage: 25, search: "john@example.invalid"))
         let queryItems = mock.lastRequest?.queryItems
-        XCTAssertTrue(queryItems?.contains(URLQueryItem(name: "search", value: "john@example.com")) == true)
+        XCTAssertTrue(queryItems?.contains(URLQueryItem(name: "search", value: "john@example.invalid")) == true)
         XCTAssertTrue(queryItems?.contains(URLQueryItem(name: "per-page", value: "25")) == true)
     }
 
@@ -170,13 +170,13 @@ final class SignerResourceTests: XCTestCase {
 
     func testFindByEmailReturnsNilWhenNoMatch() async throws {
         mock.stubEnvelopeList([])
-        let result = try await resource.findByEmail("nobody@example.com")
+        let result = try await resource.findByEmail("nobody@example.invalid")
         XCTAssertNil(result)
     }
 
     func testFindByEmailReturnsCaseInsensitiveMatch() async throws {
-        mock.stubEnvelopeList([signerDict(id: "1", email: "JOHN@EXAMPLE.COM")])
-        let result = try await resource.findByEmail("john@example.com")
+        mock.stubEnvelopeList([signerDict(id: "1", email: "JOHN@EXAMPLE.INVALID")])
+        let result = try await resource.findByEmail("john@example.invalid")
         XCTAssertEqual(result?.id, "1")
     }
 
@@ -295,20 +295,20 @@ final class SignerResourceTests: XCTestCase {
     func testAcceptTermsStillDecodesLegacyResponseData() async throws {
         mock.stubEnvelope([
             "full_name": "Signer",
-            "email": "signer@example.com",
+            "email": "signer@example.invalid",
             "has_accepted_terms": true,
         ])
 
         let result = try await resource.acceptTerms(signerAccessCode: "code")
 
         XCTAssertEqual(result.fullName, "Signer")
-        XCTAssertEqual(result.email, "signer@example.com")
+        XCTAssertEqual(result.email, "signer@example.invalid")
     }
 
     func testAcceptTermsStillDecodesLegacyDirectResponse() async throws {
         mock.stubJSON([
             "full_name": "Signer",
-            "email": "signer@example.com",
+            "email": "signer@example.invalid",
             "has_accepted_terms": true,
         ])
 
@@ -526,4 +526,16 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertEqual(pairs["signer-access-code"], "code")
         XCTAssertEqual(pairs["has_accepted_terms"], "true")
     }
+    func testFindByEmailContinuesToLaterSearchPages() async throws {
+        mock.stubEnvelopeList([signerDict(id: "other", email: "other@example.invalid")], headers:
+            MockHTTPClient.paginationHeaders(currentPage: 1, perPage: 100, total: 101, pageCount: 2))
+        mock.stubEnvelopeList([signerDict(id: "matched", email: "MATCH@example.invalid")], headers:
+            MockHTTPClient.paginationHeaders(currentPage: 2, perPage: 100, total: 101, pageCount: 2))
+        let result = try await resource.findByEmail("match@example.invalid")
+        XCTAssertEqual(result?.id, "matched")
+        XCTAssertEqual(mock.allRequests.count, 2)
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first { $0.name == "page" }?.value, "2")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first { $0.name == "search" }?.value, "match@example.invalid")
+    }
+
 }

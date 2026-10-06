@@ -17,7 +17,7 @@ final class AuthResourceTests: XCTestCase {
             "user": [
                 "id": "user-1",
                 "name": "Test User",
-                "email": "test@example.com",
+                "email": "test@example.invalid",
                 "is_email_verified": true,
                 "has_accepted_terms": true,
                 "created_at": "2024-01-01T00:00:00Z",
@@ -51,10 +51,10 @@ final class AuthResourceTests: XCTestCase {
     func testLoginUsesDocumentedEndpoint() async throws {
         mock.stubEnvelope(loginResponseDict())
 
-        let result = try await resource.login(LoginPayload(email: "test@example.com", password: "password"))
+        let result = try await resource.login(LoginPayload(email: "test@example.invalid", password: "password"))
 
         XCTAssertEqual(result.accessToken, "access-token")
-        XCTAssertEqual(result.user.email, "test@example.com")
+        XCTAssertEqual(result.user.email, "test@example.invalid")
         XCTAssertEqual(result.accounts.first?.id, "account-1")
         XCTAssertEqual(mock.lastRequest?.path, "/login")
         XCTAssertEqual(mock.lastRequest?.method, .post)
@@ -73,7 +73,7 @@ final class AuthResourceTests: XCTestCase {
         mock.stubEnvelope([
             "id": "user-1",
             "name": "Test User",
-            "email": "test@example.com",
+            "email": "test@example.invalid",
             "created_at": "2026-01-01T00:00:00Z",
         ])
 
@@ -89,7 +89,7 @@ final class AuthResourceTests: XCTestCase {
             "user": [
                 "id": "user-1",
                 "name": "Test User",
-                "email": "test@example.com",
+                "email": "test@example.invalid",
                 "created_at": "2026-01-01T00:00:00Z",
             ],
             "accounts": [[
@@ -110,7 +110,7 @@ final class AuthResourceTests: XCTestCase {
             "user": [
                 "id": "user-1",
                 "name": "Test User",
-                "email": "test@example.com",
+                "email": "test@example.invalid",
                 "created_at": "2026-01-01T00:00:00Z",
             ],
             "accounts": [],
@@ -168,10 +168,10 @@ final class AuthResourceTests: XCTestCase {
     }
 
     func testChangePasswordUsesPut() async throws {
-        mock.stubEnvelope(["email": "test@example.com"])
+        mock.stubEnvelope(["email": "test@example.invalid"])
 
         try await resource.changePassword(
-            ChangePasswordPayload(email: "test@example.com", password: "old", newPassword: "new")
+            ChangePasswordPayload(email: "test@example.invalid", password: "old", newPassword: "new")
         )
 
         XCTAssertEqual(mock.lastRequest?.path, "/authentication/change-password")
@@ -179,19 +179,19 @@ final class AuthResourceTests: XCTestCase {
     }
 
     func testRequestPasswordResetUsesPut() async throws {
-        mock.stubEnvelope(["email": "test@example.com"])
+        mock.stubEnvelope(["email": "test@example.invalid"])
 
-        try await resource.requestPasswordReset(RequestPasswordResetPayload(email: "test@example.com"))
+        try await resource.requestPasswordReset(RequestPasswordResetPayload(email: "test@example.invalid"))
 
         XCTAssertEqual(mock.lastRequest?.path, "/authentication/request-password-reset")
         XCTAssertEqual(mock.lastRequest?.method, .put)
     }
 
     func testResetPasswordUsesPut() async throws {
-        mock.stubEnvelope(["email": "test@example.com"])
+        mock.stubEnvelope(["email": "test@example.invalid"])
 
         try await resource.resetPassword(
-            ResetPasswordPayload(email: "test@example.com", token: "reset-token", newPassword: "new")
+            ResetPasswordPayload(email: "test@example.invalid", token: "reset-token", newPassword: "new")
         )
 
         XCTAssertEqual(mock.lastRequest?.path, "/authentication/reset-password")

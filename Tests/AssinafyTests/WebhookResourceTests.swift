@@ -15,8 +15,8 @@ final class WebhookResourceTests: XCTestCase {
         [
             "events": ["document_ready"],
             "is_active": true,
-            "url": "https://example.com/hook",
-            "email": "test@example.com",
+            "url": "https://example.invalid/hook",
+            "email": "test@example.invalid",
             "updated_at": "2024-01-01T00:00:00Z",
         ]
     }
@@ -37,7 +37,7 @@ final class WebhookResourceTests: XCTestCase {
 
     func testRegisterUsesCorrectEndpoint() async throws {
         mock.stubEnvelope(subscriptionDict())
-        _ = try await resource.register(WebhookRegisterPayload(url: "https://example.com/hook", email: "test@example.com"))
+        _ = try await resource.register(WebhookRegisterPayload(url: "https://example.invalid/hook", email: "test@example.invalid"))
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/webhooks/subscriptions")
         XCTAssertEqual(mock.lastRequest?.method, .put)
     }
@@ -82,7 +82,7 @@ final class WebhookResourceTests: XCTestCase {
         mock.stubEnvelope(subscription)
         let result = try await resource.inactivateAndReturn()
         XCTAssertFalse(result.isActive)
-        XCTAssertEqual(result.url, "https://example.com/hook")
+        XCTAssertEqual(result.url, "https://example.invalid/hook")
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/webhooks/inactivate")
         XCTAssertEqual(mock.lastRequest?.method, .put)
     }
@@ -128,12 +128,12 @@ final class WebhookResourceTests: XCTestCase {
     func testRequiresAccountID() async {
         let noAccount = WebhookResource(http: mock, defaultAccountId: nil)
         await assertThrowsValidationError {
-            _ = try await noAccount.register(WebhookRegisterPayload(url: "https://example.com/hook", email: "test@example.com"))
+            _ = try await noAccount.register(WebhookRegisterPayload(url: "https://example.invalid/hook", email: "test@example.invalid"))
         }
     }
 
     func testRegisterDefaultEventsIncludeExpectedEvents() {
-        let payload = WebhookRegisterPayload(url: "https://example.com/hook", email: "test@example.com")
+        let payload = WebhookRegisterPayload(url: "https://example.invalid/hook", email: "test@example.invalid")
         XCTAssertTrue(payload.events.contains("document_ready"))
         XCTAssertTrue(payload.events.contains("signer_signed_document"))
         XCTAssertTrue(payload.events.contains("signer_rejected_document"))
@@ -147,7 +147,7 @@ final class WebhookResourceTests: XCTestCase {
         }
         await assertThrowsValidationError {
             _ = try await self.resource.register(
-                WebhookRegisterPayload(url: "https://example.com/hook", email: "invalid")
+                WebhookRegisterPayload(url: "https://example.invalid/hook", email: "invalid")
             )
         }
         XCTAssertTrue(mock.allRequests.isEmpty)

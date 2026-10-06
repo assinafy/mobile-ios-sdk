@@ -7,7 +7,7 @@ import Foundation
 /// ## Example
 /// ```swift
 /// let sub = try await client.webhooks.register(
-///     WebhookRegisterPayload(url: "https://example.com/hook", email: "ops@example.com"),
+///     WebhookRegisterPayload(url: "https://example.invalid/hook", email: "ops@example.invalid"),
 ///     accountId: "acc_id"
 /// )
 /// ```
@@ -188,4 +188,33 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
     ) {
         withListCompletion({ try await self.listDispatches(accountId: accountId) }, completion: completion)
     }
+
+    /// Completion form of `listEventTypes`; delivers the result on the main queue.
+    @objc(listEventTypesWithCompletion:)
+    public func listEventTypes(
+        completion: @escaping ([WebhookEventTypeInfo]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.listEventTypes() }, completion: completion)
+    }
+
+    /// Completion form of `listDispatches`; delivers the result on the main queue.
+    @objc(listDispatchesWithWebhookDispatchListParams:accountId:completion:)
+    public func listDispatches(
+        params: WebhookDispatchListParams,
+        accountId: String?,
+        completion: @escaping ([WebhookDispatch]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.listDispatches(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `retryDispatch`; delivers the result on the main queue.
+    @objc(retryDispatchWithDispatchId:accountId:completion:)
+    public func retryDispatch(
+        dispatchId: String,
+        accountId: String?,
+        completion: @escaping (WebhookDispatch?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.retryDispatch(dispatchId: dispatchId, accountId: accountId) }, completion: completion)
+    }
+
 }

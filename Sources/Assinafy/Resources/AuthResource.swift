@@ -239,4 +239,84 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
     ) {
         withVoidCompletion({ try await self.linkSocialLogin(payload) }, completion: completion)
     }
+
+    /// Completion form of `socialLogin`; delivers the result on the main queue.
+    @objc(socialLoginWithPayload:completion:)
+    public func socialLogin(
+        _ payload: SocialLoginPayload,
+        completion: @escaping (LoginResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.socialLogin(payload) }, completion: completion)
+    }
+
+    /// Completion form of `currentUserProfile`; delivers the result on the main queue.
+    @objc(currentUserProfileWithCompletion:)
+    public func currentUserProfile(
+        completion: @escaping (User?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.currentUserProfile() }, completion: completion)
+    }
+
+    /// Completion form of `changePassword`; delivers the result on the main queue.
+    @objc(changePasswordWithPayload:completion:)
+    public func changePassword(
+        _ payload: ChangePasswordPayload,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.changePassword(payload) }, completion: completion)
+    }
+
+    /// Completion form of `changePasswordAndReturnResponse`; delivers the result on the main queue.
+    @objc(changePasswordAndReturnResponseWithPayload:completion:)
+    public func changePasswordAndReturnResponse(
+        _ payload: ChangePasswordPayload,
+        completion: @escaping (EmailResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.changePasswordAndReturnResponse(payload) }, completion: completion)
+    }
+
+    /// Completion form of `requestPasswordReset`; delivers the result on the main queue.
+    @objc(requestPasswordResetWithPayload:completion:)
+    public func requestPasswordReset(
+        _ payload: RequestPasswordResetPayload,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.requestPasswordReset(payload) }, completion: completion)
+    }
+
+    /// Completion form of `requestPasswordResetAndReturnResponse`; delivers the result on the main queue.
+    @objc(requestPasswordResetAndReturnResponseWithPayload:completion:)
+    public func requestPasswordResetAndReturnResponse(
+        _ payload: RequestPasswordResetPayload,
+        completion: @escaping (EmailResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.requestPasswordResetAndReturnResponse(payload) }, completion: completion)
+    }
+
+    /// Completion form of `resetPassword`; delivers the result on the main queue.
+    @objc(resetPasswordWithPayload:completion:)
+    public func resetPassword(
+        _ payload: ResetPasswordPayload,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.resetPassword(payload) }, completion: completion)
+    }
+
+    /// Completion form of `resetPasswordAndReturnResponse`; delivers the result on the main queue.
+    @objc(resetPasswordAndReturnResponseWithPayload:completion:)
+    public func resetPasswordAndReturnResponse(
+        _ payload: ResetPasswordPayload,
+        completion: @escaping (EmailResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.resetPasswordAndReturnResponse(payload) }, completion: completion)
+    }
+
+    /// Completion form of `deleteAPIKey`; delivers the result on the main queue.
+    @objc(deleteAPIKeyWithCompletion:)
+    public func deleteAPIKey(
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.deleteAPIKey() }, completion: completion)
+    }
+
 }

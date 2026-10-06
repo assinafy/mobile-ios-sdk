@@ -11,7 +11,7 @@ import Foundation
 /// ## Example
 /// ```swift
 /// let signer = try await client.signers.create(
-///     CreateSignerPayload(fullName: "John Doe", email: "john@example.com")
+///     CreateSignerPayload(fullName: "John Doe", email: "john@example.invalid")
 /// )
 /// ```
 @objcMembers
@@ -117,7 +117,7 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
 
     /// Searches for a signer by email address.
     ///
-    /// Email matching is case-insensitive.
+    /// Email matching is case-insensitive; pagination headers drive later search pages.
     ///
     /// - Parameters:
     ///   - email: The email address to search for.
@@ -126,10 +126,17 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
     public func findByEmail(_ email: String, accountId: String? = nil) async throws -> Signer? {
         try assertValidEmail(email)
         do {
-            let params = ListParams(perPage: 100, search: email)
-            let result = try await list(params: params, accountId: accountId)
+            var params = ListParams(perPage: 100, search: email)
             let lower = email.lowercased()
-            return result.data.first { $0.email?.lowercased() == lower }
+            while true {
+                let result = try await list(params: params, accountId: accountId)
+                if let signer = result.data.first(where: { $0.email?.lowercased() == lower }) {
+                    return signer
+                }
+                let page = params.page ?? 1
+                guard let lastPage = result.meta?.lastPage, page < lastPage else { return nil }
+                params.page = page + 1
+            }
         } catch let error as APIError where error.statusCode == 404 {
             return nil
         }
@@ -184,11 +191,12 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         )
     }
 
-    /// Verifies a signer's email using a verification code.
+    /// Verifies a signer's email or WhatsApp channel using its verification code.
     ///
     /// - Parameter payload: The verification code and signer access code.
     /// - Throws: ``APIError`` if verification fails.
     public func verifyEmail(payload: VerifyEmailPayload) async throws {
+        guard !payload.verificationCode.isBlank else { throw ValidationError("Verification code is required") }
         let code = try requireId(payload.signerAccessCode, name: "Signer access code")
         let request = APIRequest(
             method: .post,
@@ -430,7 +438,7 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
     /// Creates a signer and delivers the result on the **main queue**.
     ///
     /// ```objc
-    /// [client.signers createWithPayload:payload accountId:nil
+    /// [client.signers createSigner:payload accountId:nil
     ///     completion:^(Signer *signer, NSError *error) {
     ///         // runs on main thread
     /// }];
@@ -513,4 +521,170 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
     private func assertValidEmail(_ email: String) throws {
         try validateEmail(email)
     }
+
+    /// Completion form of `list`; delivers the result on the main queue.
+    @nonobjc
+    public func list(
+        params: ListParams,
+        accountId: String?,
+        completion: @escaping ([Signer]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: params, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `getSelf`; delivers the result on the main queue.
+    @objc(getSelfWithSignerAccessCode:completion:)
+    public func getSelf(
+        signerAccessCode: String,
+        completion: @escaping (SignerSelfInfo?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.getSelf(signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Completion form of `acceptTerms`; delivers the result on the main queue.
+    @objc(acceptTermsWithSignerAccessCode:completion:)
+    public func acceptTerms(
+        signerAccessCode: String,
+        completion: @escaping (AcceptTermsResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.acceptTerms(signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Completion form of `acceptTermsWithoutResponse`; delivers the result on the main queue.
+    @objc(acceptTermsWithoutResponseWithSignerAccessCode:completion:)
+    public func acceptTermsWithoutResponse(
+        signerAccessCode: String,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.acceptTermsWithoutResponse(signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Completion form of `verifyEmail`; delivers the result on the main queue.
+    @objc(verifyEmailWithPayload:completion:)
+    public func verifyEmail(
+        payload: VerifyEmailPayload,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.verifyEmail(payload: payload) }, completion: completion)
+    }
+
+    /// Completion form of `uploadSignature`; delivers the result on the main queue.
+    @objc(uploadSignatureWithSignerAccessCode:type:imageData:reuse:completion:)
+    public func uploadSignature(
+        signerAccessCode: String,
+        type: SignatureType,
+        imageData: Data,
+        reuse: Bool,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.uploadSignature(signerAccessCode: signerAccessCode, type: type, imageData: imageData, reuse: reuse) }, completion: completion)
+    }
+
+    /// Completion form of `downloadSignature`; delivers the result on the main queue.
+    @objc(downloadSignatureWithSignerAccessCode:type:completion:)
+    public func downloadSignature(
+        signerAccessCode: String,
+        type: SignatureType,
+        completion: @escaping (Data?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.downloadSignature(signerAccessCode: signerAccessCode, type: type) }, completion: completion)
+    }
+
+    /// Completion form of `getCurrentDocument`; delivers the result on the main queue.
+    @objc(getCurrentDocumentWithSignerId:signerAccessCode:completion:)
+    public func getCurrentDocument(
+        signerId: String,
+        signerAccessCode: String,
+        completion: @escaping (DocumentDetails?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.getCurrentDocument(signerId: signerId, signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Completion form of `listSignerDocuments`; delivers the result on the main queue.
+    @objc(listSignerDocumentsWithSignerId:signerAccessCode:params:completion:)
+    public func listSignerDocuments(
+        signerId: String,
+        signerAccessCode: String,
+        params: SignerDocumentListParams,
+        completion: @escaping ([DocumentDetails]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.listSignerDocuments(signerId: signerId, signerAccessCode: signerAccessCode, params: params) }, completion: completion)
+    }
+
+    /// Completion form of `searchSignerDocuments`; delivers the result on the main queue.
+    @objc(searchSignerDocumentsWithSignerId:signerAccessCode:search:status:completion:)
+    public func searchSignerDocuments(
+        signerId: String,
+        signerAccessCode: String,
+        search: String?,
+        status: String?,
+        completion: @escaping ([DocumentDetails]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.searchSignerDocuments(signerId: signerId, signerAccessCode: signerAccessCode, search: search, status: status) }, completion: completion)
+    }
+
+    /// Completion form of `signMultipleDocuments`; delivers the result on the main queue.
+    @objc(signMultipleDocumentsWithSignerAccessCode:documentIds:completion:)
+    public func signMultipleDocuments(
+        signerAccessCode: String,
+        documentIds: [String],
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.signMultipleDocuments(signerAccessCode: signerAccessCode, documentIds: documentIds) }, completion: completion)
+    }
+
+    /// Completion form of `declineMultipleDocuments`; delivers the result on the main queue.
+    @objc(declineMultipleDocumentsWithSignerAccessCode:documentIds:reason:completion:)
+    public func declineMultipleDocuments(
+        signerAccessCode: String,
+        documentIds: [String],
+        reason: String,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.declineMultipleDocuments(signerAccessCode: signerAccessCode, documentIds: documentIds, reason: reason) }, completion: completion)
+    }
+
+    /// Completion form of `downloadSignerDocumentArtifact`; delivers the result on the main queue.
+    @objc(downloadSignerDocumentArtifactWithSignerId:documentId:artifact:completion:)
+    public func downloadSignerDocumentArtifact(
+        signerId: String,
+        documentId: String,
+        artifact: DocumentArtifactName,
+        completion: @escaping (Data?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.downloadSignerDocumentArtifact(signerId: signerId, documentId: documentId, artifact: artifact) }, completion: completion)
+    }
+
+    /// Completion form of `downloadSignerDocumentArtifact`; delivers the result on the main queue.
+    @objc(downloadSignerDocumentArtifactWithSignerId:documentId:artifact:signerAccessCode:completion:)
+    public func downloadSignerDocumentArtifact(
+        signerId: String,
+        documentId: String,
+        artifact: DocumentArtifactName,
+        signerAccessCode: String,
+        completion: @escaping (Data?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.downloadSignerDocumentArtifact(signerId: signerId, documentId: documentId, artifact: artifact, signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Completion form of `getSigningDocument`; delivers the result on the main queue.
+    @objc(getSigningDocumentWithSignerAccessCode:hasAcceptedTerms:completion:)
+    public func getSigningDocument(
+        signerAccessCode: String,
+        hasAcceptedTerms: NSNumber?,
+        completion: @escaping (DocumentDetails?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.getSigningDocument(signerAccessCode: signerAccessCode, hasAcceptedTerms: hasAcceptedTerms?.boolValue) }, completion: completion)
+    }
+
+    /// Accepts wire query names and delivers list items on the main queue.
+    @objc(listWithQuery:accountId:completion:)
+    public func list(
+        query: [String: String],
+        accountId: String?,
+        completion: @escaping ([Signer]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.list(params: ListParams(extra: query), accountId: accountId) }, completion: completion)
+    }
+
 }

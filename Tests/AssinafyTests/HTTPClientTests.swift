@@ -72,7 +72,7 @@ final class HTTPClientTests: XCTestCase {
                 return
             }
             var redirect = request
-            redirect.url = URL(string: "https://sandbox.example.test/moved" + url.path)!
+            redirect.url = URL(string: "https://sandbox.example.invalid/moved" + url.path)!
             let response = HTTPURLResponse(
                 url: url,
                 statusCode: Self.state.redirectStatus(),
@@ -97,7 +97,7 @@ final class HTTPClientTests: XCTestCase {
 
         override func startLoading() {
             Self.state.record(request)
-            guard request.url?.host == "sandbox.example.test" else {
+            guard request.url?.host == "sandbox.example.invalid" else {
                 let response = HTTPURLResponse(
                     url: request.url!,
                     statusCode: 200,
@@ -109,7 +109,7 @@ final class HTTPClientTests: XCTestCase {
                 client?.urlProtocolDidFinishLoading(self)
                 return
             }
-            let redirect = URLRequest(url: URL(string: "https://downloads.example.test/file.pdf")!)
+            let redirect = URLRequest(url: URL(string: "https://downloads.example.invalid/file.pdf")!)
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 302,
@@ -126,7 +126,7 @@ final class HTTPClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
         return URLSessionHTTPClient(
-            baseURL: URL(string: "https://sandbox.example.test/v1/")!,
+            baseURL: URL(string: "https://sandbox.example.invalid/v1/")!,
             defaultHeaders: headers,
             session: URLSession(configuration: configuration)
         )
@@ -142,7 +142,7 @@ final class HTTPClientTests: XCTestCase {
         )
 
         let built = try client.buildURLRequest(from: request)
-        XCTAssertEqual(built.url?.absoluteString, "https://sandbox.example.test/v1/documents/doc-1?search=two%20words")
+        XCTAssertEqual(built.url?.absoluteString, "https://sandbox.example.invalid/v1/documents/doc-1?search=two%20words")
         XCTAssertEqual(built.httpMethod, "PUT")
         XCTAssertEqual(built.value(forHTTPHeaderField: "X-Api-Key"), "secret")
         XCTAssertEqual(built.value(forHTTPHeaderField: "Accept"), "application/json")
@@ -250,7 +250,7 @@ final class HTTPClientTests: XCTestCase {
 
     func testSameOriginRedirectKeepsAuthentication() {
         let client = transport()
-        var request = URLRequest(url: URL(string: "https://sandbox.example.test/v1/next")!)
+        var request = URLRequest(url: URL(string: "https://sandbox.example.invalid/v1/next")!)
         request.httpMethod = "GET"
         request.setValue("secret", forHTTPHeaderField: "X-Api-Key")
 
@@ -261,7 +261,7 @@ final class HTTPClientTests: XCTestCase {
 
     func testCrossOriginDownloadRedirectStripsAuthentication() {
         let client = transport()
-        var request = URLRequest(url: URL(string: "https://downloads.example.test/file.pdf")!)
+        var request = URLRequest(url: URL(string: "https://downloads.example.invalid/file.pdf")!)
         request.httpMethod = "GET"
         request.setValue("secret", forHTTPHeaderField: "X-Api-Key")
         request.setValue("Bearer token", forHTTPHeaderField: "Authorization")
@@ -279,11 +279,11 @@ final class HTTPClientTests: XCTestCase {
 
     func testUnsafeCrossOriginRedirectsAreBlocked() {
         let client = transport()
-        var bodyRedirect = URLRequest(url: URL(string: "https://other.example.test/collect")!)
+        var bodyRedirect = URLRequest(url: URL(string: "https://other.example.invalid/collect")!)
         bodyRedirect.httpMethod = "POST"
-        var downgrade = URLRequest(url: URL(string: "http://downloads.example.test/file.pdf")!)
+        var downgrade = URLRequest(url: URL(string: "http://downloads.example.invalid/file.pdf")!)
         downgrade.httpMethod = "GET"
-        var userInfo = URLRequest(url: URL(string: "https://user@downloads.example.test/file.pdf")!)
+        var userInfo = URLRequest(url: URL(string: "https://user@downloads.example.invalid/file.pdf")!)
         userInfo.httpMethod = "GET"
 
         XCTAssertNil(client.redirectedRequest(bodyRedirect))
@@ -293,8 +293,8 @@ final class HTTPClientTests: XCTestCase {
 
     func testPublicTransportInitializerFailsClosedForUnsafeConfiguration() async {
         for client in [
-            URLSessionHTTPClient(baseURL: URL(string: "http://api.example.test/v1")!),
-            URLSessionHTTPClient(baseURL: URL(string: "https://api.example.test/v1")!, timeout: 0),
+            URLSessionHTTPClient(baseURL: URL(string: "http://api.example.invalid/v1")!),
+            URLSessionHTTPClient(baseURL: URL(string: "https://api.example.invalid/v1")!, timeout: 0),
             URLSessionHTTPClient(baseURL: URL(string: "file:///private/tmp/api")!),
         ] {
             do {
@@ -312,7 +312,7 @@ final class HTTPClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RedirectURLProtocol.self]
         let client = URLSessionHTTPClient(
-            baseURL: URL(string: "https://sandbox.example.test/v1")!,
+            baseURL: URL(string: "https://sandbox.example.invalid/v1")!,
             defaultHeaders: [
                 "X-Api-Key": "secret",
                 "Authorization": "Bearer secret",
@@ -325,7 +325,7 @@ final class HTTPClientTests: XCTestCase {
 
         let requests = RedirectURLProtocol.state.requests()
         XCTAssertEqual(requests.count, 2)
-        XCTAssertEqual(requests.last?.url?.host, "downloads.example.test")
+        XCTAssertEqual(requests.last?.url?.host, "downloads.example.invalid")
         XCTAssertNil(requests.last?.value(forHTTPHeaderField: "X-Api-Key"))
         XCTAssertNil(requests.last?.value(forHTTPHeaderField: "Authorization"))
     }
@@ -336,7 +336,7 @@ final class HTTPClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SameOriginRedirectURLProtocol.self]
         configuration.timeoutIntervalForRequest = 5
-        let baseURL = URL(string: "https://sandbox.example.test/v1")!
+        let baseURL = URL(string: "https://sandbox.example.invalid/v1")!
         let oauth = OAuthResource(
             http: URLSessionHTTPClient(
                 baseURL: baseURL,
@@ -374,8 +374,8 @@ final class HTTPClientTests: XCTestCase {
     }
 
     func testCrossOriginRedirectRejectsRequestBody() {
-        let client = URLSessionHTTPClient(baseURL: URL(string: "https://api.example.test/v1")!)
-        var request = URLRequest(url: URL(string: "https://downloads.example.test/file")!)
+        let client = URLSessionHTTPClient(baseURL: URL(string: "https://api.example.invalid/v1")!)
+        var request = URLRequest(url: URL(string: "https://downloads.example.invalid/file")!)
         request.httpMethod = "GET"
         request.httpBody = Data("secret".utf8)
 

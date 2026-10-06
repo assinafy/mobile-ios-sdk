@@ -165,16 +165,13 @@ open class BaseResource: NSObject {
 
     private func unwrapEnvelope<T: Decodable>(_ data: Data, label: String) throws -> T {
         if let error = embeddedAPIError(in: data) { throw error }
-        if let envelope = try? JSONDecoder.assinafy.decode(AssinafyEnvelope<T>.self, from: data) {
-            if let status = envelope.status {
-                if status >= 200 && status < 300 {
-                    if let value = envelope.data { return value }
-                    throw AssinafySDKError("\(label): response envelope contained no data")
-                }
-                let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                throw APIError.from(statusCode: status, responseData: raw)
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["data"] != nil || object["status"] is Int {
+            let envelope = try JSONDecoder.assinafy.decode(AssinafyEnvelope<T>.self, from: data)
+            guard let value = envelope.data else {
+                throw AssinafySDKError("\(label): response envelope contained no data")
             }
-            if let value = envelope.data { return value }
+            return value
         }
         return try JSONDecoder.assinafy.decode(T.self, from: data)
     }

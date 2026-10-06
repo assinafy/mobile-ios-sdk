@@ -184,6 +184,61 @@ final class OAuthResourceTests: XCTestCase {
 
     // MARK: - Token exchange
 
+    func testCallbackRejectsDuplicateParametersAndConflictingOutcome() throws {
+        let request = makeRequest()
+        let query = "code=abc&state=\(request.state)&iss=https://auth.assinafy.com.br"
+        for duplicate in ["code=second", "state=second", "iss=second", "error=a&error=b", "error_description=a&error_description=b"] {
+            XCTAssertNil(OAuthCallback(callbackURL: URL(string: "myapp://oauth-callback?\(query)&\(duplicate)")!))
+        }
+        let callback = try XCTUnwrap(OAuthCallback(
+            callbackURL: URL(string: "myapp://oauth-callback?\(query)&error=access_denied")!
+        ))
+        XCTAssertThrowsError(try callback.validate(against: request)) { error in
+            XCTAssertTrue(error is ValidationError)
+        }
+    }
+
+    func testInvalidPKCEGrammarIsRejectedBeforeAuthorizationAndExchange() async {
+        for verifier in [String(repeating: "a", count: 42), String(repeating: "a", count: 129),
+                         String(repeating: "é", count: 43), String(repeating: "a", count: 42) + "+"] {
+            let request = OAuthAuthorizationRequest(
+                clientId: "client", redirectURI: "https://app.example.invalid/callback",
+                scopes: [.documentsRead], pkce: OAuthPKCE(codeVerifier: verifier)
+            )
+            XCTAssertNil(oauth.authorizationURL(for: request))
+            do {
+                _ = try await oauth.exchangeAuthorizationCode(.authorizationCode(
+                    code: "code", redirectURI: request.redirectURI,
+                    codeVerifier: verifier, clientId: request.clientId
+                ))
+                XCTFail("Expected invalid verifier to throw")
+            } catch {
+                XCTAssertTrue(error is ValidationError)
+            }
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+
+    func testTokenMethodsRejectTheWrongGrantBeforeSending() async {
+        let code = OAuthTokenPayload.authorizationCode(
+            code: "code", redirectURI: "https://app.example.invalid/callback",
+            codeVerifier: OAuthPKCE().codeVerifier, clientId: "client"
+        )
+        do {
+            _ = try await oauth.refreshAccessToken(code)
+            XCTFail("Expected wrong grant to throw")
+        } catch {
+            XCTAssertTrue(error is ValidationError)
+        }
+        do {
+            _ = try await oauth.exchangeAuthorizationCode(.refreshToken("refresh", clientId: "client"))
+            XCTFail("Expected wrong grant to throw")
+        } catch {
+            XCTAssertTrue(error is ValidationError)
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+
     func testExchangeAuthorizationCodePostsFlatRFC6749Body() async throws {
         mock.stubJSON([
             "access_token": "at-1",

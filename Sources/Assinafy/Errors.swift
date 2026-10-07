@@ -29,6 +29,7 @@ public protocol AssinafyErrorProtocol: Error {
     @objc public static let validation = "com.assinafy.sdk.ValidationError"
     @objc public static let network    = "com.assinafy.sdk.NetworkError"
     @objc public static let sdk        = "com.assinafy.sdk.SDKError"
+    @objc public static let mfaRequired = "com.assinafy.sdk.MFARequired"
 }
 
 // MARK: - AssinafySDKError
@@ -140,6 +141,37 @@ extension APIError: CustomNSError {
         if let challenge = wwwAuthenticate { info["wwwAuthenticate"] = challenge }
         if let scope = insufficientScope { info["insufficientScope"] = scope }
         return info
+    }
+}
+
+// MARK: - MFARequiredError
+
+/// Thrown by ``AuthResource/login(_:)`` and ``AuthResource/socialLogin(_:)`` when the
+/// user has two-factor authentication enabled.
+///
+/// Complete the login with ``AuthResource/verifyMFA(_:)`` using ``mfaToken`` and a
+/// code from the user's authenticator app or a recovery code. The challenge is
+/// single-use and expires five minutes after login. Objective-C receives it as an
+/// `NSError` in ``ASFErrorDomain/mfaRequired`` with `userInfo["mfaToken"]`.
+public struct MFARequiredError: AssinafyErrorProtocol, LocalizedError, Sendable {
+    /// Single-use challenge token for ``AuthResource/verifyMFA(_:)``.
+    public let mfaToken: String
+    public var message: String { "Two-factor authentication code required" }
+    public var context: [String: Any] { [:] }
+
+    /// Creates a challenge error carrying the login's `mfa_token`.
+    public init(mfaToken: String) {
+        self.mfaToken = mfaToken
+    }
+
+    public var errorDescription: String? { message }
+}
+
+extension MFARequiredError: CustomNSError {
+    public static var errorDomain: String { ASFErrorDomain.mfaRequired }
+    public var errorCode: Int { 401 }
+    public var errorUserInfo: [String: Any] {
+        [NSLocalizedDescriptionKey: message, "mfaToken": mfaToken]
     }
 }
 

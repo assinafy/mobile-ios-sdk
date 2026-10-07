@@ -185,17 +185,41 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
         ])
         _ = try await client.workspaces.theme()
         try await client.workspaces.uploadLogo(pngData)
-        _ = try await client.webhooks.register(
-            WebhookRegisterPayload(
+        let endpoint = try await client.webhooks.createEndpoint(
+            CreateWebhookEndpointPayload(
                 url: "https://example.invalid/hooks/assinafy",
                 email: "ops@example.invalid",
-                events: ["document.completed"]
+                events: [WebhookEventType.documentReady, WebhookEventType.signerSignedDocument],
+                name: "ERP",
+                signingEnabled: true
             )
         )
+        _ = try await client.webhooks.listEndpoints()
+        _ = try await client.webhooks.updateEndpoint(
+            id: endpoint.id, UpdateWebhookEndpointPayload(isActive: false)
+        )
+        try await client.webhooks.deleteEndpoint(id: endpoint.id)
+        let secret = try await client.webhooks.signingSecret(endpointId: endpoint.id)
+        _ = try await client.webhooks.rotateSigningSecret(endpointId: endpoint.id)
+        _ = WebhookSignature.verify(body: pngData, id: "", timestamp: "", signatureHeader: "", secret: secret)
         _ = try await client.webhooks.listEventTypes()
         let attempts = try await client.webhooks.listDispatches()
         _ = try await client.webhooks.retryDispatch(dispatchId: attempts.data[0].id)
         try await client.webhooks.inactivate()
+    }
+
+    @available(*, unavailable)
+    private func twoFactorLogin(email: String, password: String, code: String) async throws {
+        let publicClient = AssinafyClient(configuration: AssinafyClientConfiguration())
+        let session: LoginResponse
+        do {
+            session = try await publicClient.auth.login(LoginPayload(email: email, password: password))
+        } catch let challenge as MFARequiredError {
+            session = try await publicClient.auth.verifyMFA(
+                VerifyMFAPayload(mfaToken: challenge.mfaToken, code: code)
+            )
+        }
+        _ = session
     }
 
     @available(*, unavailable)

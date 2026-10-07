@@ -55,6 +55,10 @@ final class CredentialScopeTests: XCTestCase {
         assertNoCredential("/login")
 
         mock.stubEnvelope(["token": "t", "accounts": []])
+        _ = try? await auth.verifyMFA(VerifyMFAPayload(mfaToken: "m", code: "123456"))
+        assertNoCredential("/authentication/mfa/verify")
+
+        mock.stubEnvelope(["token": "t", "accounts": []])
         _ = try? await auth.socialLogin(SocialLoginPayload(provider: "google", token: "tok", hasAcceptedTerms: true))
         assertNoCredential("/authentication/social-login")
 

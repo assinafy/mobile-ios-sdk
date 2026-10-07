@@ -47,5 +47,13 @@ final class PayloadDocumentationTests: XCTestCase {
         try decode("WhatsappNotification", as: WhatsappNotification.self)
         try decode("DocumentStatsRow", as: DocumentStatsRow.self)
         try decode("NotificationPreferences", as: NotificationPreferences.self)
+        try decode("WebhookEndpoint", as: WebhookEndpoint.self)
+        try decode("WebhookSigningSecret", as: WebhookSigningSecret.self)
+        try decode("MFAStatus", as: MFAStatus.self)
+        try decode("TOTPEnrollment", as: TOTPEnrollment.self)
+        try decode("RecoveryCodes", as: MFARecoveryCodes.self)
+        XCTAssertThrowsError(
+            try JSONDecoder.assinafy.decode(LoginResponse.self, from: XCTUnwrap(examples["MFAChallenge"]))
+        ) { XCTAssertEqual(($0 as? MFARequiredError)?.mfaToken, "mfa_token_example_001") }
     }
 }

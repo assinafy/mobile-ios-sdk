@@ -137,7 +137,7 @@ extension WebhookEventTypeInfo: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             id:               try c.decode(String.self, forKey: .id),
-            eventDescription: try c.decode(String.self, forKey: .eventDescription)
+            eventDescription: try c.decodeIfPresent(String.self, forKey: .eventDescription) ?? ""
         )
     }
 }
@@ -153,6 +153,8 @@ public final class WebhookDispatch: NSObject {
     public let event: String
     public let activityId: Int
     public let endpoint: String?
+    /// ID of the ``WebhookEndpoint`` that received the delivery.
+    public let endpointId: String?
     /// Lossless JSON object delivered to the webhook endpoint.
     @nonobjc public let payloadJSON: JSONValue?
     /// JSON object delivered to the webhook endpoint, or `nil` when unavailable.
@@ -171,12 +173,13 @@ public final class WebhookDispatch: NSObject {
     public let updatedAt: String?
 
     init(resource: String? = nil, id: String, event: String, activityId: Int,
-         endpoint: String? = nil, payloadJSON: JSONValue? = nil, payload: [String: Any]? = nil,
+         endpoint: String? = nil, endpointId: String? = nil,
+         payloadJSON: JSONValue? = nil, payload: [String: Any]? = nil,
          delivered: Bool, httpStatusCode: NSNumber? = nil, responseBody: String? = nil,
          deliveryError: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
         self.resource = resource
         self.id = id; self.event = event; self.activityId = activityId
-        self.endpoint = endpoint; self.payloadJSON = payloadJSON
+        self.endpoint = endpoint; self.endpointId = endpointId; self.payloadJSON = payloadJSON
         self.payload = payload; self.delivered = delivered
         self.httpStatusCode = httpStatusCode
         self.responseBody = responseBody; self.deliveryError = deliveryError
@@ -190,6 +193,7 @@ extension WebhookDispatch: Decodable {
     enum CodingKeys: String, CodingKey {
         case resource, id, event, endpoint, payload, delivered
         case activityId  = "activity_id"
+        case endpointId  = "endpoint_id"
         case httpStatus  = "http_status"
         case responseBody = "response_body"
         case deliveryError = "error"
@@ -205,8 +209,9 @@ extension WebhookDispatch: Decodable {
             resource:     try c.decodeIfPresent(String.self,   forKey: .resource),
             id:           try c.decode(String.self,           forKey: .id),
             event:        try c.decode(String.self,           forKey: .event),
-            activityId:   try c.decode(Int.self,              forKey: .activityId),
+            activityId:   try c.decodeIfPresent(Int.self,     forKey: .activityId) ?? 0,
             endpoint:     try c.decodeIfPresent(String.self,  forKey: .endpoint),
+            endpointId:   try c.decodeIfPresent(String.self,  forKey: .endpointId),
             payloadJSON:  payloadJSON,
             payload:      payload,
             delivered:    try c.decode(Bool.self,             forKey: .delivered),
@@ -241,6 +246,8 @@ public final class WebhookDispatchListParams: NSObject {
     public var from: Int
     public var to: Int
     public var hasTimeFilter: Bool
+    /// Only deliveries to this ``WebhookEndpoint/id``.
+    public var endpointId: String?
 
     /// Creates webhook-dispatch pagination and optional filters.
     /// - Parameters:
@@ -272,6 +279,7 @@ public final class WebhookDispatchListParams: NSObject {
         if page > 0     { items.append(.init(name: "page",     value: "\(page)")) }
         if perPage > 0  { items.append(.init(name: "per-page", value: "\(perPage)")) }
         if let e = event { items.append(.init(name: "event",   value: e)) }
+        if let endpointId { items.append(.init(name: "endpoint_id", value: endpointId)) }
         if hasDeliveredFilter {
             items.append(.init(name: "delivered", value: delivered ? "true" : "false"))
         }
@@ -284,3 +292,146 @@ public final class WebhookDispatchListParams: NSObject {
 }
 
 extension WebhookDispatchListParams: @unchecked Sendable {}
+
+// MARK: - WebhookEndpoint
+
+/// A URL that receives the workspace's webhook events.
+///
+/// A workspace has one endpoint, or up to three on paid plans. Every active
+/// endpoint subscribed to an event receives it.
+@objcMembers
+public final class WebhookEndpoint: NSObject {
+    public let id: String
+    /// Label that tells endpoints apart.
+    public let name: String?
+    public let url: String
+    /// Contact email for delivery-failure notices.
+    public let email: String
+    public let events: [String]
+    public let isActive: Bool
+    /// Whether deliveries carry a `webhook-signature` header (see ``WebhookSignature``).
+    public let signingEnabled: Bool
+    public let createdAt: String?
+    public let updatedAt: String?
+
+    init(id: String, name: String?, url: String, email: String, events: [String],
+         isActive: Bool, signingEnabled: Bool, createdAt: String?, updatedAt: String?) {
+        self.id = id; self.name = name; self.url = url; self.email = email
+        self.events = events; self.isActive = isActive; self.signingEnabled = signingEnabled
+        self.createdAt = createdAt; self.updatedAt = updatedAt
+    }
+}
+
+extension WebhookEndpoint: @unchecked Sendable {}
+
+extension WebhookEndpoint: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, name, url, email, events
+        case isActive       = "is_active"
+        case signingEnabled = "signing_enabled"
+        case createdAt      = "created_at"
+        case updatedAt      = "updated_at"
+    }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id:             try c.decode(String.self, forKey: .id),
+            name:           try c.decodeIfPresent(String.self, forKey: .name),
+            url:            try c.decodeIfPresent(String.self, forKey: .url) ?? "",
+            email:          try c.decodeIfPresent(String.self, forKey: .email) ?? "",
+            events:         try c.decodeIfPresent([String].self, forKey: .events) ?? [],
+            isActive:       try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false,
+            signingEnabled: try c.decodeIfPresent(Bool.self, forKey: .signingEnabled) ?? false,
+            createdAt:      try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
+            updatedAt:      try decodeFlexibleOptionalString(from: c, forKey: .updatedAt)
+        )
+    }
+}
+
+// MARK: - CreateWebhookEndpointPayload
+
+/// Payload for ``WebhookResource/createEndpoint(_:accountId:)``.
+@objcMembers
+public final class CreateWebhookEndpointPayload: NSObject, Encodable {
+    public let url: String
+    public let email: String
+    public let events: [String]
+    public let name: String?
+    public let isActive: Bool
+    public let signingEnabled: Bool
+
+    /// Creates an endpoint registration.
+    ///
+    /// - Parameters:
+    ///   - url: Absolute HTTP or HTTPS URL that receives deliveries. Must differ from the workspace's other endpoints.
+    ///   - email: Contact email for delivery-failure notices.
+    ///   - events: Event types to deliver. Defaults to ``WebhookEventType/defaultEvents``.
+    ///   - name: Optional label that tells endpoints apart.
+    ///   - isActive: Whether events are delivered. Defaults to `true`.
+    ///   - signingEnabled: Sign deliveries with a Standard Webhooks signature. Defaults to `false`.
+    @objc public init(url: String, email: String, events: [String]? = nil, name: String? = nil,
+                      isActive: Bool = true, signingEnabled: Bool = false) {
+        self.url = url; self.email = email
+        self.events = events ?? WebhookEventType.defaultEvents
+        self.name = name; self.isActive = isActive; self.signingEnabled = signingEnabled
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case url, email, events, name
+        case isActive       = "is_active"
+        case signingEnabled = "signing_enabled"
+    }
+}
+
+extension CreateWebhookEndpointPayload: @unchecked Sendable {}
+
+// MARK: - UpdateWebhookEndpointPayload
+
+/// Partial update for ``WebhookResource/updateEndpoint(id:_:accountId:)``; `nil` values are omitted.
+///
+/// Turning ``signingEnabled`` on generates a secret when the endpoint has none and
+/// keeps the current one otherwise; turning it off discards the secret.
+@objcMembers
+public final class UpdateWebhookEndpointPayload: NSObject, Encodable {
+    public let url: String?
+    public let email: String?
+    public let events: [String]?
+    public let name: String?
+    public let isActive: NSNumber?
+    public let signingEnabled: NSNumber?
+
+    /// Creates a partial endpoint update; `nil` values are omitted.
+    @objc public init(url: String? = nil, email: String? = nil, events: [String]? = nil,
+                      name: String? = nil, isActive: NSNumber? = nil, signingEnabled: NSNumber? = nil) {
+        self.url = url; self.email = email; self.events = events
+        self.name = name; self.isActive = isActive; self.signingEnabled = signingEnabled
+    }
+
+    var isEmpty: Bool {
+        url == nil && email == nil && events == nil && name == nil && isActive == nil && signingEnabled == nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case url, email, events, name
+        case isActive       = "is_active"
+        case signingEnabled = "signing_enabled"
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(url, forKey: .url)
+        try c.encodeIfPresent(email, forKey: .email)
+        try c.encodeIfPresent(events, forKey: .events)
+        try c.encodeIfPresent(name, forKey: .name)
+        if let value = isActive { try c.encode(value.boolValue, forKey: .isActive) }
+        if let value = signingEnabled { try c.encode(value.boolValue, forKey: .signingEnabled) }
+    }
+}
+
+extension UpdateWebhookEndpointPayload: @unchecked Sendable {}
+
+/// `{ "secret": "whsec_…" }` returned by the signing-secret routes.
+struct WebhookSigningSecret: Decodable, Sendable {
+    let secret: String
+}

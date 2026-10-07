@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.10.0] - 2026-10-07
+
+### Added
+
+- Webhook endpoints: `WebhookResource.listEndpoints`, `createEndpoint`, `getEndpoint`,
+  `updateEndpoint` and `deleteEndpoint` manage up to three endpoints per workspace on paid plans.
+- Signed webhook deliveries: `signing_enabled` on endpoints, `signingSecret(endpointId:)` and
+  `rotateSigningSecret(endpointId:)`, and `WebhookSignature.verify` for Standard Webhooks
+  HMAC-SHA256 signatures with replay tolerance.
+- `WebhookDispatch.endpointId` and the `WebhookDispatchListParams.endpointId` filter.
+- Two-factor authentication: `AuthResource.verifyMFA`, `mfaStatus`, `enrollTOTP`, `confirmTOTP`,
+  `regenerateRecoveryCodes` and `removeMFAMethod`.
+- `MFARequiredError`, thrown by `login` and `socialLogin` when the user must enter a second factor;
+  Objective-C receives it in `ASFErrorDomain.mfaRequired` with `userInfo["mfaToken"]`.
+- `Signer.governmentId` and `SignerSelfInfo.governmentId`.
+
+### Fixed
+
+- Optional response fields (`activity_id`, event-type `description`, password-operation `email`,
+  tag `deleted`/`detached`, accept-terms fields) decode when absent.
+
 ## [1.9.0] - 2026-10-05
 
 ### Added

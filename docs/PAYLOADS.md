@@ -112,6 +112,19 @@ methods validate status and discard any returned data.
 | `GET /v1/webhooks/event-types` | No body | Array of [WebhookEventType](#webhookeventtype) |
 | `GET /v1/accounts/{accountId}/webhooks` | No body | Array of [WebhookDispatch](#webhookdispatch) |
 | `POST /v1/accounts/{accountId}/webhooks/{historyId}/retry` | No body | [WebhookDispatch](#webhookdispatch) |
+| `GET /v1/accounts/{accountId}/webhooks/endpoints` | No body | Array of [WebhookEndpoint](#webhookendpoint) |
+| `POST /v1/accounts/{accountId}/webhooks/endpoints` | [JSON](#request-38) | [WebhookEndpoint](#webhookendpoint) |
+| `GET /v1/accounts/{accountId}/webhooks/endpoints/{endpointId}` | No body | [WebhookEndpoint](#webhookendpoint) |
+| `PUT /v1/accounts/{accountId}/webhooks/endpoints/{endpointId}` | [JSON](#request-39) | [WebhookEndpoint](#webhookendpoint) |
+| `DELETE /v1/accounts/{accountId}/webhooks/endpoints/{endpointId}` | No body | [JSON](#response-1) |
+| `GET /v1/accounts/{accountId}/webhooks/endpoints/{endpointId}/secret` | No body | [WebhookSigningSecret](#webhooksigningsecret) |
+| `POST /v1/accounts/{accountId}/webhooks/endpoints/{endpointId}/secret/rotate` | No body | [WebhookSigningSecret](#webhooksigningsecret) |
+| `POST /v1/authentication/mfa/verify` | [JSON](#request-40) | [AuthSession](#authsession) |
+| `GET /v1/users/self/mfa` | No body | [MFAStatus](#mfastatus) |
+| `POST /v1/users/self/mfa/totp` | [JSON](#request-41) | [TOTPEnrollment](#totpenrollment) |
+| `PUT /v1/users/self/mfa/totp/confirm` | [JSON](#request-42) | [RecoveryCodes](#recoverycodes) |
+| `POST /v1/users/self/mfa/recovery-codes` | [JSON](#request-43) | [RecoveryCodes](#recoverycodes) |
+| `DELETE /v1/users/self/mfa/{customId}` | [JSON](#request-43) | [JSON](#response-19) |
 | `GET /.well-known/oauth-protected-resource` | No body | Flat [JSON](#response-18) |
 | `GET /v1/documents/{documentId}/assignments/{assignmentId}/whatsapp-notifications` | No body | Array of [WhatsappNotification](#whatsappnotification) |
 
@@ -637,6 +650,90 @@ get/create/update return the `Template` data object; deletion returns an envelop
 }
 ```
 
+### request-38
+
+`POST /v1/accounts/{accountId}/webhooks/endpoints`
+
+```json
+{
+  "url": "https://app.example.invalid/webhooks/assinafy",
+  "email": "ops@example.invalid",
+  "events": [
+    "document_ready",
+    "signer_signed_document"
+  ],
+  "name": "ERP",
+  "is_active": true,
+  "signing_enabled": true
+}
+```
+
+### request-39
+
+`PUT /v1/accounts/{accountId}/webhooks/endpoints/{endpointId}`
+
+```json
+{
+  "url": "https://app.example.invalid/webhooks/assinafy",
+  "email": "ops@example.invalid",
+  "events": [
+    "document_ready"
+  ],
+  "name": "ERP",
+  "is_active": false,
+  "signing_enabled": true
+}
+```
+
+### request-40
+
+`POST /v1/authentication/mfa/verify`
+
+```json
+{
+  "mfa_token": "mfa_token_example_001",
+  "code": "123456"
+}
+```
+
+### request-41
+
+`POST /v1/users/self/mfa/totp`
+
+```json
+{
+  "label": "My phone"
+}
+```
+
+### request-42
+
+`PUT /v1/users/self/mfa/totp/confirm`
+
+```json
+{
+  "id": "mfa_method_id_example_001",
+  "code": "123456",
+  "password": "synthetic-password",
+  "reauth_code": "654321"
+}
+```
+
+`password` and `reauth_code` are needed only when replacing a confirmed method.
+
+### request-43
+
+`POST /v1/users/self/mfa/recovery-codes` and `DELETE /v1/users/self/mfa/{customId}`
+
+```json
+{
+  "password": "synthetic-password",
+  "code": "123456"
+}
+```
+
+Send the password, a live authenticator code, or a recovery code; one is enough.
+
 ## Response bodies
 
 ### response-1
@@ -822,6 +919,27 @@ get/create/update return the `Template` data object; deletion returns an envelop
 }
 ```
 
+### response-19
+
+`DELETE /v1/users/self/mfa/{customId}`
+
+```json
+{
+  "is_mfa_enabled": false
+}
+```
+
+### MFAChallenge
+
+```json
+{
+  "mfa_token": "mfa_token_example_001"
+}
+```
+
+`POST /v1/login` and `POST /v1/authentication/social-login` answer this for a user
+with two-factor authentication. The SDK throws `MFARequiredError` with the token.
+
 ## Response catalog
 
 ### Envelope
@@ -890,6 +1008,7 @@ get/create/update return the `Template` data object; deletion returns an envelop
   "full_name": "example",
   "email": "signer@example.invalid",
   "whatsapp_phone_number": null,
+  "government_id": null,
   "has_accepted_terms": true
 }
 ```
@@ -1526,6 +1645,7 @@ get/create/update return the `Template` data object; deletion returns an envelop
   "event": "example",
   "activity_id": 1,
   "endpoint": "example",
+  "endpoint_id": "endpoint_id_example_001",
   "payload": {},
   "delivered": true,
   "http_status": 1,
@@ -1533,6 +1653,70 @@ get/create/update return the `Template` data object; deletion returns an envelop
   "error": "example",
   "created_at": "2099-01-01T12:00:00Z",
   "updated_at": "2099-01-01T12:00:00Z"
+}
+```
+
+### WebhookEndpoint
+
+```json
+{
+  "id": "endpoint_id_example_001",
+  "name": "ERP",
+  "url": "https://app.example.invalid/webhooks/assinafy",
+  "email": "ops@example.invalid",
+  "events": [
+    "document_ready",
+    "signer_signed_document"
+  ],
+  "is_active": true,
+  "signing_enabled": true,
+  "created_at": "2099-01-01T12:00:00Z",
+  "updated_at": "2099-01-01T12:00:00Z"
+}
+```
+
+### WebhookSigningSecret
+
+```json
+{
+  "secret": "whsec_c3ludGhldGljLXNpZ25pbmcta2V5"
+}
+```
+
+### MFAStatus
+
+```json
+{
+  "methods": [
+    {
+      "id": "mfa_method_id_example_001",
+      "type": "Totp",
+      "label": "My phone",
+      "confirmed_at": "2099-01-01T12:00:00Z",
+      "last_used_at": "2099-01-01T12:00:00Z"
+    }
+  ],
+  "recovery_codes_remaining": 8
+}
+```
+
+### TOTPEnrollment
+
+```json
+{
+  "id": "mfa_method_id_example_001",
+  "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+  "provisioning_uri": "otpauth://totp/user%40example.invalid?issuer=Assinafy&secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+}
+```
+
+### RecoveryCodes
+
+```json
+{
+  "recovery_codes": [
+    "ABCD-EFGH-JKMN"
+  ]
 }
 ```
 

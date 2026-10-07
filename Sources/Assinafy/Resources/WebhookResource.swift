@@ -1,6 +1,11 @@
 import Foundation
 
-/// Manages webhook subscriptions and delivery history.
+/// Manages webhook endpoints, signing secrets, subscriptions and delivery history.
+///
+/// A workspace has one webhook endpoint, or up to three on paid plans. The
+/// `subscriptions` routes (``register(_:accountId:)``, ``get(accountId:)``,
+/// ``inactivate(accountId:)``) act on the oldest endpoint; use the `endpoints`
+/// methods to manage several.
 ///
 /// Access this resource through ``AssinafyClient/webhooks``.
 ///
@@ -16,7 +21,9 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
-    /// Registers or updates a webhook subscription for a workspace.
+    /// Registers or updates the workspace's oldest webhook endpoint.
+    ///
+    /// Mirrors `PUT /accounts/{accountId}/webhooks/subscriptions`.
     ///
     /// - Parameters:
     ///   - payload: The webhook URL, notification email, and event types to subscribe to.
@@ -26,25 +33,15 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
         _ payload: WebhookRegisterPayload,
         accountId: String? = nil
     ) async throws -> WebhookSubscription {
-        guard let components = URLComponents(string: payload.url),
-              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
-              components.host?.isEmpty == false,
-              components.user == nil,
-              components.password == nil else {
-            throw ValidationError("Webhook URL must be an absolute HTTP or HTTPS URL")
-        }
-        try validateEmail(payload.email)
-        guard payload.events.allSatisfy({
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }) else {
-            throw ValidationError("Webhook event names must not be blank")
-        }
+        try validateTarget(url: payload.url, email: payload.email, events: payload.events)
         let id = try self.accountId(accountId)
         let request = try APIRequest.put("/accounts/\(id)/webhooks/subscriptions", body: payload)
         return try await call("Failed to register webhook", request: request)
     }
 
-    /// Fetches the active webhook subscription for a workspace.
+    /// Fetches the workspace's oldest webhook endpoint.
+    ///
+    /// Mirrors `GET /accounts/{accountId}/webhooks/subscriptions`.
     ///
     /// - Parameter accountId: Override the client's default account ID.
     /// - Returns: The current ``WebhookSubscription``.
@@ -127,6 +124,121 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
         let did = try requireId(dispatchId, name: "Dispatch ID")
         let request = APIRequest.post("/accounts/\(id)/webhooks/\(did)/retry")
         return try await call("Failed to retry webhook dispatch", request: request)
+    }
+
+    // MARK: Endpoints
+
+    /// Lists the workspace's webhook endpoints, oldest first.
+    ///
+    /// Mirrors `GET /accounts/{accountId}/webhooks/endpoints`. OAuth scope: `account:read`.
+    public func listEndpoints(accountId: String? = nil) async throws -> [WebhookEndpoint] {
+        let id = try self.accountId(accountId)
+        let result: PaginatedResult<WebhookEndpoint> = try await callList(
+            "Failed to list webhook endpoints", request: .get("/accounts/\(id)/webhooks/endpoints"))
+        return result.data
+    }
+
+    /// Creates a webhook endpoint.
+    ///
+    /// Mirrors `POST /accounts/{accountId}/webhooks/endpoints`. OAuth scope: `webhooks:write`.
+    /// The API answers `403` past the plan's endpoint limit and `400` when another
+    /// endpoint already uses the URL. With `signingEnabled`, read the generated
+    /// secret with ``signingSecret(endpointId:accountId:)``.
+    public func createEndpoint(
+        _ payload: CreateWebhookEndpointPayload,
+        accountId: String? = nil
+    ) async throws -> WebhookEndpoint {
+        try validateTarget(url: payload.url, email: payload.email, events: payload.events)
+        let id = try self.accountId(accountId)
+        let request = try APIRequest.post("/accounts/\(id)/webhooks/endpoints", body: payload)
+        return try await call("Failed to create webhook endpoint", request: request)
+    }
+
+    /// Fetches one webhook endpoint.
+    ///
+    /// Mirrors `GET /accounts/{accountId}/webhooks/endpoints/{endpointId}`. OAuth scope: `account:read`.
+    public func getEndpoint(id endpointId: String, accountId: String? = nil) async throws -> WebhookEndpoint {
+        let path = try endpointPath(endpointId, accountId: accountId)
+        return try await call("Failed to fetch webhook endpoint", request: .get(path))
+    }
+
+    /// Updates the fields set on `payload`.
+    ///
+    /// Mirrors `PUT /accounts/{accountId}/webhooks/endpoints/{endpointId}`. OAuth scope: `webhooks:write`.
+    public func updateEndpoint(
+        id endpointId: String,
+        _ payload: UpdateWebhookEndpointPayload,
+        accountId: String? = nil
+    ) async throws -> WebhookEndpoint {
+        guard !payload.isEmpty else {
+            throw ValidationError("Webhook endpoint update must change at least one field")
+        }
+        if let url = payload.url { try validateURL(url) }
+        if let email = payload.email { try validateEmail(email) }
+        if let events = payload.events { try validateEvents(events) }
+        let path = try endpointPath(endpointId, accountId: accountId)
+        return try await call("Failed to update webhook endpoint", request: try .put(path, body: payload))
+    }
+
+    /// Deletes a webhook endpoint and frees its slot.
+    ///
+    /// Mirrors `DELETE /accounts/{accountId}/webhooks/endpoints/{endpointId}`. OAuth scope: `webhooks:write`.
+    public func deleteEndpoint(id endpointId: String, accountId: String? = nil) async throws {
+        let path = try endpointPath(endpointId, accountId: accountId)
+        try await callVoid("Failed to delete webhook endpoint", request: .delete(path))
+    }
+
+    /// Returns the endpoint's `whsec_` signing secret for ``WebhookSignature``.
+    ///
+    /// Mirrors `GET /accounts/{accountId}/webhooks/endpoints/{endpointId}/secret`.
+    /// The API answers `400` when signing is disabled. Not available to OAuth applications.
+    public func signingSecret(endpointId: String, accountId: String? = nil) async throws -> String {
+        let path = try endpointPath(endpointId, accountId: accountId) + "/secret"
+        let result: WebhookSigningSecret = try await call("Failed to fetch webhook signing secret",
+                                                          request: .get(path))
+        return result.secret
+    }
+
+    /// Replaces the endpoint's signing secret and returns the new one.
+    ///
+    /// Mirrors `POST /accounts/{accountId}/webhooks/endpoints/{endpointId}/secret/rotate`.
+    /// The old secret stops working immediately. The API answers `400` when signing
+    /// is disabled. Not available to OAuth applications.
+    public func rotateSigningSecret(endpointId: String, accountId: String? = nil) async throws -> String {
+        let path = try endpointPath(endpointId, accountId: accountId) + "/secret/rotate"
+        let result: WebhookSigningSecret = try await call("Failed to rotate webhook signing secret",
+                                                          request: .post(path))
+        return result.secret
+    }
+
+    // MARK: Validation
+
+    private func endpointPath(_ endpointId: String, accountId: String?) throws -> String {
+        let id = try self.accountId(accountId)
+        let eid = try requireId(endpointId, name: "Endpoint ID")
+        return "/accounts/\(id)/webhooks/endpoints/\(eid)"
+    }
+
+    private func validateTarget(url: String, email: String, events: [String]) throws {
+        try validateURL(url)
+        try validateEmail(email)
+        try validateEvents(events)
+    }
+
+    private func validateURL(_ url: String) throws {
+        guard let components = URLComponents(string: url),
+              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil else {
+            throw ValidationError("Webhook URL must be an absolute HTTP or HTTPS URL")
+        }
+    }
+
+    private func validateEvents(_ events: [String]) throws {
+        guard events.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            throw ValidationError("Webhook event names must not be blank")
+        }
     }
 
     // MARK: - Objective-C / completion-handler API
@@ -215,6 +327,80 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
         completion: @escaping (WebhookDispatch?, Error?) -> Void
     ) {
         withCompletion({ try await self.retryDispatch(dispatchId: dispatchId, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `listEndpoints`; delivers the result on the main queue.
+    @objc(listWebhookEndpointsWithAccountId:completion:)
+    public func listEndpoints(
+        accountId: String?,
+        completion: @escaping ([WebhookEndpoint]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.listEndpoints(accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `createEndpoint`; delivers the result on the main queue.
+    @objc(createWebhookEndpoint:accountId:completion:)
+    public func createEndpoint(
+        _ payload: CreateWebhookEndpointPayload,
+        accountId: String?,
+        completion: @escaping (WebhookEndpoint?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.createEndpoint(payload, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `getEndpoint`; delivers the result on the main queue.
+    @objc(getWebhookEndpointWithId:accountId:completion:)
+    public func getEndpoint(
+        id endpointId: String,
+        accountId: String?,
+        completion: @escaping (WebhookEndpoint?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.getEndpoint(id: endpointId, accountId: accountId) }, completion: completion)
+    }
+
+    /// Completion form of `updateEndpoint`; delivers the result on the main queue.
+    @objc(updateWebhookEndpointWithId:payload:accountId:completion:)
+    public func updateEndpoint(
+        id endpointId: String,
+        _ payload: UpdateWebhookEndpointPayload,
+        accountId: String?,
+        completion: @escaping (WebhookEndpoint?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.updateEndpoint(id: endpointId, payload, accountId: accountId) },
+                       completion: completion)
+    }
+
+    /// Completion form of `deleteEndpoint`; notifies the main queue.
+    @objc(deleteWebhookEndpointWithId:accountId:completion:)
+    public func deleteEndpoint(
+        id endpointId: String,
+        accountId: String?,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.deleteEndpoint(id: endpointId, accountId: accountId) },
+                           completion: completion)
+    }
+
+    /// Completion form of `signingSecret`; delivers the result on the main queue.
+    @objc(webhookSigningSecretWithEndpointId:accountId:completion:)
+    public func signingSecret(
+        endpointId: String,
+        accountId: String?,
+        completion: @escaping (NSString?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.signingSecret(endpointId: endpointId, accountId: accountId) as NSString },
+                       completion: completion)
+    }
+
+    /// Completion form of `rotateSigningSecret`; delivers the result on the main queue.
+    @objc(rotateWebhookSigningSecretWithEndpointId:accountId:completion:)
+    public func rotateSigningSecret(
+        endpointId: String,
+        accountId: String?,
+        completion: @escaping (NSString?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.rotateSigningSecret(endpointId: endpointId, accountId: accountId) as NSString },
+                       completion: completion)
     }
 
 }

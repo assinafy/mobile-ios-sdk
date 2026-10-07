@@ -97,8 +97,14 @@ All methods in this section are available through `client.auth`.
 
 | Async SDK method | Auth | Exact request | Wire response and SDK result |
 | --- | --- | --- | --- |
-| `login(_:)` | Public | `POST /login`; JSON `email` and `password`, both required | `data: AuthSession` -> `LoginResponse` |
-| `socialLogin(_:)` | Public | `POST /authentication/social-login`; JSON `provider` (`google`), `token`, and `has_accepted_terms`, all required | `data: AuthSession` -> `LoginResponse` |
+| `login(_:)` | Public | `POST /login`; JSON `email` and `password`, both required | `data: AuthSession` -> `LoginResponse`; a `data.mfa_token` challenge throws `MFARequiredError` |
+| `socialLogin(_:)` | Public | `POST /authentication/social-login`; JSON `provider` (`google`), `token`, and `has_accepted_terms`, all required | `data: AuthSession` -> `LoginResponse`; a `data.mfa_token` challenge throws `MFARequiredError` |
+| `verifyMFA(_:)` | Public | `POST /authentication/mfa/verify`; required JSON `mfa_token` and `code` (6-digit authenticator code or recovery code) | `data: AuthSession` -> `LoginResponse` |
+| `mfaStatus()` | Account | `GET /users/self/mfa` | `data: {methods: [MFAMethod], recovery_codes_remaining: integer}` -> `MFAStatus` |
+| `enrollTOTP(label:)` | Account | `POST /users/self/mfa/totp`; optional JSON `label` | `data: {id, secret, provisioning_uri}` -> `TOTPEnrollment` |
+| `confirmTOTP(_:)` | Account | `PUT /users/self/mfa/totp/confirm`; required `id`, `code`; `password` or `reauth_code` only when replacing a confirmed method | `data.recovery_codes: [string]` -> `[String]` |
+| `regenerateRecoveryCodes(_:)` | Account | `POST /users/self/mfa/recovery-codes`; `password` and/or `code`, at least one required by the SDK | `data.recovery_codes: [string]` -> `[String]` |
+| `removeMFAMethod(id:_:)` | Account | `DELETE /users/self/mfa/{id}`; JSON body `password` and/or `code`, at least one required by the SDK | `data.is_mfa_enabled: boolean` -> `Bool` |
 | `linkSocialLogin(_:)` | Account | `POST /auth/link-social-login`; JSON `provider` (`google`) and `token`, both required | Bare envelope; returns `Void` |
 | `currentUser()` | Account | `GET /users/self` | `data` is a direct `AuthUser`, normalized to `SelfResponse(user: data, accounts: [])`. The decoder also accepts the former `{user, accounts}` data wrapper. |
 | `currentUserProfile()` | Account | `GET /users/self` | Returns `User`; accepts both documented direct `data: User` and the sandbox compatibility `{user, accounts}` wrapper. |
@@ -117,6 +123,13 @@ All methods in this section are available through `client.auth`.
 
 `NotificationPreferences` has exactly these nine Boolean wire keys. The update
 payload uses the same keys and may send any nonempty subset:
+
+Two-factor login: `login(_:)` throws `MFARequiredError` carrying `mfaToken`.
+The challenge is single-use and expires five minutes after login. Pass it with
+the user's code to `verifyMFA(_:)`, which returns the session. Objective-C
+receives `NSError` in `ASFErrorDomain.mfaRequired` (code `401`) with
+`userInfo["mfaToken"]`. `TOTPEnrollment.secret` and the recovery codes from
+`confirmTOTP(_:)` and `regenerateRecoveryCodes(_:)` are returned only once.
 
 ```json
 {
@@ -614,23 +627,55 @@ The SDK retains these compatibility fields:
 
 ## Webhooks
 
-All webhook methods require account auth.
+All webhook methods require account auth. A workspace has one endpoint, or up
+to three on paid plans. The `subscriptions` routes act on the oldest endpoint;
+the `endpoints` routes manage each one.
 
 | Async SDK method | Exact request | Wire response and SDK result |
 | --- | --- | --- |
+| `listEndpoints(accountId:)` | `GET /accounts/{accountId}/webhooks/endpoints`; scope `account:read` | `data: [WebhookEndpoint]`, oldest first -> `[WebhookEndpoint]` |
+| `createEndpoint(_:accountId:)` | `POST /accounts/{accountId}/webhooks/endpoints`; required `url`, `email`, `events`; optional `name`, `is_active` (default `true`), `signing_enabled` (default `false`); scope `webhooks:write` | `WebhookEndpoint`. `403` past the plan limit; `400` when another endpoint uses the URL |
+| `getEndpoint(id:accountId:)` | `GET /accounts/{accountId}/webhooks/endpoints/{endpointId}`; scope `account:read` | `WebhookEndpoint` |
+| `updateEndpoint(id:_:accountId:)` | `PUT /accounts/{accountId}/webhooks/endpoints/{endpointId}`; any nonempty subset of `url`, `email`, `events`, `name`, `is_active`, `signing_enabled`; scope `webhooks:write` | Updated `WebhookEndpoint`. Enabling signing creates a secret if none exists; disabling discards it |
+| `deleteEndpoint(id:accountId:)` | `DELETE /accounts/{accountId}/webhooks/endpoints/{endpointId}`; scope `webhooks:write` | Documented `data: []`; returns `Void` |
+| `signingSecret(endpointId:accountId:)` | `GET /accounts/{accountId}/webhooks/endpoints/{endpointId}/secret`; not available to OAuth applications | `data.secret` (`whsec_…`) -> `String`; `400` when signing is disabled |
+| `rotateSigningSecret(endpointId:accountId:)` | `POST /accounts/{accountId}/webhooks/endpoints/{endpointId}/secret/rotate`; not available to OAuth applications | New `data.secret` -> `String`; the old secret stops working immediately |
 | `register(_:accountId:)` | `PUT /accounts/{accountId}/webhooks/subscriptions`; required `events: [string]`, `is_active: boolean`, `url: URI`, `email: email` | `WebhookSubscription` |
 | `get(accountId:)` | `GET /accounts/{accountId}/webhooks/subscriptions` | `WebhookSubscription` |
 | `delete(accountId:)` | Deprecated SDK alias for `PUT /accounts/{accountId}/webhooks/inactivate`; the API has no destructive subscription delete | Response discarded; returns `Void` |
 | `inactivate(accountId:)` | `PUT /accounts/{accountId}/webhooks/inactivate`; no body | Documented updated `WebhookSubscription` is discarded; returns `Void` |
 | `inactivateAndReturn(accountId:)` | Same request | Updated `WebhookSubscription` |
 | `listEventTypes()` | `GET /webhooks/event-types` | `[WebhookEventTypeInfo]` |
-| `listDispatches(params:accountId:)` | `GET /accounts/{accountId}/webhooks`; optional `event`, `delivered=true|false`, `from`, `to`, `page`, `per-page` | `PaginatedResult<WebhookDispatch>` |
+| `listDispatches(params:accountId:)` | `GET /accounts/{accountId}/webhooks`; optional `event`, `endpoint_id`, `delivered=true|false`, `from`, `to`, `page`, `per-page` | `PaginatedResult<WebhookDispatch>` |
 | `retryDispatch(dispatchId:accountId:)` | `POST /accounts/{accountId}/webhooks/{historyId}/retry`; no body | New `WebhookDispatch` |
 
 `from` and `to` are integer Unix timestamps. A dispatch's `http_status` is
 nullable when no HTTP response was received; use `httpStatusCode` to preserve
 that distinction. The deprecated `httpStatus` compatibility property maps null
 to zero.
+
+### Verifying signed deliveries
+
+Deliveries to an endpoint with `signing_enabled` carry the Standard Webhooks
+headers `webhook-id`, `webhook-timestamp` and `webhook-signature`. On the
+receiving server, verify the **raw** body:
+
+```swift
+let valid = WebhookSignature.verify(
+    body: rawBody,
+    id: headers["webhook-id"] ?? "",
+    timestamp: headers["webhook-timestamp"] ?? "",
+    signatureHeader: headers["webhook-signature"] ?? "",
+    secret: endpointSecret            // "whsec_…"
+)
+```
+
+`verify` computes HMAC-SHA256 of `{webhook-id}.{webhook-timestamp}.{body}`
+with the base64 key after `whsec_`, accepts any matching space-separated
+`v1,<base64>` entry using a constant-time comparison, and rejects timestamps
+more than `tolerance` seconds (default `WebhookSignature.defaultTolerance`,
+300) from `now`. Objective-C uses
+`verifyBody:webhookId:timestamp:signatureHeader:secret:`.
 
 ## Request payload and parameter catalog
 
@@ -754,7 +799,20 @@ complete encoded shape for public request models and query containers.
   Omitted `events` at initialization uses `WebhookEventType.defaultEvents`.
   Registration requires an absolute HTTP or HTTPS URL without user information,
   a valid email, and no blank event names.
-- `WebhookDispatchListParams`: positive `page` and `perPage`; optional `event`;
+- `CreateWebhookEndpointPayload`: required `url`, `email`, `events`,
+  `is_active`, `signing_enabled`; optional `name`. Omitted `events` uses
+  `WebhookEventType.defaultEvents`. URL, email and event validation match
+  `WebhookRegisterPayload`.
+- `UpdateWebhookEndpointPayload`: partial `url`, `email`, `events`, `name`,
+  `is_active` and `signing_enabled` (`NSNumber` for the Booleans). At least one
+  change is required; set values are validated like creation.
+- `VerifyMFAPayload`: required `mfa_token` and `code`.
+- `ConfirmTOTPPayload`: required `id` and `code`; optional `password` and
+  `reauth_code`.
+- `MFAReauthPayload`: optional `password` and `code`; at least one nonblank
+  value is required.
+- `WebhookDispatchListParams`: positive `page` and `perPage`; optional `event`
+  and `endpointId` (`endpoint_id`);
   `delivered` only when `hasDeliveredFilter`; positive Unix `from`/`to` only
   when `hasTimeFilter`.
 - `ListParams`: positive `page` and `perPage`, nonempty `search` and `sort`, and
@@ -804,6 +862,13 @@ wire names; `?` means nullable or conditionally present.
   `is_delete_allowed: boolean`, `created_at: date-time`.
 - `NotificationPreferences`: the nine required Boolean keys listed in the
   authentication section.
+- MFA challenge: `{mfa_token: string}` in place of `AuthSession`; surfaced as
+  `MFARequiredError.mfaToken`.
+- `MFAStatus`: `methods: [MFAMethod]`, `recovery_codes_remaining: integer`.
+- `MFAMethod`: `id: string`, `type: string` (`Totp`), `label?: string`,
+  `confirmed_at?: date-time`, `last_used_at?: date-time`.
+- `TOTPEnrollment`: `id: string`, `secret: string` (base32),
+  `provisioning_uri: string` (`otpauth://`).
 - `ApiKey`: `api_key?: string`.
 - `EmailResponse`: `email: string`.
 - `SelfResponse` is the compatibility view containing `user: User` and
@@ -841,7 +906,7 @@ channel was used. The four verification counters add to `signature_requests`.
 
 - `Signer`: `resource?: string`, `id: string`, `full_name: string`,
   `email?: string`, `whatsapp_phone_number?: string`,
-  `has_accepted_terms: boolean`.
+  `government_id?: string`, `has_accepted_terms: boolean`.
 - `SignerSelf`: all `Signer` fields plus `has_signature: boolean`,
   `has_initial: boolean`, `is_signature_reusable: boolean`.
 - `AcceptTermsResponse` is a source-compatible SDK view with `full_name`,
@@ -976,9 +1041,13 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
 - `WebhookSubscription`: `events: [string]`, `is_active: boolean`,
   `url?: URL string`, `email?: string`, `updated_at?: date-time`. The SDK also
   tolerates extension/legacy `id` and `created_at` fields.
+- `WebhookEndpoint`: `id: string`, `name?: string`, `url: string`,
+  `email: string`, `events: [string]`, `is_active: boolean`,
+  `signing_enabled: boolean`, `created_at: date-time`, `updated_at: date-time`.
 - `WebhookEventType`: `id: string`, `description: string`.
 - `WebhookDispatch`: `resource: string`, `id: string`, `event: string`,
-  `activity_id: integer`, `endpoint?: URL string`, `payload?: object`,
+  `activity_id: integer`, `endpoint?: URL string`, `endpoint_id?: string`,
+  `payload?: object`,
   `delivered: boolean`, `http_status?: integer`, `response_body?: string`,
   `error?: string`, `created_at: date-time`, `updated_at: date-time`.
   `payloadJSON` is the lossless Swift value; `payload` is a Foundation
@@ -1260,14 +1329,14 @@ These are the explicit resource selectors:
 | Resource | Completion selectors |
 | --- | --- |
 | Assignment | `listAssignmentsWithAccountId:completion:`, `createAssignmentForDocument:signerIds:completion:`, `resendNotificationForDocument:assignmentId:signerId:completion:`, `resetExpirationWithDocumentId:assignmentId:expiresAt:completion:`, `resetExpirationWithDocumentId:assignmentId:newExpiresAt:completion:`, `estimateResendCostWithDocumentId:assignmentId:signerId:completion:`, `signWithDocumentId:assignmentId:signerAccessCode:fields:completion:`, `declineWithDocumentId:assignmentId:signerAccessCode:reason:completion:`, `listWhatsappNotificationsWithDocumentId:assignmentId:completion:`, `createAssignmentForDocument:payloadJSON:completion:`, `estimateAssignmentCostForDocument:payloadJSON:completion:`, `listWithQuery:accountId:completion:` |
-| Auth | `loginWithPayload:completion:`, `getAPIKeyWithCompletion:`, `createAPIKeyWithPayload:completion:`, `currentUserWithCompletion:`, `getNotificationPreferencesWithCompletion:`, `updateNotificationPreferences:completion:`, `statsWithParams:completion:`, `linkSocialLogin:completion:`, `socialLoginWithPayload:completion:`, `currentUserProfileWithCompletion:`, `changePasswordWithPayload:completion:`, `changePasswordAndReturnResponseWithPayload:completion:`, `requestPasswordResetWithPayload:completion:`, `requestPasswordResetAndReturnResponseWithPayload:completion:`, `resetPasswordWithPayload:completion:`, `resetPasswordAndReturnResponseWithPayload:completion:`, `deleteAPIKeyWithCompletion:` |
+| Auth | `loginWithPayload:completion:`, `getAPIKeyWithCompletion:`, `createAPIKeyWithPayload:completion:`, `currentUserWithCompletion:`, `getNotificationPreferencesWithCompletion:`, `updateNotificationPreferences:completion:`, `statsWithParams:completion:`, `linkSocialLogin:completion:`, `socialLoginWithPayload:completion:`, `currentUserProfileWithCompletion:`, `changePasswordWithPayload:completion:`, `changePasswordAndReturnResponseWithPayload:completion:`, `requestPasswordResetWithPayload:completion:`, `requestPasswordResetAndReturnResponseWithPayload:completion:`, `resetPasswordWithPayload:completion:`, `resetPasswordAndReturnResponseWithPayload:completion:`, `deleteAPIKeyWithCompletion:`, `verifyMFAWithPayload:completion:`, `mfaStatusWithCompletion:`, `enrollTOTPWithLabel:completion:`, `confirmTOTPWithPayload:completion:`, `regenerateRecoveryCodesWithProof:completion:`, `removeMFAMethodWithId:proof:completion:` |
 | Document | `uploadDocument:accountId:completion:`, `listDocumentsWithAccountId:completion:`, `getDocumentWithId:completion:`, `deleteDocumentWithId:completion:`, `renameDocumentWithId:name:completion:`, `searchDocumentsWithTerm:status:accountId:completion:`, `uploadWithData:options:completion:`, `listWithDocumentListParams:accountId:completion:`, `searchWithSearch:status:page:perPage:accountId:completion:`, `waitUntilReadyWithDocumentId:options:completion:`, `downloadArtifactWithDocumentId:artifact:completion:`, `downloadThumbnailWithDocumentId:completion:`, `downloadPageWithDocumentId:pageId:completion:`, `activitiesWithDocumentId:completion:`, `createFromTemplateWithTemplateId:signers:options:accountId:completion:`, `estimateCostFromTemplateWithTemplateId:signers:accountId:completion:`, `verifyWithSignatureHash:completion:`, `verifyDetailsWithSignatureHash:completion:`, `isFullySignedWithDocumentId:completion:`, `getSigningProgressWithDocumentId:completion:`, `listStatusesWithCompletion:`, `getPublicInfoWithDocumentId:completion:`, `sendPublicSignTokenWithDocumentId:payload:completion:`, `sendPublicSignTokenWithDocumentId:email:completion:`, `confirmSignerDataWithDocumentId:signerAccessCode:payload:completion:`, `confirmSignerDataAndReturnSignerWithDocumentId:signerAccessCode:payload:completion:`, `listWithQuery:accountId:completion:` |
 | Field | `createField:accountId:completion:`, `listFieldsWithAccountId:completion:`, `getFieldWithId:accountId:completion:`, `deleteFieldWithId:accountId:completion:`, `listWithFieldListParams:accountId:completion:`, `updateWithFieldId:payload:accountId:completion:`, `validateWithFieldId:value:signerAccessCode:accountId:completion:`, `validateMultipleWithItems:signerAccessCode:accountId:completion:`, `listFieldTypesWithCompletion:` |
 | OAuth | `protectedResourceMetadataWithCompletion:`, `authorizationServerMetadataWithIssuer:completion:`, `exchangeAuthorizationCode:completion:`, `refreshAccessToken:completion:`, `revokeToken:completion:`, `userInfoWithCompletion:` |
 | Signer | `createSigner:accountId:completion:`, `getSignerWithId:accountId:completion:`, `updateSignerWithId:payload:accountId:completion:`, `deleteSignerWithId:accountId:completion:`, `findSignerByEmail:accountId:completion:`, `getSelfWithSignerAccessCode:completion:`, `acceptTermsWithSignerAccessCode:completion:`, `acceptTermsWithoutResponseWithSignerAccessCode:completion:`, `verifyEmailWithPayload:completion:`, `uploadSignatureWithSignerAccessCode:type:imageData:reuse:completion:`, `downloadSignatureWithSignerAccessCode:type:completion:`, `getCurrentDocumentWithSignerId:signerAccessCode:completion:`, `listSignerDocumentsWithSignerId:signerAccessCode:params:completion:`, `searchSignerDocumentsWithSignerId:signerAccessCode:search:status:completion:`, `signMultipleDocumentsWithSignerAccessCode:documentIds:completion:`, `declineMultipleDocumentsWithSignerAccessCode:documentIds:reason:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:signerAccessCode:completion:`, `getSigningDocumentWithSignerAccessCode:hasAcceptedTerms:completion:`, `listWithQuery:accountId:completion:` |
 | Tag | `listTagsWithAccountId:completion:`, `createTag:accountId:completion:`, `updateTagWithId:payload:accountId:completion:`, `deleteTagWithId:force:accountId:completion:`, `listWithTagListParams:accountId:completion:`, `deleteAndReturnStatusWithTagId:force:accountId:completion:`, `listDocumentTagsWithDocumentId:accountId:completion:`, `replaceDocumentTagsWithDocumentId:tagIds:accountId:completion:`, `appendDocumentTagsWithDocumentId:tagIds:accountId:completion:`, `detachDocumentTagWithDocumentId:tagId:accountId:completion:`, `detachDocumentTagAndReturnStatusWithDocumentId:tagId:accountId:completion:` |
 | Template | `listTemplatesWithAccountId:completion:`, `getTemplateWithId:accountId:completion:`, `deleteTemplateWithId:accountId:completion:`, `createWithName:pdfData:accountId:completion:`, `updateWithTemplateId:payload:accountId:completion:`, `listWithTemplateListParams:accountId:completion:`, `listWithQuery:accountId:completion:` |
-| Webhook | `registerWebhook:accountId:completion:`, `getWebhookWithAccountId:completion:`, `deleteWebhookWithAccountId:completion:`, `inactivateWebhookWithAccountId:completion:`, `inactivateWebhookAndReturnWithAccountId:completion:`, `listDispatchesWithAccountId:completion:`, `listEventTypesWithCompletion:`, `listDispatchesWithWebhookDispatchListParams:accountId:completion:`, `retryDispatchWithDispatchId:accountId:completion:` |
+| Webhook | `registerWebhook:accountId:completion:`, `getWebhookWithAccountId:completion:`, `deleteWebhookWithAccountId:completion:`, `inactivateWebhookWithAccountId:completion:`, `inactivateWebhookAndReturnWithAccountId:completion:`, `listDispatchesWithAccountId:completion:`, `listEventTypesWithCompletion:`, `listDispatchesWithWebhookDispatchListParams:accountId:completion:`, `retryDispatchWithDispatchId:accountId:completion:`, `listWebhookEndpointsWithAccountId:completion:`, `createWebhookEndpoint:accountId:completion:`, `getWebhookEndpointWithId:accountId:completion:`, `updateWebhookEndpointWithId:payload:accountId:completion:`, `deleteWebhookEndpointWithId:accountId:completion:`, `webhookSigningSecretWithEndpointId:accountId:completion:`, `rotateWebhookSigningSecretWithEndpointId:accountId:completion:` |
 | Workspace | `createWorkspace:completion:`, `listWorkspacesWithCompletion:`, `getWorkspaceWithId:completion:`, `updateWorkspaceWithId:payload:completion:`, `deleteWorkspaceWithId:force:completion:`, `themeWithAccountId:completion:`, `statsWithParams:accountId:completion:`, `downloadLogoWithAccountId:completion:`, `uploadLogo:filename:contentType:accountId:completion:`, `deleteLogoWithAccountId:completion:`, `listWithQuery:completion:` |
 
 `ListParams` completion overloads remain Swift-only; Objective-C uses the

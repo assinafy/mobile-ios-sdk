@@ -55,7 +55,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.9.0"
+        from: "1.10.0"
     ),
 ],
 targets: [
@@ -132,10 +132,22 @@ public document routes:
 ```swift
 let publicClient = AssinafyClient(configuration: AssinafyClientConfiguration())
 
-let session = try await publicClient.auth.login(
-    LoginPayload(email: email, password: password)
-)
+let session: LoginResponse
+do {
+    session = try await publicClient.auth.login(LoginPayload(email: email, password: password))
+} catch let challenge as MFARequiredError {
+    // Two-factor authentication: ask for the authenticator code (or a recovery code).
+    session = try await publicClient.auth.verifyMFA(
+        VerifyMFAPayload(mfaToken: challenge.mfaToken, code: code)
+    )
+}
 ```
+
+The `mfaToken` is single-use and expires five minutes after login. Once signed in,
+`auth.enrollTOTP(label:)` returns the secret and a `provisioningURI` (show it as a QR code), and
+`auth.confirmTOTP(_:)` activates the method and returns the recovery codes — both are shown only
+once. `auth.mfaStatus()`, `auth.regenerateRecoveryCodes(_:)`, and `auth.removeMFAMethod(id:_:)`
+complete the set; the last two need the password or a current code in `MFAReauthPayload`.
 
 ## The four ways to authenticate
 
@@ -701,24 +713,62 @@ try await client.workspaces.uploadLogo(pngData)
 
 `theme()` is the canonical source of an account's branding colours.
 
-Webhooks deliver document lifecycle events:
+Webhooks deliver document lifecycle events. A workspace has one endpoint, or up to three on paid
+plans; each receives the events it subscribes to:
 
 ```swift
-let subscription = try await client.webhooks.register(
-    WebhookRegisterPayload(
+let endpoint = try await client.webhooks.createEndpoint(
+    CreateWebhookEndpointPayload(
         url: "https://example.invalid/hooks/assinafy",
         email: "ops@example.invalid",
-        events: ["document.completed"]
+        events: [WebhookEventType.documentReady, WebhookEventType.signerSignedDocument],
+        name: "ERP",
+        signingEnabled: true
     )
 )
+let endpoints = try await client.webhooks.listEndpoints()
+_ = try await client.webhooks.updateEndpoint(
+    id: endpoint.id, UpdateWebhookEndpointPayload(isActive: false)
+)
+try await client.webhooks.deleteEndpoint(id: endpoint.id)
 
 let types    = try await client.webhooks.listEventTypes()
 let attempts = try await client.webhooks.listDispatches()
 try await client.webhooks.retryDispatch(dispatchId: attempts.data[0].id)
 ```
 
-The API has no destructive delete for subscriptions. Stop delivery with
-`webhooks.inactivate()`; `webhooks.delete()` is deprecated and forwards to it.
+`register`, `get`, and `inactivate` act on the oldest endpoint. Creating one past the plan limit
+returns `403`; reusing another endpoint's URL returns `400`. Filter delivery history for one
+endpoint with `WebhookDispatchListParams.endpointId`.
+
+### Signed deliveries
+
+With `signingEnabled`, every delivery carries the [Standard Webhooks](https://www.standardwebhooks.com)
+headers `webhook-id`, `webhook-timestamp`, and `webhook-signature`. The `whsec_…` secret is read
+with an API key (OAuth applications cannot read it):
+
+```swift
+let secret  = try await client.webhooks.signingSecret(endpointId: endpoint.id)
+let rotated = try await client.webhooks.rotateSigningSecret(endpointId: endpoint.id) // old one stops at once
+```
+
+On the server that receives the webhook, verify the **raw** body exactly as received:
+
+```swift
+let valid = WebhookSignature.verify(
+    body: rawBody,
+    id: headers["webhook-id"] ?? "",
+    timestamp: headers["webhook-timestamp"] ?? "",
+    signatureHeader: headers["webhook-signature"] ?? "",
+    secret: secret
+)
+```
+
+`verify` compares in constant time and rejects timestamps more than five minutes from the local
+clock, which blocks replays.
+
+The legacy subscription has no destructive delete. Stop delivery with `webhooks.inactivate()`;
+`webhooks.delete()` is deprecated and forwards to it.
 
 ## Pagination
 
@@ -819,7 +869,7 @@ if (scope != nil) {
 
 | Resource | Coverage |
 | --- | --- |
-| `client.auth` | Login, social login and linking, password operations, API-key management, current user, notification preferences, user statistics |
+| `client.auth` | Login, social login and linking, two-factor authentication, password operations, API-key management, current user, notification preferences, user statistics |
 | `client.oauth` | Discovery, PKCE authorization URL, code exchange, refresh, revocation, userinfo |
 | `client.workspaces` | Account CRUD, theme, statistics, logo upload/download/delete |
 | `client.documents` | Upload, list/search/get/rename/delete, processing status, pages, thumbnails, activities, artifacts, verification, template document creation, public token flow |
@@ -828,7 +878,7 @@ if (scope != nil) {
 | `client.fields` | Definitions, field types, single and batch validation |
 | `client.tags` | Workspace tags and document attachments |
 | `client.templates` | Template listing and definition management |
-| `client.webhooks` | Subscriptions, event types, delivery history, retry |
+| `client.webhooks` | Endpoints (up to three), delivery signing and secret rotation, legacy subscription, event types, delivery history, retry |
 
 [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) documents every method's authentication class,
 exact HTTP path, request payload, response payload, compatibility behavior, and error model.

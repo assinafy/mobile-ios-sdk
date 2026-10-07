@@ -25,7 +25,7 @@ public enum OAuthScope: String, Sendable, CaseIterable {
     case templatesWrite = "templates:write"
     /// Read the workspace's profile, theme and logo.
     case accountRead = "account:read"
-    /// Configure and deactivate the workspace webhook subscription. Pass this string to the `scopeStrings` initializer.
+    /// Create, update, deactivate and delete the workspace's webhook endpoints. Pass this string to the `scopeStrings` initializer.
     public static let webhooksWrite = "webhooks:write"
     /// Identify the authenticated user and enable ``OAuthResource/userInfo()``.
     case openID = "openid"

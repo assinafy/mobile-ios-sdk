@@ -59,7 +59,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.9.0"
+        from: "1.10.0"
     ),
 ],
 targets: [
@@ -130,10 +130,22 @@ de senha, as rotas públicas de documento e a troca de tokens OAuth:
 ```swift
 let publicClient = AssinafyClient(configuration: AssinafyClientConfiguration())
 
-let session = try await publicClient.auth.login(
-    LoginPayload(email: email, password: password)
-)
+let session: LoginResponse
+do {
+    session = try await publicClient.auth.login(LoginPayload(email: email, password: password))
+} catch let desafio as MFARequiredError {
+    // Autenticação em dois fatores: peça o código do app autenticador (ou um código de recuperação).
+    session = try await publicClient.auth.verifyMFA(
+        VerifyMFAPayload(mfaToken: desafio.mfaToken, code: codigo)
+    )
+}
 ```
+
+O `mfaToken` vale uma vez e expira cinco minutos após o login. Com o usuário autenticado,
+`auth.enrollTOTP(label:)` devolve o segredo e a `provisioningURI` (mostre como QR code),
+`auth.confirmTOTP(_:)` ativa o método e devolve os códigos de recuperação — ambos aparecem uma única
+vez. `auth.mfaStatus()`, `auth.regenerateRecoveryCodes(_:)` e `auth.removeMFAMethod(id:_:)` completam
+a gestão; as duas últimas exigem senha ou código atual em `MFAReauthPayload`.
 
 ## As quatro formas de autenticar
 
@@ -713,24 +725,62 @@ try await client.workspaces.uploadLogo(pngData)
 
 `theme()` é a fonte canônica das cores de marca de uma conta.
 
-Webhooks entregam eventos do ciclo de vida do documento:
+Webhooks entregam eventos do ciclo de vida do documento. Um workspace tem um endpoint, ou até três
+nos planos pagos; cada um recebe os eventos que assina:
 
 ```swift
-let assinatura = try await client.webhooks.register(
-    WebhookRegisterPayload(
+let endpoint = try await client.webhooks.createEndpoint(
+    CreateWebhookEndpointPayload(
         url: "https://exemplo.invalid/hooks/assinafy",
         email: "ops@exemplo.invalid",
-        events: ["document.completed"]
+        events: [WebhookEventType.documentReady, WebhookEventType.signerSignedDocument],
+        name: "ERP",
+        signingEnabled: true
     )
 )
+let endpoints = try await client.webhooks.listEndpoints()
+_ = try await client.webhooks.updateEndpoint(
+    id: endpoint.id, UpdateWebhookEndpointPayload(isActive: false)
+)
+try await client.webhooks.deleteEndpoint(id: endpoint.id)
 
 let tipos      = try await client.webhooks.listEventTypes()
 let tentativas = try await client.webhooks.listDispatches()
 try await client.webhooks.retryDispatch(dispatchId: tentativas.data[0].id)
 ```
 
-A API não tem exclusão destrutiva de assinaturas. Interrompa a entrega com `webhooks.inactivate()`;
-`webhooks.delete()` está descontinuado e encaminha para ele.
+`register`, `get` e `inactivate` continuam atuando sobre o endpoint mais antigo. Mais de um endpoint
+além do limite do plano retorna `403`; duas URLs iguais no mesmo workspace retornam `400`. Filtre o
+histórico de um endpoint com `WebhookDispatchListParams.endpointId`.
+
+### Assinatura das entregas
+
+Com `signingEnabled`, cada entrega leva os cabeçalhos `webhook-id`, `webhook-timestamp` e
+`webhook-signature` no padrão [Standard Webhooks](https://www.standardwebhooks.com). O segredo
+`whsec_…` é lido por chave de API (aplicativos OAuth não têm acesso a ele):
+
+```swift
+let segredo = try await client.webhooks.signingSecret(endpointId: endpoint.id)
+let novo    = try await client.webhooks.rotateSigningSecret(endpointId: endpoint.id) // o antigo para na hora
+```
+
+No servidor que recebe o webhook, verifique o corpo **bruto**, exatamente como chegou:
+
+```swift
+let valida = WebhookSignature.verify(
+    body: corpoBruto,
+    id: cabecalhos["webhook-id"] ?? "",
+    timestamp: cabecalhos["webhook-timestamp"] ?? "",
+    signatureHeader: cabecalhos["webhook-signature"] ?? "",
+    secret: segredo
+)
+```
+
+`verify` compara em tempo constante e recusa carimbos de tempo a mais de cinco minutos do relógio
+local, o que impede replays.
+
+A API não tem exclusão destrutiva da assinatura legada. Interrompa a entrega com
+`webhooks.inactivate()`; `webhooks.delete()` está descontinuado e encaminha para ele.
 
 ## Paginação
 
@@ -830,7 +880,7 @@ if (escopo != nil) {
 
 | Recurso | Cobertura |
 | --- | --- |
-| `client.auth` | Login, login social e vínculo, operações de senha, gestão de chave de API, usuário atual, preferências de notificação, estatísticas |
+| `client.auth` | Login, login social e vínculo, autenticação em dois fatores, operações de senha, gestão de chave de API, usuário atual, preferências de notificação, estatísticas |
 | `client.oauth` | Descoberta, URL de autorização com PKCE, troca de código, renovação, revogação, userinfo |
 | `client.workspaces` | CRUD de conta, tema, estatísticas, upload/download/exclusão de logo |
 | `client.documents` | Envio, listar/buscar/obter/renomear/excluir, status de processamento, páginas, miniaturas, atividades, artefatos, verificação, criação a partir de template, fluxo público de token |
@@ -839,7 +889,7 @@ if (escopo != nil) {
 | `client.fields` | Definições, tipos de campo, validação simples e em lote |
 | `client.tags` | Tags do workspace e vínculos com documentos |
 | `client.templates` | Listagem de templates e gestão de definições |
-| `client.webhooks` | Assinaturas, tipos de evento, histórico de entrega, reenvio |
+| `client.webhooks` | Endpoints (até três), assinatura e rotação de segredo, assinatura legada, tipos de evento, histórico de entrega, reenvio |
 
 [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) documenta, para cada método, a classe de
 autenticação, o caminho HTTP exato, o payload de requisição, o payload de resposta, o

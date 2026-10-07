@@ -184,7 +184,7 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 public final class AssinafyClient: NSObject {
 
     /// The SDK version string included in the `User-Agent` header.
-    public static let sdkVersion = "1.9.0"
+    public static let sdkVersion = "1.10.0"
 
     // MARK: Resources
 

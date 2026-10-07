@@ -136,10 +136,16 @@ extension LoginResponse: Decodable {
         case accessToken = "access_token"
         case user
         case accounts
+        case mfaToken = "mfa_token"
     }
 
+    /// Throws ``MFARequiredError`` when the login answered with a two-factor
+    /// challenge instead of a session.
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        if !c.contains(.accessToken), let mfaToken = try c.decodeIfPresent(String.self, forKey: .mfaToken) {
+            throw MFARequiredError(mfaToken: mfaToken)
+        }
         self.init(
             accessToken: try c.decode(String.self, forKey: .accessToken),
             user: try c.decode(User.self, forKey: .user),
@@ -200,6 +206,13 @@ public final class EmailResponse: NSObject, Decodable {
     /// - Parameter email: The account email returned by the API.
     public init(email: String) {
         self.email = email
+    }
+
+    enum CodingKeys: String, CodingKey { case email }
+
+    public required convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(email: try c.decodeIfPresent(String.self, forKey: .email) ?? "")
     }
 }
 
@@ -488,4 +501,193 @@ struct APIKeyResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case apiKey = "api_key"
     }
+}
+
+// MARK: - Two-factor authentication
+
+/// Payload for ``AuthResource/verifyMFA(_:)``.
+@objcMembers
+public final class VerifyMFAPayload: NSObject, Encodable {
+    /// The ``MFARequiredError/mfaToken`` from the login.
+    public let mfaToken: String
+    /// A 6-digit authenticator code, or a recovery code such as `ABCD-EFGH-JKMN`.
+    public let code: String
+
+    /// Creates the second step of a two-factor login.
+    @objc public init(mfaToken: String, code: String) {
+        self.mfaToken = mfaToken
+        self.code = code
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case code
+        case mfaToken = "mfa_token"
+    }
+}
+
+extension VerifyMFAPayload: @unchecked Sendable {}
+
+/// An enrolled two-factor method.
+@objcMembers
+public final class MFAMethod: NSObject {
+    public let id: String
+    /// Method type, such as `Totp`.
+    public let type: String
+    public let label: String?
+    public let confirmedAt: String?
+    public let lastUsedAt: String?
+
+    init(id: String, type: String, label: String?, confirmedAt: String?, lastUsedAt: String?) {
+        self.id = id; self.type = type; self.label = label
+        self.confirmedAt = confirmedAt; self.lastUsedAt = lastUsedAt
+    }
+}
+
+extension MFAMethod: @unchecked Sendable {}
+
+extension MFAMethod: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, type, label
+        case confirmedAt = "confirmed_at"
+        case lastUsedAt  = "last_used_at"
+    }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id:          try c.decode(String.self, forKey: .id),
+            type:        try c.decodeIfPresent(String.self, forKey: .type) ?? "",
+            label:       try c.decodeIfPresent(String.self, forKey: .label),
+            confirmedAt: try decodeFlexibleOptionalString(from: c, forKey: .confirmedAt),
+            lastUsedAt:  try decodeFlexibleOptionalString(from: c, forKey: .lastUsedAt)
+        )
+    }
+}
+
+/// The authenticated user's two-factor methods, from ``AuthResource/mfaStatus()``.
+@objcMembers
+public final class MFAStatus: NSObject {
+    public let methods: [MFAMethod]
+    /// Unused recovery codes left.
+    public let recoveryCodesRemaining: Int
+
+    init(methods: [MFAMethod], recoveryCodesRemaining: Int) {
+        self.methods = methods
+        self.recoveryCodesRemaining = recoveryCodesRemaining
+    }
+}
+
+extension MFAStatus: @unchecked Sendable {}
+
+extension MFAStatus: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case methods
+        case recoveryCodesRemaining = "recovery_codes_remaining"
+    }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            methods: try c.decodeIfPresent([MFAMethod].self, forKey: .methods) ?? [],
+            recoveryCodesRemaining: try c.decodeIfPresent(Int.self, forKey: .recoveryCodesRemaining) ?? 0
+        )
+    }
+}
+
+/// An unconfirmed authenticator enrollment from ``AuthResource/enrollTOTP(label:)``.
+///
+/// The ``secret`` is returned only once. Show ``provisioningURI`` as a QR code, then
+/// confirm with ``AuthResource/confirmTOTP(_:)``.
+@objcMembers
+public final class TOTPEnrollment: NSObject {
+    /// Method ID to pass to ``ConfirmTOTPPayload``.
+    public let id: String
+    /// Base32 shared secret.
+    public let secret: String
+    /// `otpauth://` URI for authenticator apps.
+    public let provisioningURI: String
+
+    init(id: String, secret: String, provisioningURI: String) {
+        self.id = id; self.secret = secret; self.provisioningURI = provisioningURI
+    }
+}
+
+extension TOTPEnrollment: @unchecked Sendable {}
+
+extension TOTPEnrollment: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, secret
+        case provisioningURI = "provisioning_uri"
+    }
+
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id:              try c.decode(String.self, forKey: .id),
+            secret:          try c.decode(String.self, forKey: .secret),
+            provisioningURI: try c.decodeIfPresent(String.self, forKey: .provisioningURI) ?? ""
+        )
+    }
+}
+
+/// Payload for ``AuthResource/confirmTOTP(_:)``.
+///
+/// Replacing an already confirmed authenticator also requires `password` or
+/// `reauthCode` (a live code from the current device, or a recovery code).
+/// First-time enrollment needs neither.
+@objcMembers
+public final class ConfirmTOTPPayload: NSObject, Encodable {
+    /// The ``TOTPEnrollment/id``.
+    public let id: String
+    /// A live code from the new device.
+    public let code: String
+    public let password: String?
+    public let reauthCode: String?
+
+    /// Creates an enrollment confirmation.
+    @objc public init(id: String, code: String, password: String? = nil, reauthCode: String? = nil) {
+        self.id = id; self.code = code
+        self.password = password; self.reauthCode = reauthCode
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, code, password
+        case reauthCode = "reauth_code"
+    }
+}
+
+extension ConfirmTOTPPayload: @unchecked Sendable {}
+
+/// Re-authentication proof for ``AuthResource/regenerateRecoveryCodes(_:)`` and
+/// ``AuthResource/removeMFAMethod(id:_:)``: the current password, a live
+/// authenticator code, or an existing recovery code (which is consumed).
+@objcMembers
+public final class MFAReauthPayload: NSObject, Encodable {
+    public let password: String?
+    public let code: String?
+
+    /// Creates a re-authentication proof; set `password`, `code`, or both.
+    @objc public init(password: String? = nil, code: String? = nil) {
+        self.password = password
+        self.code = code
+    }
+}
+
+extension MFAReauthPayload: @unchecked Sendable {}
+
+/// `{ "recovery_codes": [...] }`.
+struct MFARecoveryCodes: Decodable, Sendable {
+    let recoveryCodes: [String]
+    enum CodingKeys: String, CodingKey { case recoveryCodes = "recovery_codes" }
+}
+
+/// `{ "is_mfa_enabled": bool }`.
+struct MFAEnabledState: Decodable, Sendable {
+    let isMfaEnabled: Bool
+    enum CodingKeys: String, CodingKey { case isMfaEnabled = "is_mfa_enabled" }
+}
+
+/// `{ "label": string }` for ``AuthResource/enrollTOTP(label:)``.
+struct EnrollTOTPBody: Encodable, Sendable {
+    let label: String?
 }

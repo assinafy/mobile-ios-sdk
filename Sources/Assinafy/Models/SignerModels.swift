@@ -20,6 +20,8 @@ public final class Signer: NSObject {
     public let notified: NSNumber?
     public let completed: Bool
     public let notificationHistory: [SignerNotificationHistory]
+    /// CPF the signer reported, when the API returns it.
+    public let governmentId: String?
 
     init(id: String, fullName: String, email: String,
          whatsappPhoneNumber: String? = nil, hasAcceptedTerms: Bool = false) {
@@ -31,6 +33,7 @@ public final class Signer: NSObject {
         self.step = 0
         self.notified = nil
         self.completed = false; self.notificationHistory = []
+        self.governmentId = nil
     }
 
     init(
@@ -45,8 +48,10 @@ public final class Signer: NSObject {
         step: Int = 0,
         notified: NSNumber? = nil,
         completed: Bool = false,
-        notificationHistory: [SignerNotificationHistory] = []
+        notificationHistory: [SignerNotificationHistory] = [],
+        governmentId: String? = nil
     ) {
+        self.governmentId = governmentId
         self.resource = resource
         self.id = id; self.fullName = fullName; self.email = email
         self.whatsappPhoneNumber = whatsappPhoneNumber
@@ -75,6 +80,7 @@ extension Signer: Decodable {
         case verificationMethod  = "verification_method"
         case notificationMethods = "notification_methods"
         case notificationHistory = "notification_history"
+        case governmentId        = "government_id"
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -91,7 +97,8 @@ extension Signer: Decodable {
             step:                 try c.decodeIfPresent(Int.self,     forKey: .step) ?? 0,
             notified:             try c.decodeIfPresent(Bool.self, forKey: .notified).map { NSNumber(value: $0) },
             completed:            try c.decodeIfPresent(Bool.self,    forKey: .completed) ?? false,
-            notificationHistory:  try c.decodeIfPresent([SignerNotificationHistory].self, forKey: .notificationHistory) ?? []
+            notificationHistory:  try c.decodeIfPresent([SignerNotificationHistory].self, forKey: .notificationHistory) ?? [],
+            governmentId:         try c.decodeIfPresent(String.self, forKey: .governmentId)
         )
     }
 }
@@ -271,10 +278,13 @@ public final class SignerSelfInfo: NSObject {
     public let hasSignature: Bool
     public let hasInitial: Bool
     public let isSignatureReusable: Bool
+    /// CPF the signer reported, when the API returns it.
+    public let governmentId: String?
 
     init(resource: String? = nil, id: String, fullName: String, email: String?, whatsappPhoneNumber: String? = nil,
          hasAcceptedTerms: Bool, hasSignature: Bool, hasInitial: Bool,
-         isSignatureReusable: Bool = false) {
+         isSignatureReusable: Bool = false, governmentId: String? = nil) {
+        self.governmentId = governmentId
         self.resource = resource
         self.id = id; self.fullName = fullName; self.email = email
         self.whatsappPhoneNumber = whatsappPhoneNumber
@@ -295,6 +305,7 @@ extension SignerSelfInfo: Decodable {
         case hasSignature       = "has_signature"
         case hasInitial         = "has_initial"
         case isSignatureReusable = "is_signature_reusable"
+        case governmentId        = "government_id"
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -308,7 +319,8 @@ extension SignerSelfInfo: Decodable {
             hasAcceptedTerms:    try c.decodeIfPresent(Bool.self, forKey: .hasAcceptedTerms) ?? false,
             hasSignature:        try c.decodeIfPresent(Bool.self, forKey: .hasSignature) ?? false,
             hasInitial:          try c.decodeIfPresent(Bool.self, forKey: .hasInitial) ?? false,
-            isSignatureReusable: try c.decodeIfPresent(Bool.self, forKey: .isSignatureReusable) ?? false
+            isSignatureReusable: try c.decodeIfPresent(Bool.self, forKey: .isSignatureReusable) ?? false,
+            governmentId:        try c.decodeIfPresent(String.self, forKey: .governmentId)
         )
     }
 }
@@ -339,9 +351,9 @@ extension AcceptTermsResponse: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            fullName:         try c.decode(String.self, forKey: .fullName),
-            email:            try c.decode(String.self, forKey: .email),
-            hasAcceptedTerms: try c.decode(Bool.self, forKey: .hasAcceptedTerms)
+            fullName:         try c.decodeIfPresent(String.self, forKey: .fullName) ?? "",
+            email:            try c.decodeIfPresent(String.self, forKey: .email) ?? "",
+            hasAcceptedTerms: try c.decodeIfPresent(Bool.self, forKey: .hasAcceptedTerms) ?? true
         )
     }
 }

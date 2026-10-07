@@ -12,12 +12,18 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
     // MARK: - Swift async API
 
     /// Logs in with email and password and returns an access token plus user accounts.
+    ///
+    /// Mirrors `POST /login`. Throws ``MFARequiredError`` when the user has
+    /// two-factor authentication enabled; finish with ``verifyMFA(_:)``.
     public func login(_ payload: LoginPayload) async throws -> LoginResponse {
         let request = try APIRequest.post("/login", body: payload).withoutWorkspaceCredential()
         return try await call("Failed to login", request: request)
     }
 
     /// Exchanges a supported social-login token for an Assinafy access token.
+    ///
+    /// Mirrors `POST /authentication/social-login`. Throws ``MFARequiredError``
+    /// when the user has two-factor authentication enabled.
     public func socialLogin(_ payload: SocialLoginPayload) async throws -> LoginResponse {
         let request = try APIRequest.post("/authentication/social-login", body: payload)
             .withoutWorkspaceCredential()
@@ -173,6 +179,83 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
         try await callVoid("Failed to delete API key", request: .delete("/users/api-keys"))
     }
 
+    // MARK: Two-factor authentication
+
+    /// Completes a two-factor login.
+    ///
+    /// Mirrors `POST /authentication/mfa/verify`. Public route; the token is
+    /// single-use and expires five minutes after login.
+    public func verifyMFA(_ payload: VerifyMFAPayload) async throws -> LoginResponse {
+        try requireNonBlank(payload.mfaToken, name: "MFA token")
+        try requireNonBlank(payload.code, name: "Two-factor code")
+        let request = try APIRequest.post("/authentication/mfa/verify", body: payload)
+            .withoutWorkspaceCredential()
+        return try await call("Failed to verify two-factor code", request: request)
+    }
+
+    /// Lists the user's two-factor methods and remaining recovery codes.
+    ///
+    /// Mirrors `GET /users/self/mfa`.
+    public func mfaStatus() async throws -> MFAStatus {
+        try await call("Failed to fetch two-factor methods", request: .get("/users/self/mfa"))
+    }
+
+    /// Starts authenticator enrollment. Two-factor is not active until ``confirmTOTP(_:)``.
+    ///
+    /// Mirrors `POST /users/self/mfa/totp`.
+    public func enrollTOTP(label: String? = nil) async throws -> TOTPEnrollment {
+        let request = try APIRequest.post("/users/self/mfa/totp", body: EnrollTOTPBody(label: label))
+        return try await call("Failed to start authenticator enrollment", request: request)
+    }
+
+    /// Activates an authenticator and returns the recovery codes, shown only once.
+    ///
+    /// Mirrors `PUT /users/self/mfa/totp/confirm`.
+    public func confirmTOTP(_ payload: ConfirmTOTPPayload) async throws -> [String] {
+        try requireNonBlank(payload.id, name: "MFA method ID")
+        try requireNonBlank(payload.code, name: "Two-factor code")
+        let request = try APIRequest.put("/users/self/mfa/totp/confirm", body: payload)
+        let result: MFARecoveryCodes = try await call("Failed to confirm authenticator", request: request)
+        return result.recoveryCodes
+    }
+
+    /// Issues ten new recovery codes and invalidates the previous set.
+    ///
+    /// Mirrors `POST /users/self/mfa/recovery-codes`.
+    public func regenerateRecoveryCodes(_ proof: MFAReauthPayload) async throws -> [String] {
+        try requireProof(proof)
+        let request = try APIRequest.post("/users/self/mfa/recovery-codes", body: proof)
+        let result: MFARecoveryCodes = try await call("Failed to regenerate recovery codes", request: request)
+        return result.recoveryCodes
+    }
+
+    /// Removes a two-factor method and returns whether two-factor is still enabled.
+    /// Removing the last method also discards the recovery codes.
+    ///
+    /// Mirrors `DELETE /users/self/mfa/{id}`.
+    public func removeMFAMethod(id: String, _ proof: MFAReauthPayload) async throws -> Bool {
+        let mid = try requireId(id, name: "MFA method ID")
+        try requireProof(proof)
+        let request = try APIRequest.delete("/users/self/mfa/\(mid)", body: proof)
+        let result: MFAEnabledState = try await call("Failed to remove two-factor method", request: request)
+        return result.isMfaEnabled
+    }
+
+    /// Body values are opaque, so only blankness is checked (path rules do not apply).
+    private func requireNonBlank(_ value: String, name: String) throws {
+        guard !isBlank(value) else { throw ValidationError("\(name) is required") }
+    }
+
+    private func isBlank(_ value: String?) -> Bool {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+    }
+
+    private func requireProof(_ proof: MFAReauthPayload) throws {
+        guard !isBlank(proof.password) || !isBlank(proof.code) else {
+            throw ValidationError("Re-authentication requires the password or a two-factor code")
+        }
+    }
+
     // MARK: - Objective-C / completion-handler API
 
     /// Logs in and delivers the result on the **main queue**.
@@ -319,4 +402,55 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
         withVoidCompletion({ try await self.deleteAPIKey() }, completion: completion)
     }
 
+    /// Completion form of `verifyMFA`; delivers the result on the main queue.
+    @objc(verifyMFAWithPayload:completion:)
+    public func verifyMFA(
+        _ payload: VerifyMFAPayload,
+        completion: @escaping (LoginResponse?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.verifyMFA(payload) }, completion: completion)
+    }
+
+    /// Completion form of `mfaStatus`; delivers the result on the main queue.
+    @objc(mfaStatusWithCompletion:)
+    public func mfaStatus(completion: @escaping (MFAStatus?, Error?) -> Void) {
+        withCompletion({ try await self.mfaStatus() }, completion: completion)
+    }
+
+    /// Completion form of `enrollTOTP`; delivers the result on the main queue.
+    @objc(enrollTOTPWithLabel:completion:)
+    public func enrollTOTP(
+        label: String?,
+        completion: @escaping (TOTPEnrollment?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.enrollTOTP(label: label) }, completion: completion)
+    }
+
+    /// Completion form of `confirmTOTP`; delivers the recovery codes on the main queue.
+    @objc(confirmTOTPWithPayload:completion:)
+    public func confirmTOTP(
+        _ payload: ConfirmTOTPPayload,
+        completion: @escaping ([String]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.confirmTOTP(payload) }, completion: completion)
+    }
+
+    /// Completion form of `regenerateRecoveryCodes`; delivers the codes on the main queue.
+    @objc(regenerateRecoveryCodesWithProof:completion:)
+    public func regenerateRecoveryCodes(
+        _ proof: MFAReauthPayload,
+        completion: @escaping ([String]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.regenerateRecoveryCodes(proof) }, completion: completion)
+    }
+
+    /// Completion form of `removeMFAMethod`; delivers whether two-factor is still enabled on the main queue.
+    @objc(removeMFAMethodWithId:proof:completion:)
+    public func removeMFAMethod(
+        id: String,
+        _ proof: MFAReauthPayload,
+        completion: @escaping (NSNumber?, Error?) -> Void
+    ) {
+        withCompletion({ NSNumber(value: try await self.removeMFAMethod(id: id, proof)) }, completion: completion)
+    }
 }

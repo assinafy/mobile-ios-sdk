@@ -128,10 +128,19 @@ struct TagNamesPayload: Encodable {
     let tags: [String]
 }
 
+/// A `2xx` without the flag still means the operation succeeded.
 struct TagDeleteResponse: Decodable {
     let deleted: Bool
+    init(from decoder: Decoder) throws {
+        deleted = try decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(Bool.self, forKey: .deleted) ?? true
+    }
+    enum CodingKeys: String, CodingKey { case deleted }
 }
 
 struct TagDetachResponse: Decodable {
     let detached: Bool
+    init(from decoder: Decoder) throws {
+        detached = try decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(Bool.self, forKey: .detached) ?? true
+    }
+    enum CodingKeys: String, CodingKey { case detached }
 }

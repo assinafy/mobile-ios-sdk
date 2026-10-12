@@ -55,7 +55,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.10.0"
+        from: "1.10.1"
     ),
 ],
 targets: [
@@ -616,7 +616,9 @@ try await client.assignments.decline(
 Signers who hold several documents can act on them together with
 `signers.signMultipleDocuments(…)` and `signers.declineMultipleDocuments(…)`, and can list
 their own documents with `signers.listSignerDocuments(…)` and
-`signers.searchSignerDocuments(…)`.
+`signers.searchSignerDocuments(…)`. Those send only the access code; a workspace backend lists a
+signer's documents with `signers.listDocumentsAsWorkspace(signerId:)` and
+`signers.searchDocumentsAsWorkspace(signerId:search:)` instead.
 
 Signature and initial images are PNG:
 
@@ -632,15 +634,15 @@ try await client.signers.uploadSignature(
 Where the signing link carries only an access code and no signer ID, use
 `signers.getSigningDocument(signerAccessCode:)`.
 
-Before a signer verifies their code, an app can show a public summary and send the six-digit
-token:
+Before a signer verifies their code, an app can show a public summary and email the six-digit
+token (`send-token` delivers by email only):
 
 ```swift
 let info = try await client.documents.getPublicInfo(documentId: documentId)
 
 try await client.documents.sendPublicSignToken(
     documentId: documentId,
-    email: "ana@example.invalid"
+    email: "signer@example.com"
 )
 ```
 
@@ -813,6 +815,9 @@ do {
     // Task cancellation is preserved rather than converted.
 }
 ```
+
+A `429 Too Many Requests` carries `error.retryAfter`, the seconds to wait before retrying, along
+with `rateLimitLimit`, `rateLimitRemaining` and `rateLimitReset` from the `X-Rate-Limit-*` headers.
 
 ## Transport and network security
 

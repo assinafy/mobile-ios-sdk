@@ -89,8 +89,14 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
     /// Validates a value against a field definition.
     ///
     /// Mirrors `POST /accounts/{accountId}/fields/{fieldId}/validate`.
-    /// Authenticated callers may omit `signerAccessCode`; signer-facing
-    /// flows must pass the access code obtained from the signing URL.
+    /// Workspace callers omit `signerAccessCode` and send the configured
+    /// credential. Signer-facing flows pass the access code from the signing
+    /// URL; the request then carries only that code and never the workspace
+    /// credential. Body: `{ "value": any }`. Response `data`:
+    /// `{ "field_id", "value", "is_valid", "error" }`.
+    ///
+    /// - Throws: ``ValidationError`` before any I/O when `signerAccessCode` is
+    ///   present but empty.
     public func validate(
         fieldId: String,
         value: String,
@@ -122,7 +128,9 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
 
     /// Validates multiple values in a single round-trip.
     ///
-    /// Mirrors `POST /accounts/{accountId}/fields/validate-multiple`.
+    /// Mirrors `POST /accounts/{accountId}/fields/validate-multiple`. Body: an
+    /// array of `{ "field_id", "value" }`. A `signerAccessCode` is sent alone,
+    /// without the workspace credential, and must not be empty.
     public func validateMultiple(
         items: [FieldValidateMultipleItem],
         signerAccessCode: String? = nil,
@@ -169,11 +177,10 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
         for item in items {
             _ = try requireId(item.fieldId, name: "Field ID")
         }
-        let request = APIRequest(
-            method: .post,
+        let request = try fieldValidationRequest(
             path: "/accounts/\(id)/fields/validate-multiple",
-            queryItems: signerAccessCodeQuery(signerAccessCode),
-            body: try JSONEncoder.assinafy.encode(items)
+            body: JSONEncoder.assinafy.encode(items),
+            signerAccessCode: signerAccessCode
         )
         let result: PaginatedResult<FieldValidationResult> = try await callList(
             "Failed to validate fields",
@@ -182,11 +189,25 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
         return result.data
     }
 
-    /// Field validation is documented as workspace-authenticated, and additionally
-    /// accepts a signer access code so a signer can validate their own input.
-    private func signerAccessCodeQuery(_ code: String?) -> [URLQueryItem]? {
-        guard let code, !code.isEmpty else { return nil }
-        return [URLQueryItem(name: "signer-access-code", value: code)]
+    /// Field validation runs either as the workspace or, during signing, as the
+    /// signer. A signer request carries only its access code: the workspace
+    /// credential is withheld so it never travels alongside a signer's code.
+    private func fieldValidationRequest(
+        path: String,
+        body: Data,
+        signerAccessCode: String?
+    ) throws -> APIRequest {
+        guard let signerAccessCode else {
+            return APIRequest(method: .post, path: path, body: body)
+        }
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        return APIRequest(
+            method: .post,
+            path: path,
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            body: body,
+            credential: .withheld
+        )
     }
 
     private func validateValue<Value: Encodable>(
@@ -197,11 +218,10 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
     ) async throws -> FieldValidationResult {
         let id = try self.accountId(accountId)
         let fid = try requireId(fieldId, name: "Field ID")
-        let request = APIRequest(
-            method: .post,
+        let request = try fieldValidationRequest(
             path: "/accounts/\(id)/fields/\(fid)/validate",
-            queryItems: signerAccessCodeQuery(signerAccessCode),
-            body: try JSONEncoder.assinafy.encode(FieldValidationBody(value: value))
+            body: JSONEncoder.assinafy.encode(FieldValidationBody(value: value)),
+            signerAccessCode: signerAccessCode
         )
         return try await call("Failed to validate field", request: request)
     }

@@ -1,11 +1,5 @@
 import Foundation
 
-private struct SandboxSendTokenPayload: Encodable {
-    let email: String
-    let recipient: String
-    let channel: String
-}
-
 /// Manages document uploads, status, artifact downloads, and lifecycle operations.
 ///
 /// Access this resource through ``AssinafyClient/documents``.
@@ -437,46 +431,40 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
                                   .withoutWorkspaceCredential())
     }
 
-    /// Sends the 6-digit signing token to a signer via email or WhatsApp.
+    /// Emails the 6-digit signing token to a signer.
     ///
-    /// Mirrors `PUT /public/documents/{id}/send-token`. No authentication is
-    /// required. Clients configured for the Assinafy sandbox add `recipient`
-    /// and `channel` compatibility fields.
+    /// Mirrors `PUT /public/documents/{id}/send-token`, a public route: no
+    /// workspace credential is sent. The token is delivered by email only;
+    /// WhatsApp verification codes are sent by the assignment notification flow.
+    ///
+    /// Request body: `{ "channel": "email", "recipient": string }`, both required.
+    /// Response `data`: `{ "document": { "resource", "id", "name", "page_count",
+    /// "created_by" }, "channel": "email", "recipient": string }`.
+    ///
+    /// - Throws: ``ValidationError`` before any I/O when the recipient is not a
+    ///   valid email address or the channel is not ``SendTokenChannel/email``.
     @discardableResult
     public func sendPublicSignToken(
         documentId: String,
         payload: SendTokenPayload
     ) async throws -> SendTokenResponse {
-        let did = try requireId(documentId, name: "Document ID")
-        try await sendPublicSignTokenRequest(documentId: did, payload: payload)
-        do {
-            let document = try await getPublicInfo(documentId: did)
-            return SendTokenResponse(
-                document: document,
-                channel: payload.channel.stringValue,
-                recipient: payload.recipient
-            )
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw AssinafySDKError(
-                "Signing token was sent, but the follow-up document lookup failed",
-                context: ["tokenSent": true, "documentId": did],
-                underlyingError: error
-            )
-        }
+        try await call(
+            "Failed to send signing token",
+            request: sendPublicSignTokenRequest(documentId: documentId, payload: payload)
+        )
     }
 
-    /// Sends an email signing token with one `PUT` request and no synthetic response.
+    /// Emails the signing token to `email`, discarding the response body.
     ///
-    /// Request data is `{ "email": string }`; a successful response is the
-    /// standard envelope without `data`.
+    /// Sends `{ "channel": "email", "recipient": email }` to
+    /// `PUT /public/documents/{id}/send-token`.
     public func sendPublicSignToken(documentId: String, email: String) async throws {
-        let did = try requireId(documentId, name: "Document ID")
-        let email = try validateEmail(email)
-        try await sendPublicSignTokenRequest(
-            documentId: did,
-            payload: SendTokenPayload(recipient: email, channel: .email)
+        try await callVoid(
+            "Failed to send signing token",
+            request: sendPublicSignTokenRequest(
+                documentId: documentId,
+                payload: SendTokenPayload(recipient: email, channel: .email)
+            )
         )
     }
 
@@ -523,24 +511,14 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
     private func sendPublicSignTokenRequest(
         documentId: String,
         payload: SendTokenPayload
-    ) async throws {
-        guard !payload.recipient.isBlank else { throw ValidationError("Signing token recipient is required") }
-        if payload.channel == .email { _ = try validateEmail(payload.recipient) }
-        let path = "/public/documents/\(documentId)/send-token"
-        let request: APIRequest
-        if usesSandboxCompatibility {
-            request = try APIRequest.put(
-                path,
-                body: SandboxSendTokenPayload(
-                    email: payload.recipient,
-                    recipient: payload.recipient,
-                    channel: payload.channel.stringValue
-                )
-            ).withoutWorkspaceCredential()
-        } else {
-            request = try APIRequest.put(path, body: payload).withoutWorkspaceCredential()
+    ) throws -> APIRequest {
+        let did = try requireId(documentId, name: "Document ID")
+        guard payload.channel == .email else {
+            throw ValidationError("Signing tokens are delivered by email only")
         }
-        try await callVoid("Failed to send signing token", request: request)
+        _ = try validateEmail(payload.recipient)
+        return try APIRequest.put("/public/documents/\(did)/send-token", body: payload)
+            .withoutWorkspaceCredential()
     }
 
     // MARK: - Objective-C / completion-handler API

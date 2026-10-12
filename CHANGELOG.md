@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.10.1] - 2026-10-12
+
+### Added
+
+- `SignerResource.listDocumentsAsWorkspace(signerId:params:)` and
+  `searchDocumentsAsWorkspace(signerId:search:)` list and search a workspace signer's documents
+  with the API key or bearer token. The existing access-code methods still send only the code.
+- `APIError.rateLimitLimit`, `rateLimitRemaining`, `rateLimitReset` and `retryAfter`, read from
+  `X-Rate-Limit-Limit`, `X-Rate-Limit-Remaining`, `X-Rate-Limit-Reset` and `Retry-After`
+  (`429 Too Many Requests`), and bridged to Objective-C `userInfo` under the same keys.
+
+### Changed
+
+- `documents.sendPublicSignToken` sends `{ "channel": "email", "recipient": … }`, the body the API
+  now requires; the previous `{ "email": … }` body is rejected with `400`. The payload form returns
+  the API's own `data: { document, channel, recipient }` in one request instead of a follow-up
+  document lookup.
+- `send-token` delivers by email only: `SendTokenChannel.whatsapp` is deprecated and a WhatsApp
+  channel now throws `ValidationError` before any request. WhatsApp verification and notifications
+  are unchanged.
+- `fields.validate` and `fields.validateMultiple` called with a signer access code send only that
+  code and no longer attach the workspace credential; an empty code throws `ValidationError`
+  instead of being dropped. Calls without a code keep the workspace credential.
+- `workspaces.create` sends `notification_sender_type` on every host.
+
 ## [1.10.0] - 2026-10-07
 
 ### Added

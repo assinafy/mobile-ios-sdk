@@ -58,7 +58,7 @@ final class CompletionAdapterTests: XCTestCase {
             _ = try await documents.rename(documentId: "doc_1", name: " ")
         }
         await assertThrowsValidationError {
-            _ = try await documents.sendPublicSignToken(documentId: "doc_1", payload: SendTokenPayload(recipient: " ", channel: .whatsapp))
+            _ = try await documents.sendPublicSignToken(documentId: "doc_1", payload: SendTokenPayload(recipient: " "))
         }
         await assertThrowsValidationError {
             _ = try await documents.sendPublicSignToken(documentId: "doc_1", payload: SendTokenPayload(recipient: "invalid", channel: .email))

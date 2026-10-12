@@ -1,9 +1,5 @@
 import Foundation
 
-private struct SandboxCreateWorkspacePayload: Encodable {
-    let name: String
-}
-
 /// Manages workspace (account) objects.
 ///
 /// Access this resource through ``AssinafyClient/workspaces``.
@@ -21,15 +17,12 @@ public final class WorkspaceResource: BaseResource, @unchecked Sendable {
 
     /// Creates a new workspace.
     ///
+    /// Mirrors `POST /accounts` with body `{ "name", "notification_sender_type" }`.
+    ///
     /// - Parameter payload: Name and notification sender type for the workspace.
     /// - Returns: The created ``WorkspaceResponse``.
     public func create(_ payload: CreateWorkspacePayload) async throws -> WorkspaceResponse {
-        let request = if usesSandboxCompatibility {
-            try APIRequest.post("/accounts", body: SandboxCreateWorkspacePayload(name: payload.name))
-        } else {
-            try APIRequest.post("/accounts", body: payload)
-        }
-        return try await call("Failed to create workspace", request: request)
+        try await call("Failed to create workspace", request: .post("/accounts", body: payload))
     }
 
     /// Lists all workspaces accessible to the authenticated user.

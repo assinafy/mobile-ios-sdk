@@ -355,7 +355,7 @@ All methods are available through `client.workspaces` and require account auth.
 
 | Async SDK method | Exact request | Wire response and SDK result |
 | --- | --- | --- |
-| `create(_:)` | `POST /accounts`; required JSON `name`; optional `notification_sender_type=User|Account`. The sandbox host rejects that optional key, so the SDK omits it there. | `data: Account` -> `WorkspaceResponse` |
+| `create(_:)` | `POST /accounts`; required JSON `name`; optional `notification_sender_type=User|Account` | `data: Account` -> `WorkspaceResponse` |
 | `list(params:)` | `GET /accounts`; no query is emitted | `[Account]` -> `PaginatedResult<WorkspaceListItem>` |
 | `get(workspaceId:)` | `GET /accounts/{workspaceId}` | `Account` -> `WorkspaceResponse` |
 | `update(workspaceId:payload:)` | `PUT /accounts/{workspaceId}`; partial JSON `name`, `notification_sender_type=User|Account` | Updated `Account` |
@@ -397,6 +397,8 @@ signer code exactly where shown.
 | `downloadSignature(signerAccessCode:type:)` | Signer | `GET /signature/{signatureType}?signer-access-code={code}` where the path value is `signature` or `initial` | Raw image `Data`; there is no redundant `type` query |
 | `getCurrentDocument(signerId:signerAccessCode:)` | Signer | `GET /signers/{signerId}/document?signer-access-code={code}` | `Document` -> `DocumentDetails`; the API omits pages and limits assignment items to this signer |
 | `listSignerDocuments(signerId:signerAccessCode:params:)` | Signer | `GET /signers/{signerId}/documents?signer-access-code={code}`; v1 query values are `page`, `per-page`; the SDK also forwards compatibility `status`, `method`, `search`, `sort` | `PaginatedResult<DocumentDetails>` |
+| `listDocumentsAsWorkspace(signerId:params:)` | Account | `GET /signers/{signerId}/documents` with the workspace credential and no access code; query `page`, `per-page`; the signer must belong to the credential's workspace | `PaginatedResult<DocumentDetails>` |
+| `searchDocumentsAsWorkspace(signerId:search:)` | Account | `GET /signers/{signerId}/documents/search` with the workspace credential; optional `search` | `PaginatedResult<DocumentDetails>` (compact documents) |
 | `searchSignerDocuments(signerId:signerAccessCode:search:status:)` | Signer | `GET /signers/{signerId}/documents/search?signer-access-code={code}`; v1 defines optional `search`; the SDK also forwards compatibility `status` | `PaginatedResult<DocumentDetails>` |
 | `signMultipleDocuments(signerAccessCode:documentIds:)` | Signer | `PUT /signers/documents/sign-multiple?signer-access-code={code}`; JSON `document_ids: [string]`, nonempty | Bare envelope; returns `Void` |
 | `declineMultipleDocuments(signerAccessCode:documentIds:reason:)` | Signer | `PUT /signers/documents/decline-multiple?signer-access-code={code}`; JSON `document_ids: [string]`, `decline_reason: string` | Bare envelope; returns `Void` |
@@ -439,8 +441,8 @@ Unless marked public, document operations require account auth.
 | `getSigningProgress(documentId:)` | Account | Local helper over `GET /documents/{documentId}` | `SigningProgress(signed, total, pending, percentage)` from assignment summary |
 | `listStatuses()` | Account | `GET /documents/statuses` | `[DocumentStatusInfo]` (`code`, `deletable`) |
 | `getPublicInfo(documentId:)` | Public | `GET /public/documents/{documentId}` | Full `Document` -> `PublicDocumentInfo`, not a four-field summary |
-| `sendPublicSignToken(documentId:email:)` | Public | `PUT /public/documents/{documentId}/send-token`; canonical body `{ "email": string }` | Bare envelope; returns `Void` after one request |
-| `sendPublicSignToken(documentId:payload:)` | Public | Compatibility form of the same `PUT`; email sends `{ "email": string }`, while WhatsApp also sends `channel: "whatsapp"`; the Assinafy sandbox host receives `email`, `recipient`, and `channel` | After the successful `PUT`, performs `GET /public/documents/{documentId}` and returns SDK-derived `SendTokenResponse(document, channel, recipient)`. If the lookup fails after delivery, throws `AssinafySDKError` with `context["tokenSent"] == true`. |
+| `sendPublicSignToken(documentId:email:)` | Public | `PUT /public/documents/{documentId}/send-token`; required body `{ "channel": "email", "recipient": string }` | Returns `Void` after one request |
+| `sendPublicSignToken(documentId:payload:)` | Public | Same `PUT` and body; `SendTokenPayload.channel` must be `.email` (other channels throw `ValidationError` before I/O) | `data: { "document": { "resource", "id", "name", "page_count", "created_by" }, "channel": "email", "recipient": string }` -> `SendTokenResponse` |
 | `confirmSignerDataAndReturnSigner(documentId:signerAccessCode:payload:)` | Signer | `PUT /documents/{documentId}/signers/confirm-data?signer-access-code={code}`; body may contain `full_name`, `email`, `government_id`; compatibility keys are described below | Canonical `data: Signer` result |
 | `confirmSignerData(documentId:signerAccessCode:payload:)` | Signer | Same request | Source-compatible overload that validates success and discards `data`; returns `Void` |
 
@@ -611,9 +613,9 @@ The v1 OpenAPI declares account auth for every field operation.
 | `get(fieldId:accountId:)` | `GET /accounts/{accountId}/fields/{fieldId}` | `FieldDefinition` |
 | `update(fieldId:payload:accountId:)` | `PUT /accounts/{accountId}/fields/{fieldId}`; partial `name`, nullable `regex`, `is_active` | Updated `FieldDefinition` |
 | `delete(fieldId:accountId:)` | `DELETE /accounts/{accountId}/fields/{fieldId}` | Documented `data: []`; returns `Void` |
-| `validate(fieldId:value: String, signerAccessCode:accountId:)` | `POST /accounts/{accountId}/fields/{fieldId}/validate`; JSON `{ "value": string }`; optional compatibility `signer-access-code` query | `FieldValidationResult` |
+| `validate(fieldId:value: String, signerAccessCode:accountId:)` | `POST /accounts/{accountId}/fields/{fieldId}/validate`; JSON `{ "value": string }`. Without `signerAccessCode` the workspace credential is sent; with one, only `signer-access-code` is sent (an empty code throws before I/O) | `FieldValidationResult` |
 | `validate(fieldId:value: JSONValue, signerAccessCode:accountId:)` | Same path and query; `value` preserves its string, integer, unsigned integer, number, Boolean, object, array, or null JSON type | `FieldValidationResult` |
-| `validateMultiple(items: [FieldValidateMultipleItem], signerAccessCode:accountId:)` | `POST /accounts/{accountId}/fields/validate-multiple`; nonempty top-level array of `{field_id: string, value: string}`; optional compatibility signer query | `[FieldValidationResult]`; each item also carries `field_id` |
+| `validateMultiple(items: [FieldValidateMultipleItem], signerAccessCode:accountId:)` | `POST /accounts/{accountId}/fields/validate-multiple`; nonempty top-level array of `{field_id: string, value: string}`; signer code handled as in `validate` | `[FieldValidationResult]`; each item also carries `field_id` |
 | `validateMultiple(items: [FieldJSONValidationItem], signerAccessCode:accountId:)` | Same request with each `value: JSONValue`, preserving the JSON type | `[FieldValidationResult]` |
 | `listFieldTypes()` | `GET /field-types` | `[FieldTypeInfo]` |
 
@@ -696,8 +698,7 @@ complete encoded shape for public request models and query containers.
   case-sensitive Boolean notification keys shown above. `nil` values are
   omitted and explicit `false` values are encoded.
 - `CreateWorkspacePayload`: required `name`; optional
-  `notification_sender_type` (`User` or `Account`). The SDK omits the optional
-  key on the sandbox host because that deployment rejects it.
+  `notification_sender_type` (`User` or `Account`).
 - `UpdateWorkspacePayload`: optional `name` and `notification_sender_type`.
   Omitted keys remain unchanged.
 - `delete(workspaceId:force:)`: always sends `{ "force": boolean }` in the
@@ -723,9 +724,8 @@ complete encoded shape for public request models and query containers.
 - `SignMultipleDocumentsPayload`: `{ "document_ids": [string] }`.
 - `DeclineMultipleDocumentsPayload`: `{ "document_ids": [string],
   "decline_reason": string }`.
-- `SendTokenPayload`: `recipient` is encoded under `email`; `channel` is
-  omitted for `.email` and encoded as `"whatsapp"` for `.whatsapp`. Prefer the
-  canonical `sendPublicSignToken(documentId:email:)` method for email.
+- `SendTokenPayload`: `{ "channel": "email", "recipient": string }`; both keys
+  are required by the API and the recipient must be the signer's email.
 - `DocumentUploadOptions`: optional account-ID override; it does not create a
   JSON body. Uploads use multipart field `file` with filename `document.pdf` and
   media type `application/pdf`.
@@ -946,8 +946,9 @@ channel was used. The four verification counters add to `signature_requests`.
 - `DocumentStatus`: `code: string`, `deletable: boolean`.
 - `SigningProgress` is SDK-derived, not a wire payload: `signed: integer`,
   `total: integer`, `pending: integer`, `percentage: number`.
-- `SendTokenResponse` is SDK-derived after the bare send response:
-  `document: PublicDocumentInfo`, `channel: string`, `recipient: string`.
+- `SendTokenResponse` decodes the response `data`:
+  `document: PublicDocumentInfo` (`id`, `name`, `pageCount`, `createdBy`),
+  `channel: string`, `recipient: string`.
 
 `DocumentUploadResponse` and `DocumentDetails` expose the full documented
 `declined_by` signer as `declinedBySigner`. Their `declinedBy` property remains
@@ -1091,7 +1092,8 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
 - `DocumentArtifactName` path values are `original`, `certificated`,
   `certificate-page`, `pades`, and `bundle`.
 - `SignatureType` path/query values are `signature` and `initial`.
-- `SendTokenChannel` values are `.email` and `.whatsapp`.
+- `SendTokenChannel.email` encodes `email`, the only channel `send-token`
+  accepts; the deprecated `.whatsapp` is rejected before I/O.
 - `NotificationSenderType.user` and `.account` encode `User` and `Account`.
 - `DocumentStatus` maps `uploading`, `uploaded`, `metadata_processing`,
   `metadata_ready`, `pending_signature`, `expired`, `certificating`,
@@ -1298,7 +1300,7 @@ surfaced as `APIError`.
 
 | Swift error | When thrown | Important properties | `NSError` bridge |
 | --- | --- | --- | --- |
-| `APIError` | Non-2xx HTTP, or a response envelope whose `status` is outside 200...299 | `statusCode`, `message`, raw `responseData`, `context`, `workspaceDeletionRestrictions`, `oauthError`, `insufficientScope` | Domain `ASFErrorDomain.api`; code is HTTP status; `userInfo["responseData"]`, the raw `WWW-Authenticate` challenge as `userInfo["wwwAuthenticate"]`, and the scope a `403` `insufficient_scope` challenge names as `userInfo["insufficientScope"]`, each when present. |
+| `APIError` | Non-2xx HTTP, or a response envelope whose `status` is outside 200...299 | `statusCode`, `message`, raw `responseData`, `context`, `workspaceDeletionRestrictions`, `oauthError`, `insufficientScope`, `rateLimitLimit`, `rateLimitRemaining`, `rateLimitReset`, `retryAfter` (from `X-Rate-Limit-Limit`, `X-Rate-Limit-Remaining`, `X-Rate-Limit-Reset`, and `Retry-After` on `429`) | Domain `ASFErrorDomain.api`; code is HTTP status; `userInfo["responseData"]`, the raw `WWW-Authenticate` challenge as `userInfo["wwwAuthenticate"]`, the scope a `403` `insufficient_scope` challenge names as `userInfo["insufficientScope"]`, and integer `rateLimitLimit`, `rateLimitRemaining`, `rateLimitReset`, `retryAfter`, each when present. |
 | `ValidationError` | Invalid local configuration, identifier, account resolution, payload, PDF/PNG bytes, or helper option | `message`, field-level `errors`, `context` | Domain `ASFErrorDomain.validation`; code `422`; `userInfo["errors"]`. |
 | `NetworkError` | URL loading failed before a valid HTTP response, or response was not HTTP | `message`, `underlyingError` | Domain `ASFErrorDomain.network`; code is the underlying `URLError.Code`, otherwise `notConnectedToInternet`; includes `NSUnderlyingErrorKey`. |
 | `AssinafySDKError` | Missing/undecodable success data, polling timeout/terminal state, failed post-delivery lookup, or another SDK contract failure | `message`, structured `context`, `underlyingError` | Domain `ASFErrorDomain.sdk`; code `-1`; context is merged into `userInfo`; includes `NSUnderlyingErrorKey` when present. |
@@ -1333,7 +1335,7 @@ These are the explicit resource selectors:
 | Document | `uploadDocument:accountId:completion:`, `listDocumentsWithAccountId:completion:`, `getDocumentWithId:completion:`, `deleteDocumentWithId:completion:`, `renameDocumentWithId:name:completion:`, `searchDocumentsWithTerm:status:accountId:completion:`, `uploadWithData:options:completion:`, `listWithDocumentListParams:accountId:completion:`, `searchWithSearch:status:page:perPage:accountId:completion:`, `waitUntilReadyWithDocumentId:options:completion:`, `downloadArtifactWithDocumentId:artifact:completion:`, `downloadThumbnailWithDocumentId:completion:`, `downloadPageWithDocumentId:pageId:completion:`, `activitiesWithDocumentId:completion:`, `createFromTemplateWithTemplateId:signers:options:accountId:completion:`, `estimateCostFromTemplateWithTemplateId:signers:accountId:completion:`, `verifyWithSignatureHash:completion:`, `verifyDetailsWithSignatureHash:completion:`, `isFullySignedWithDocumentId:completion:`, `getSigningProgressWithDocumentId:completion:`, `listStatusesWithCompletion:`, `getPublicInfoWithDocumentId:completion:`, `sendPublicSignTokenWithDocumentId:payload:completion:`, `sendPublicSignTokenWithDocumentId:email:completion:`, `confirmSignerDataWithDocumentId:signerAccessCode:payload:completion:`, `confirmSignerDataAndReturnSignerWithDocumentId:signerAccessCode:payload:completion:`, `listWithQuery:accountId:completion:` |
 | Field | `createField:accountId:completion:`, `listFieldsWithAccountId:completion:`, `getFieldWithId:accountId:completion:`, `deleteFieldWithId:accountId:completion:`, `listWithFieldListParams:accountId:completion:`, `updateWithFieldId:payload:accountId:completion:`, `validateWithFieldId:value:signerAccessCode:accountId:completion:`, `validateMultipleWithItems:signerAccessCode:accountId:completion:`, `listFieldTypesWithCompletion:` |
 | OAuth | `protectedResourceMetadataWithCompletion:`, `authorizationServerMetadataWithIssuer:completion:`, `exchangeAuthorizationCode:completion:`, `refreshAccessToken:completion:`, `revokeToken:completion:`, `userInfoWithCompletion:` |
-| Signer | `createSigner:accountId:completion:`, `getSignerWithId:accountId:completion:`, `updateSignerWithId:payload:accountId:completion:`, `deleteSignerWithId:accountId:completion:`, `findSignerByEmail:accountId:completion:`, `getSelfWithSignerAccessCode:completion:`, `acceptTermsWithSignerAccessCode:completion:`, `acceptTermsWithoutResponseWithSignerAccessCode:completion:`, `verifyEmailWithPayload:completion:`, `uploadSignatureWithSignerAccessCode:type:imageData:reuse:completion:`, `downloadSignatureWithSignerAccessCode:type:completion:`, `getCurrentDocumentWithSignerId:signerAccessCode:completion:`, `listSignerDocumentsWithSignerId:signerAccessCode:params:completion:`, `searchSignerDocumentsWithSignerId:signerAccessCode:search:status:completion:`, `signMultipleDocumentsWithSignerAccessCode:documentIds:completion:`, `declineMultipleDocumentsWithSignerAccessCode:documentIds:reason:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:signerAccessCode:completion:`, `getSigningDocumentWithSignerAccessCode:hasAcceptedTerms:completion:`, `listWithQuery:accountId:completion:` |
+| Signer | `createSigner:accountId:completion:`, `getSignerWithId:accountId:completion:`, `updateSignerWithId:payload:accountId:completion:`, `deleteSignerWithId:accountId:completion:`, `findSignerByEmail:accountId:completion:`, `getSelfWithSignerAccessCode:completion:`, `acceptTermsWithSignerAccessCode:completion:`, `acceptTermsWithoutResponseWithSignerAccessCode:completion:`, `verifyEmailWithPayload:completion:`, `uploadSignatureWithSignerAccessCode:type:imageData:reuse:completion:`, `downloadSignatureWithSignerAccessCode:type:completion:`, `getCurrentDocumentWithSignerId:signerAccessCode:completion:`, `listSignerDocumentsWithSignerId:signerAccessCode:params:completion:`, `searchSignerDocumentsWithSignerId:signerAccessCode:search:status:completion:`, `signMultipleDocumentsWithSignerAccessCode:documentIds:completion:`, `declineMultipleDocumentsWithSignerAccessCode:documentIds:reason:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:completion:`, `downloadSignerDocumentArtifactWithSignerId:documentId:artifact:signerAccessCode:completion:`, `getSigningDocumentWithSignerAccessCode:hasAcceptedTerms:completion:`, `listDocumentsAsWorkspaceWithSignerId:params:completion:`, `searchDocumentsAsWorkspaceWithSignerId:search:completion:`, `listWithQuery:accountId:completion:` |
 | Tag | `listTagsWithAccountId:completion:`, `createTag:accountId:completion:`, `updateTagWithId:payload:accountId:completion:`, `deleteTagWithId:force:accountId:completion:`, `listWithTagListParams:accountId:completion:`, `deleteAndReturnStatusWithTagId:force:accountId:completion:`, `listDocumentTagsWithDocumentId:accountId:completion:`, `replaceDocumentTagsWithDocumentId:tagIds:accountId:completion:`, `appendDocumentTagsWithDocumentId:tagIds:accountId:completion:`, `detachDocumentTagWithDocumentId:tagId:accountId:completion:`, `detachDocumentTagAndReturnStatusWithDocumentId:tagId:accountId:completion:` |
 | Template | `listTemplatesWithAccountId:completion:`, `getTemplateWithId:accountId:completion:`, `deleteTemplateWithId:accountId:completion:`, `createWithName:pdfData:accountId:completion:`, `updateWithTemplateId:payload:accountId:completion:`, `listWithTemplateListParams:accountId:completion:`, `listWithQuery:accountId:completion:` |
 | Webhook | `registerWebhook:accountId:completion:`, `getWebhookWithAccountId:completion:`, `deleteWebhookWithAccountId:completion:`, `inactivateWebhookWithAccountId:completion:`, `inactivateWebhookAndReturnWithAccountId:completion:`, `listDispatchesWithAccountId:completion:`, `listEventTypesWithCompletion:`, `listDispatchesWithWebhookDispatchListParams:accountId:completion:`, `retryDispatchWithDispatchId:accountId:completion:`, `listWebhookEndpointsWithAccountId:completion:`, `createWebhookEndpoint:accountId:completion:`, `getWebhookEndpointWithId:accountId:completion:`, `updateWebhookEndpointWithId:payload:accountId:completion:`, `deleteWebhookEndpointWithId:accountId:completion:`, `webhookSigningSecretWithEndpointId:accountId:completion:`, `rotateWebhookSigningSecretWithEndpointId:accountId:completion:` |

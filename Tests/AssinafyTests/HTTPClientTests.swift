@@ -248,6 +248,39 @@ final class HTTPClientTests: XCTestCase {
         }
     }
 
+    func testTooManyRequestsExposesRateLimitHeaders() async {
+        StubURLProtocol.state.set { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 429,
+                httpVersion: nil,
+                headerFields: [
+                    "X-Rate-Limit-Limit": "60",
+                    "X-Rate-Limit-Remaining": "0",
+                    "X-Rate-Limit-Reset": "42",
+                    "Retry-After": "42",
+                ]
+            )!
+            return (response, Data(#"{"status":429,"message":"Too Many Requests","data":null}"#.utf8))
+        }
+
+        do {
+            _ = try await transport().perform(.get("/documents"))
+            XCTFail("Expected APIError")
+        } catch let error as APIError {
+            XCTAssertEqual(error.statusCode, 429)
+            XCTAssertEqual(error.rateLimitLimit, 60)
+            XCTAssertEqual(error.rateLimitRemaining, 0)
+            XCTAssertEqual(error.rateLimitReset, 42)
+            XCTAssertEqual(error.retryAfter, 42)
+            let info = (error as NSError).userInfo
+            XCTAssertEqual(info["retryAfter"] as? Int, 42)
+            XCTAssertEqual(info["rateLimitRemaining"] as? Int, 0)
+        } catch {
+            XCTFail("Expected APIError, got \(error)")
+        }
+    }
+
     func testSameOriginRedirectKeepsAuthentication() {
         let client = transport()
         var request = URLRequest(url: URL(string: "https://sandbox.example.invalid/v1/next")!)

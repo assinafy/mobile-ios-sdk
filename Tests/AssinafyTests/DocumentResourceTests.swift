@@ -644,117 +644,57 @@ final class DocumentResourceTests: XCTestCase {
         XCTAssertEqual(document.updatedAt, "2026-08-21T12:00:00Z")
     }
 
-    func testSendPublicSignTokenHandlesBareEnvelopeAndFetchesDocument() async throws {
-        let client = SequenceHTTPClient([
-            jsonResponse(["status": 200, "message": ""]),
-            jsonResponse([
-                "status": 200,
-                "message": "",
-                "data": [
-                    "id": "doc1",
-                    "name": "contract.pdf",
-                    "status": "pending_signature",
-                    "pages": [],
-                    "created_at": "2026-08-20T12:00:00Z",
-                    "updated_at": "2026-08-21T12:00:00Z",
-                ],
-            ]),
+    func testSendPublicSignTokenSendsSpecBodyAndDecodesResponse() async throws {
+        mock.stubEnvelope([
+            "document": [
+                "resource": "document", "id": "doc1", "name": "contract.pdf",
+                "page_count": 1, "created_by": "Example Workspace",
+            ],
+            "channel": "email",
+            "recipient": "signer@example.com",
         ])
-        let publicResource = DocumentResource(http: client)
-        let response = try await publicResource.sendPublicSignToken(
-            documentId: "doc1",
-            payload: SendTokenPayload(recipient: "recipient@example.invalid", channel: .email)
-        )
-        XCTAssertEqual(response.document.id, "doc1")
-        XCTAssertEqual(response.document.status, .pendingSignature)
-        XCTAssertEqual(response.channel, "email")
-        XCTAssertEqual(response.recipient, "recipient@example.invalid")
-        XCTAssertEqual(client.requests.map(\.path), [
-            "/public/documents/doc1/send-token",
-            "/public/documents/doc1",
-        ])
-        XCTAssertEqual(client.requests.first?.method, .put)
-        guard let body = client.requests.first?.body,
-              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-            XCTFail("No body")
-            return
-        }
-        XCTAssertEqual(json["email"] as? String, "recipient@example.invalid")
-        XCTAssertNil(json["channel"])
-        XCTAssertNil(json["recipient"])
-    }
-
-    func testSendPublicSignTokenEmailUsesOneRequestAndBareEnvelope() async throws {
-        mock.stubJSON(["status": 200, "message": "Token sent"])
         let publicResource = DocumentResource(http: mock)
 
-        try await publicResource.sendPublicSignToken(
+        let response = try await publicResource.sendPublicSignToken(
             documentId: "doc1",
-            email: "recipient@example.invalid"
+            payload: SendTokenPayload(recipient: "signer@example.com")
         )
+
+        XCTAssertEqual(response.document.id, "doc1")
+        XCTAssertEqual(response.document.pageCount, 1)
+        XCTAssertEqual(response.document.createdBy, "Example Workspace")
+        XCTAssertEqual(response.channel, "email")
+        XCTAssertEqual(response.recipient, "signer@example.com")
+        XCTAssertEqual(mock.allRequests.count, 1)
+        let request = try XCTUnwrap(mock.lastRequest)
+        XCTAssertEqual(request.method, .put)
+        XCTAssertEqual(request.path, "/public/documents/doc1/send-token")
+        XCTAssertEqual(request.credential, .withheld)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.body)) as? NSDictionary)
+        XCTAssertEqual(json, ["channel": "email", "recipient": "signer@example.com"] as NSDictionary)
+    }
+
+    func testSendPublicSignTokenEmailFormSendsSpecBody() async throws {
+        mock.stubJSON(["status": 200, "message": ""])
+        let publicResource = DocumentResource(http: mock)
+
+        try await publicResource.sendPublicSignToken(documentId: "doc1", email: "signer@example.com")
 
         XCTAssertEqual(mock.allRequests.count, 1)
-        XCTAssertEqual(mock.lastRequest?.path, "/public/documents/doc1/send-token")
-        let body = try XCTUnwrap(mock.lastRequest?.body)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(json as NSDictionary, ["email": "recipient@example.invalid"] as NSDictionary)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(mock.lastRequest?.body)) as? NSDictionary)
+        XCTAssertEqual(json, ["channel": "email", "recipient": "signer@example.com"] as NSDictionary)
     }
 
-    func testSendPublicSignTokenCompatibilityResponseReportsCompletedSideEffect() async throws {
-        let client = SequenceHTTPClient([jsonResponse(["status": 200, "message": "Token sent"])])
-        let publicResource = DocumentResource(http: client)
-
-        do {
+    func testSendPublicSignTokenRejectsNonEmailChannelBeforeIO() async {
+        let publicResource = DocumentResource(http: mock)
+        let whatsapp = SendTokenChannel(rawValue: 1)!
+        await assertThrowsValidationError {
             _ = try await publicResource.sendPublicSignToken(
                 documentId: "doc1",
-                payload: SendTokenPayload(recipient: "recipient@example.invalid")
+                payload: SendTokenPayload(recipient: "signer@example.com", channel: whatsapp)
             )
-            XCTFail("Expected follow-up lookup to fail")
-        } catch let error as AssinafySDKError {
-            XCTAssertEqual(error.context["tokenSent"] as? Bool, true)
-            XCTAssertEqual(error.context["documentId"] as? String, "doc1")
         }
-    }
-
-    func testSendPublicSignTokenUsesSandboxCompatibilityShapeWhenConfigured() async throws {
-        let response = jsonResponse([
-            "status": 200,
-            "message": "",
-            "data": ["id": "doc1", "name": "contract.pdf", "status": "pending_signature"],
-        ])
-        let client = SequenceHTTPClient([response, response])
-        let publicResource = DocumentResource(http: client, usesSandboxCompatibility: true)
-        _ = try await publicResource.sendPublicSignToken(
-            documentId: "doc1",
-            payload: SendTokenPayload(recipient: "recipient@example.invalid")
-        )
-        let body = try XCTUnwrap(client.requests.first?.body)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(json["email"] as? String, "recipient@example.invalid")
-        XCTAssertEqual(json["recipient"] as? String, "recipient@example.invalid")
-        XCTAssertEqual(json["channel"] as? String, "email")
-    }
-
-    func testSendPublicSignTokenPreservesLegacyWhatsappChannel() async throws {
-        let publicDocumentResponse = jsonResponse([
-            "status": 200,
-            "message": "",
-            "data": ["id": "doc1", "name": "contract.pdf", "status": "pending_signature"],
-        ])
-        let client = SequenceHTTPClient([publicDocumentResponse, publicDocumentResponse])
-        let publicResource = DocumentResource(http: client)
-        _ = try await publicResource.sendPublicSignToken(
-            documentId: "doc1",
-            payload: SendTokenPayload(recipient: "+15555550101", channel: .whatsapp)
-        )
-        guard let body = client.requests.first?.body,
-              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-            XCTFail("No body")
-            return
-        }
-        XCTAssertEqual(json["email"] as? String, "+15555550101")
-        XCTAssertEqual(json["channel"] as? String, "whatsapp")
-        XCTAssertNil(json["recipient"])
+        XCTAssertTrue(mock.allRequests.isEmpty)
     }
 
     func testConfirmSignerDataOmitsFalseExtensionAndCanReturnSigner() async throws {

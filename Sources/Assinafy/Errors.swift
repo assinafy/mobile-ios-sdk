@@ -23,7 +23,9 @@ public protocol AssinafyErrorProtocol: Error {
 /// `responseData`, `errors`, and `NSUnderlyingErrorKey` as applicable. An
 /// API error adds `wwwAuthenticate`, the response's raw `WWW-Authenticate`
 /// challenge, and `insufficientScope`, the scope a `403` challenge names
-/// (``APIError/insufficientScope``), when present.
+/// (``APIError/insufficientScope``), when present, and `rateLimitLimit`,
+/// `rateLimitRemaining`, `rateLimitReset` and `retryAfter` (integers) when the
+/// response carried the matching rate-limit headers.
 @objc public final class ASFErrorDomain: NSObject {
     @objc public static let api        = "com.assinafy.sdk.APIError"
     @objc public static let validation = "com.assinafy.sdk.ValidationError"
@@ -80,6 +82,14 @@ public struct APIError: AssinafyErrorProtocol, LocalizedError {
     /// The response's `WWW-Authenticate` challenge, read through ``insufficientScope``
     /// and bridged to `NSError` as `userInfo["wwwAuthenticate"]`.
     var wwwAuthenticate: String?
+    /// `X-Rate-Limit-Limit`: requests allowed in the current window, when the response carried it.
+    public internal(set) var rateLimitLimit: Int?
+    /// `X-Rate-Limit-Remaining`: requests left in the current window.
+    public internal(set) var rateLimitRemaining: Int?
+    /// `X-Rate-Limit-Reset`: seconds until the window resets.
+    public internal(set) var rateLimitReset: Int?
+    /// `Retry-After` on a `429 Too Many Requests`: seconds to wait before retrying.
+    public internal(set) var retryAfter: Int?
 
     public var context: [String: Any] {
         ["statusCode": statusCode, "responseData": responseData as Any]
@@ -140,6 +150,10 @@ extension APIError: CustomNSError {
         if let data = responseData { info["responseData"] = data }
         if let challenge = wwwAuthenticate { info["wwwAuthenticate"] = challenge }
         if let scope = insufficientScope { info["insufficientScope"] = scope }
+        if let value = rateLimitLimit { info["rateLimitLimit"] = value }
+        if let value = rateLimitRemaining { info["rateLimitRemaining"] = value }
+        if let value = rateLimitReset { info["rateLimitReset"] = value }
+        if let value = retryAfter { info["retryAfter"] = value }
         return info
     }
 }

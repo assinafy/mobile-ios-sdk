@@ -953,57 +953,60 @@ public typealias PublicDocument = PublicDocumentInfo
 // MARK: - SendTokenChannel
 
 /// The delivery channel for `PUT /public/documents/{id}/send-token`.
+///
+/// The API accepts only `email` on this route.
 @objc public enum SendTokenChannel: Int, Sendable {
     case email = 0
+    /// Not accepted by `send-token`; the SDK rejects it with a ``ValidationError``.
+    @available(*, deprecated, message: "send-token accepts only the email channel")
     case whatsapp = 1
 
     var stringValue: String {
-        switch self {
-        case .email:    return "email"
-        case .whatsapp: return "whatsapp"
-        }
+        self == .email ? "email" : "whatsapp"
     }
 }
 
 /// Payload for `PUT /public/documents/{id}/send-token`.
 ///
-/// Production documents `{ "email": "..." }`. When ``channel`` is `.whatsapp`,
-/// the SDK also sends the compatibility `channel` field.
+/// Encodes `{ "channel": "email", "recipient": "<signer email>" }`; both
+/// fields are required by the API.
 @objcMembers
 public final class SendTokenPayload: NSObject, Encodable {
-    /// The recipient address (email address, or phone number for WhatsApp).
+    /// The signer's email address.
     public let recipient: String
-    /// The delivery channel.
+    /// The delivery channel. Only ``SendTokenChannel/email`` is accepted.
     public let channel: SendTokenChannel
 
     /// Creates a public signing-token delivery payload.
     /// - Parameters:
-    ///   - recipient: Email address or WhatsApp number receiving the token.
-    ///   - channel: Delivery channel.
+    ///   - recipient: Email address receiving the token.
+    ///   - channel: Delivery channel; must be ``SendTokenChannel/email``.
     @objc public init(recipient: String, channel: SendTokenChannel = .email) {
         self.recipient = recipient
         self.channel = channel
     }
 
-    enum CodingKeys: String, CodingKey { case email, channel }
+    enum CodingKeys: String, CodingKey { case channel, recipient }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        // The documented field is `email`; carry the recipient there.
-        try c.encode(recipient, forKey: .email)
-        if channel != .email {
-            try c.encode(channel.stringValue, forKey: .channel)
-        }
+        try c.encode(channel.stringValue, forKey: .channel)
+        try c.encode(recipient, forKey: .recipient)
     }
 }
 
 extension SendTokenPayload: @unchecked Sendable {}
 
-/// Response from `PUT /public/documents/{id}/send-token`.
+/// Response `data` from `PUT /public/documents/{id}/send-token`:
+/// `{ "document": { "resource", "id", "name", "page_count", "created_by" },
+/// "channel": "email", "recipient": string }`.
 @objcMembers
 public final class SendTokenResponse: NSObject {
+    /// The document whose signing token was sent.
     public let document: PublicDocumentInfo
+    /// The delivery channel, `email`.
     public let channel: String
+    /// The address the token was sent to.
     public let recipient: String
 
     init(document: PublicDocumentInfo, channel: String, recipient: String) {

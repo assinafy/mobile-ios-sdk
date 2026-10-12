@@ -59,7 +59,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.10.0"
+        from: "1.10.1"
     ),
 ],
 targets: [
@@ -622,7 +622,9 @@ try await client.assignments.decline(
 
 Signatários com vários documentos podem agir sobre todos de uma vez com
 `signers.signMultipleDocuments(…)` e `signers.declineMultipleDocuments(…)`, e listar os próprios
-documentos com `signers.listSignerDocuments(…)` e `signers.searchSignerDocuments(…)`.
+documentos com `signers.listSignerDocuments(…)` e `signers.searchSignerDocuments(…)`. Esses enviam
+apenas o código de acesso; um backend do workspace lista os documentos de um signatário com
+`signers.listDocumentsAsWorkspace(signerId:)` e `signers.searchDocumentsAsWorkspace(signerId:search:)`.
 
 Imagens de assinatura e rubrica são PNG:
 
@@ -639,14 +641,14 @@ Quando o link de assinatura carrega apenas um código de acesso e nenhum ID de s
 `signers.getSigningDocument(signerAccessCode:)`.
 
 Antes de o signatário verificar seu código, um app pode mostrar um resumo público e enviar o token
-de seis dígitos:
+de seis dígitos por email (o `send-token` entrega apenas por email):
 
 ```swift
 let info = try await client.documents.getPublicInfo(documentId: documentId)
 
 try await client.documents.sendPublicSignToken(
     documentId: documentId,
-    email: "ana@exemplo.invalid"
+    email: "signer@example.com"
 )
 ```
 
@@ -825,6 +827,9 @@ do {
     // O cancelamento de tarefa é preservado, não convertido.
 }
 ```
+
+Um `429 Too Many Requests` traz `error.retryAfter`, os segundos a esperar antes de tentar de novo,
+junto com `rateLimitLimit`, `rateLimitRemaining` e `rateLimitReset` dos cabeçalhos `X-Rate-Limit-*`.
 
 ## Transporte e segurança de rede
 

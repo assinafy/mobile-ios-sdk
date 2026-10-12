@@ -766,6 +766,18 @@ final class AssinafyLiveTests: XCTestCase {
             )
             XCTAssertEqual(compatibleReset.id, assignment.id)
 
+            let cleared = try await client.assignments.resetExpiration(
+                documentId: uploaded.id,
+                assignmentId: assignment.id,
+                expiresAt: nil
+            )
+            XCTAssertNil(cleared.expiresAt)
+
+            let workspaceDocuments = try await client.signers.listDocumentsAsWorkspace(signerId: signerA.id)
+            XCTAssertTrue(workspaceDocuments.data.contains { $0.id == uploaded.id })
+            let workspaceSearch = try await client.signers.searchDocumentsAsWorkspace(signerId: signerA.id)
+            XCTAssertTrue(workspaceSearch.data.contains { $0.id == uploaded.id })
+
             let resendCost = try await client.assignments.estimateResendCost(
                 documentId: uploaded.id,
                 assignmentId: assignment.id,

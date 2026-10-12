@@ -43,6 +43,7 @@ final class PayloadDocumentationTests: XCTestCase {
         try decode("FieldType", as: FieldTypeInfo.self)
         try decode("FieldValidationResult", as: FieldValidationResult.self)
         try decode("DocumentVerification", as: DocumentVerification.self)
+        try decode("SendToken", as: SendTokenResponse.self)
         try decode("DocumentActivity", as: DocumentActivity.self)
         try decode("WhatsappNotification", as: WhatsappNotification.self)
         try decode("DocumentStatsRow", as: DocumentStatsRow.self)

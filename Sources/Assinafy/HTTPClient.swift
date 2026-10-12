@@ -331,6 +331,13 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
             }
             var error = APIError.from(statusCode: httpResponse.statusCode, responseData: parsed)
             error.wwwAuthenticate = httpResponse.value(forHTTPHeaderField: "WWW-Authenticate")
+            func intHeader(_ name: String) -> Int? {
+                httpResponse.value(forHTTPHeaderField: name).flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            }
+            error.rateLimitLimit = intHeader("X-Rate-Limit-Limit")
+            error.rateLimitRemaining = intHeader("X-Rate-Limit-Remaining")
+            error.rateLimitReset = intHeader("X-Rate-Limit-Reset")
+            error.retryAfter = intHeader("Retry-After")
             throw error
         }
         return APIResponse(

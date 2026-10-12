@@ -325,6 +325,44 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         )
     }
 
+    /// Lists a workspace signer's documents using the client's workspace credential.
+    ///
+    /// Mirrors `GET /signers/{signer_id}/documents` authenticated with the
+    /// API key or bearer token; the signer must belong to the credential's
+    /// workspace. Query: `page`, `per-page`. Response `data`: an array of
+    /// documents in the ``DocumentDetails`` shape, with `X-Pagination-*` headers
+    /// in ``PaginatedResult/meta``. Use
+    /// ``listSignerDocuments(signerId:signerAccessCode:params:)`` from a signer's
+    /// signing link instead; that form sends only the access code.
+    public func listDocumentsAsWorkspace(
+        signerId: String,
+        params: SignerDocumentListParams = SignerDocumentListParams()
+    ) async throws -> PaginatedResult<DocumentDetails> {
+        let sid = try requireId(signerId, name: "Signer ID")
+        return try await callList(
+            "Failed to list signer documents",
+            request: .get("/signers/\(sid)/documents", queryItems: params.toQueryItems())
+        )
+    }
+
+    /// Searches a workspace signer's documents using the client's workspace credential.
+    ///
+    /// Mirrors `GET /signers/{signer_id}/documents/search?search=...`
+    /// authenticated with the API key or bearer token; the signer must belong
+    /// to the credential's workspace. Response `data`: an array of compact
+    /// documents decoded as ``DocumentDetails``.
+    public func searchDocumentsAsWorkspace(
+        signerId: String,
+        search: String? = nil
+    ) async throws -> PaginatedResult<DocumentDetails> {
+        let sid = try requireId(signerId, name: "Signer ID")
+        let items = search.flatMap { $0.isEmpty ? nil : [URLQueryItem(name: "search", value: $0)] }
+        return try await callList(
+            "Failed to search signer documents",
+            request: .get("/signers/\(sid)/documents/search", queryItems: items)
+        )
+    }
+
     /// Signs multiple virtual-method documents in one call.
     ///
     /// Mirrors `PUT /signers/documents/sign-multiple?signer-access-code=...`.
@@ -609,6 +647,26 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         completion: @escaping ([DocumentDetails]?, Error?) -> Void
     ) {
         withListCompletion({ try await self.listSignerDocuments(signerId: signerId, signerAccessCode: signerAccessCode, params: params) }, completion: completion)
+    }
+
+    /// Completion form of `listDocumentsAsWorkspace`; delivers the result on the main queue.
+    @objc(listDocumentsAsWorkspaceWithSignerId:params:completion:)
+    public func listDocumentsAsWorkspace(
+        signerId: String,
+        params: SignerDocumentListParams,
+        completion: @escaping ([DocumentDetails]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.listDocumentsAsWorkspace(signerId: signerId, params: params) }, completion: completion)
+    }
+
+    /// Completion form of `searchDocumentsAsWorkspace`; delivers the result on the main queue.
+    @objc(searchDocumentsAsWorkspaceWithSignerId:search:completion:)
+    public func searchDocumentsAsWorkspace(
+        signerId: String,
+        search: String?,
+        completion: @escaping ([DocumentDetails]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.searchDocumentsAsWorkspace(signerId: signerId, search: search) }, completion: completion)
     }
 
     /// Completion form of `searchSignerDocuments`; delivers the result on the main queue.

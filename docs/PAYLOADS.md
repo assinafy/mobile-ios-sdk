@@ -70,7 +70,7 @@ methods validate status and discard any returned data.
 | `GET /v1/documents/{documentId}/thumbnail` | No body | image/* bytes |
 | `GET /v1/documents/{documentId}/pages/{pageId}/download` | No body | image/* bytes |
 | `GET /v1/public/documents/{documentId}` | No body | [Document](#document) |
-| `PUT /v1/public/documents/{documentId}/send-token` | [JSON](#request-21) | Envelope without data |
+| `PUT /v1/public/documents/{documentId}/send-token` | [JSON](#request-21) | [SendToken](#sendtoken) |
 | `GET /v1/accounts/{accountId}/signers` | No body | Array of [Signer](#signer) |
 | `POST /v1/accounts/{accountId}/signers` | [JSON](#request-22) | [Signer](#signer) |
 | `GET /v1/accounts/{accountId}/signers/{signerId}` | No body | [Signer](#signer) |
@@ -429,7 +429,8 @@ get/create/update return the `Template` data object; deletion returns an envelop
 
 ```json
 {
-  "email": "signer@example.invalid"
+  "channel": "email",
+  "recipient": "signer@example.com"
 }
 ```
 
@@ -1767,6 +1768,22 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
   "type": "example",
   "success": true,
   "error_message": "example"
+}
+```
+
+### SendToken
+
+```json
+{
+  "document": {
+    "resource": "document",
+    "id": "document_id_example_001",
+    "name": "contract.pdf",
+    "page_count": 1,
+    "created_by": "Example Workspace"
+  },
+  "channel": "email",
+  "recipient": "signer@example.com"
 }
 ```
 

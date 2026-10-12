@@ -103,17 +103,6 @@ final class CredentialScopeTests: XCTestCase {
         assertNoCredential("/public/documents/doc1/send-token")
     }
 
-    func testSandboxSendTokenCompatibilityRouteOmitsWorkspaceCredential() async throws {
-        let documents = DocumentResource(
-            http: mock,
-            defaultAccountId: "acc",
-            usesSandboxCompatibility: true
-        )
-        stubEmpty()
-        try await documents.sendPublicSignToken(documentId: "doc1", email: "user@example.invalid")
-        assertNoCredential("/public/documents/doc1/send-token")
-    }
-
     func testPublicSignerArtifactDownloadOmitsWorkspaceCredential() async throws {
         let signers = SignerResource(http: mock, defaultAccountId: "acc")
         mock.stub(response: APIResponse(data: Data("%PDF".utf8), headers: [:], statusCode: 200))
@@ -240,13 +229,55 @@ final class CredentialScopeTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.path, "/authentication/change-password")
         XCTAssertEqual(mock.lastRequest?.credential, .workspace)
 
-        // `POST /accounts/{id}/fields/{id}/validate` accepts a signer access code
-        // but is documented as workspace-authenticated, so the credential stays.
+        let fields = FieldResource(http: mock, defaultAccountId: "acc")
+        mock.stubEnvelope(["field_id": "f1", "success": true])
+        _ = try await fields.validate(fieldId: "f1", value: "v")
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc/fields/f1/validate")
+        XCTAssertEqual(mock.lastRequest?.credential, .workspace)
+        XCTAssertNil(mock.lastRequest?.queryItems)
+
+        // Signer documents accept either credential; the workspace form is explicit.
+        let signers = SignerResource(http: mock, defaultAccountId: "acc")
+        mock.stubEnvelopeList([])
+        _ = try await signers.listDocumentsAsWorkspace(signerId: "s1", params: SignerDocumentListParams(page: 2, perPage: 10))
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/s1/documents")
+        XCTAssertEqual(mock.lastRequest?.credential, .workspace)
+        XCTAssertEqual(mock.lastRequest?.queryItems, [
+            URLQueryItem(name: "page", value: "2"), URLQueryItem(name: "per-page", value: "10"),
+        ])
+        mock.stubEnvelopeList([])
+        _ = try await signers.searchDocumentsAsWorkspace(signerId: "s1", search: "contract")
+        XCTAssertEqual(mock.lastRequest?.path, "/signers/s1/documents/search")
+        XCTAssertEqual(mock.lastRequest?.credential, .workspace)
+        XCTAssertEqual(mock.lastRequest?.queryItems, [URLQueryItem(name: "search", value: "contract")])
+    }
+
+    func testFieldValidationWithSignerCodeSendsOnlyTheCode() async throws {
         let fields = FieldResource(http: mock, defaultAccountId: "acc")
         mock.stubEnvelope(["field_id": "f1", "success": true])
         _ = try await fields.validate(fieldId: "f1", value: "v", signerAccessCode: "code")
-        XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc/fields/f1/validate")
-        XCTAssertEqual(mock.lastRequest?.credential, .workspace)
+        assertNoCredential("/accounts/acc/fields/f1/validate")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [URLQueryItem(name: "signer-access-code", value: "code")])
+
+        mock.stubEnvelopeList([])
+        _ = try await fields.validateMultiple(
+            items: [FieldValidateMultipleItem(fieldId: "f1", value: "v")],
+            signerAccessCode: "code"
+        )
+        assertNoCredential("/accounts/acc/fields/validate-multiple")
+
+        let idle = MockHTTPClient()
+        let guarded = FieldResource(http: idle, defaultAccountId: "acc")
+        await assertThrowsValidationError {
+            _ = try await guarded.validate(fieldId: "f1", value: "v", signerAccessCode: " ")
+        }
+        await assertThrowsValidationError {
+            _ = try await guarded.validateMultiple(
+                items: [FieldValidateMultipleItem(fieldId: "f1", value: "v")],
+                signerAccessCode: ""
+            )
+        }
+        XCTAssertTrue(idle.allRequests.isEmpty)
     }
 
     // MARK: - Transport

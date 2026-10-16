@@ -13,6 +13,30 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
     }
 
     @available(*, unavailable)
+    private func biometricFlow(
+        client: AssinafyClient, accessCode: String, documentId: String,
+        assignmentId: String, signerId: String, consentFromSigner: Bool,
+        decisionFromReviewer: String, reviewerNote: String?
+    ) async throws -> String? {
+        let state = try await client.signers.identityVerification(signerAccessCode: accessCode)
+        if state.canStart {
+            let session = try await client.signers.startIdentityVerification(
+                signerAccessCode: accessCode, payload: StartIdentityVerificationPayload(consent: consentFromSigner))
+            return session.url
+        }
+        let review = try await client.assignments.identityReview(
+            documentId: documentId, assignmentId: assignmentId, signerId: signerId)
+        if let name = review.images.first {
+            _ = try await client.assignments.downloadIdentityReviewImage(
+                documentId: documentId, assignmentId: assignmentId, signerId: signerId, name: name)
+        }
+        _ = try await client.assignments.reviewIdentityVerification(
+            documentId: documentId, assignmentId: assignmentId, signerId: signerId,
+            payload: ReviewIdentityVerificationPayload(decision: decisionFromReviewer, note: reviewerNote))
+        return nil
+    }
+
+    @available(*, unavailable)
     private func quickStart(bearerToken: String, accountId: String, pdfData: Data) async throws {
         let client = AssinafyClient(token: bearerToken, defaultAccountId: accountId)
         let uploaded = try await client.documents.upload(pdfData)
@@ -112,9 +136,13 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
         documentId: String,
         assignmentId: String,
         accessCode: String,
-        pngData: Data
+        pngData: Data,
+        verificationCode: String
     ) async throws {
         _ = try await client.signers.getSelf(signerAccessCode: accessCode)
+        try await client.signers.verifyEmail(payload: VerifyEmailPayload(
+            verificationCode: verificationCode, signerAccessCode: accessCode
+        ))
         try await client.signers.acceptTermsWithoutResponse(signerAccessCode: accessCode)
         _ = try await client.documents.confirmSignerDataAndReturnSigner(
             documentId: documentId,

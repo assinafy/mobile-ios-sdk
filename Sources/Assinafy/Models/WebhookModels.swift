@@ -14,6 +14,11 @@ public final class WebhookEventType: NSObject {
     @objc public static let signerCreated           = "signer_created"
     @objc public static let signerEmailVerified     = "signer_email_verified"
     @objc public static let signerWhatsappVerified  = "signer_whatsapp_verified"
+    @objc public static let signerIdentityVerified = "signer_identity_verified"
+    @objc public static let signerIdentityVerificationFailed = "signer_identity_verification_failed"
+    @objc public static let signerIdentityReviewRequired = "signer_identity_review_required"
+    @objc public static let signerIdentityReviewApproved = "signer_identity_review_approved"
+    @objc public static let signerIdentityReviewRejected = "signer_identity_review_rejected"
     @objc public static let signerDataConfirmed     = "signer_data_confirmed"
     @objc public static let signerViewedDocument    = "signer_viewed_document"
     @objc public static let signerSignedDocument    = "signer_signed_document"
@@ -302,6 +307,8 @@ extension WebhookDispatchListParams: @unchecked Sendable {}
 @objcMembers
 public final class WebhookEndpoint: NSObject {
     public let id: String
+    /// Returned once on creation with signing enabled. Save securely on your webhook server.
+    public let secret: String?
     /// Label that tells endpoints apart.
     public let name: String?
     public let url: String
@@ -315,7 +322,8 @@ public final class WebhookEndpoint: NSObject {
     public let updatedAt: String?
 
     init(id: String, name: String?, url: String, email: String, events: [String],
-         isActive: Bool, signingEnabled: Bool, createdAt: String?, updatedAt: String?) {
+         isActive: Bool, signingEnabled: Bool, createdAt: String?, updatedAt: String?, secret: String? = nil) {
+        self.secret = secret
         self.id = id; self.name = name; self.url = url; self.email = email
         self.events = events; self.isActive = isActive; self.signingEnabled = signingEnabled
         self.createdAt = createdAt; self.updatedAt = updatedAt
@@ -326,7 +334,7 @@ extension WebhookEndpoint: @unchecked Sendable {}
 
 extension WebhookEndpoint: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name, url, email, events
+        case id, name, url, email, events, secret
         case isActive       = "is_active"
         case signingEnabled = "signing_enabled"
         case createdAt      = "created_at"
@@ -344,7 +352,8 @@ extension WebhookEndpoint: Decodable {
             isActive:       try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false,
             signingEnabled: try c.decodeIfPresent(Bool.self, forKey: .signingEnabled) ?? false,
             createdAt:      try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
-            updatedAt:      try decodeFlexibleOptionalString(from: c, forKey: .updatedAt)
+            updatedAt:      try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
+            secret:         try c.decodeIfPresent(String.self, forKey: .secret)
         )
     }
 }

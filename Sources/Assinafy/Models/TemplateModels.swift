@@ -163,17 +163,20 @@ public final class TemplateListItem: NSObject {
     public let pages: [TemplatePage]
     public let roles: [TemplateRole]
     public let tags: [Tag]
+    /// Tags applied to documents instantiated from this template.
+    public let defaultDocumentTags: [Tag]
 
     init(resource: String? = nil, id: String, name: String,
          documentName: String? = nil, message: String? = nil,
          status: String, accountId: String? = nil,
          createdAt: String, updatedAt: String? = nil,
-         pages: [TemplatePage] = [], roles: [TemplateRole] = [], tags: [Tag] = []) {
+         pages: [TemplatePage] = [], roles: [TemplateRole] = [], tags: [Tag] = [], defaultDocumentTags: [Tag] = []) {
         self.resource = resource
         self.id = id; self.name = name
         self.documentName = documentName; self.message = message
         self.status = status
         self.accountId = accountId; self.createdAt = createdAt; self.updatedAt = updatedAt
+        self.defaultDocumentTags = defaultDocumentTags
         self.pages = pages; self.roles = roles; self.tags = tags
     }
 }
@@ -183,6 +186,7 @@ extension TemplateListItem: @unchecked Sendable {}
 extension TemplateListItem: Decodable {
     enum CodingKeys: String, CodingKey {
         case resource, id, name, message, status, pages, roles, tags
+        case defaultDocumentTags = "default_document_tags"
         case documentName = "document_name"
         case accountId = "account_id"
         case createdAt = "created_at"
@@ -203,7 +207,8 @@ extension TemplateListItem: Decodable {
             updatedAt:    try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
             pages:        try c.decodeIfPresent([TemplatePage].self, forKey: .pages) ?? [],
             roles:        try c.decodeIfPresent([TemplateRole].self, forKey: .roles) ?? [],
-            tags:         try c.decodeIfPresent([Tag].self, forKey: .tags) ?? []
+            tags:         try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
+            defaultDocumentTags: try c.decodeIfPresent([Tag].self, forKey: .defaultDocumentTags) ?? []
         )
     }
 }

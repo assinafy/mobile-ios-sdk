@@ -793,7 +793,7 @@ final class DocumentResourceTests: XCTestCase {
                     roleId: "role1",
                     id: "signer-id-must-not-be-sent",
                     verificationMethod: "Whatsapp",
-                    notificationMethods: ["Email", "Whatsapp"],
+                    notificationMethods: ["Whatsapp"],
                     step: NSNumber(value: 2)
                 )
             ]
@@ -803,7 +803,7 @@ final class DocumentResourceTests: XCTestCase {
         let signer = try XCTUnwrap((json["signers"] as? [[String: Any]])?.first)
         XCTAssertEqual(signer["role_id"] as? String, "role1")
         XCTAssertEqual(signer["verification_method"] as? String, "Whatsapp")
-        XCTAssertEqual(signer["notification_methods"] as? [String], ["Email", "Whatsapp"])
+        XCTAssertEqual(signer["notification_methods"] as? [String], ["Whatsapp"])
         XCTAssertNil(signer["id"])
         XCTAssertNil(signer["step"])
 

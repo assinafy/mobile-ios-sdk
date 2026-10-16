@@ -16,6 +16,51 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Swift async API
 
+    /// Mirrors `GET /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification`.
+    /// Workspace-only evidence summary; images are available separately while InReview.
+    public func identityReview(
+        documentId: String, assignmentId: String, signerId: String
+    ) async throws -> SignerIdentityReview {
+        let path = try identityReviewPath(documentId: documentId, assignmentId: assignmentId, signerId: signerId)
+        return try await call("Failed to fetch signer identity review", request: .get(path))
+    }
+
+    /// Mirrors `GET /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/images/{name}`.
+    /// Returns JPEG, PNG, or PDF bytes only while InReview; do not persist sensitive evidence.
+    public func downloadIdentityReviewImage(
+        documentId: String, assignmentId: String, signerId: String, name: String
+    ) async throws -> Data {
+        guard ["document_front", "document_back", "document_pdf", "face"].contains(name) else {
+            throw ValidationError("Unknown identity review image name")
+        }
+        let path = try identityReviewPath(documentId: documentId, assignmentId: assignmentId, signerId: signerId)
+        return try await callData("Failed to download identity review image", request: .get(path + "/images/\(name)"))
+    }
+
+    /// Mirrors `POST /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/review`.
+    /// Approval releases certification when every signer is done. Rejection cancels the
+    /// document and notifies all recipients; the optional note is never shown to signers.
+    public func reviewIdentityVerification(
+        documentId: String, assignmentId: String, signerId: String,
+        payload: ReviewIdentityVerificationPayload
+    ) async throws -> SignerIdentityReview {
+        guard ["Approved", "Rejected"].contains(payload.decision) else {
+            throw ValidationError("Identity review decision must be Approved or Rejected")
+        }
+        guard (payload.note?.unicodeScalars.count ?? 0) <= 2000 else {
+            throw ValidationError("Identity review note must not exceed 2000 characters")
+        }
+        let path = try identityReviewPath(documentId: documentId, assignmentId: assignmentId, signerId: signerId)
+        return try await call("Failed to decide signer identity review", request: try .post(path + "/review", body: payload))
+    }
+
+    private func identityReviewPath(documentId: String, assignmentId: String, signerId: String) throws -> String {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let sid = try requireId(signerId, name: "Signer ID")
+        return "/documents/\(did)/assignments/\(aid)/signers/\(sid)/identity-verification"
+    }
+
     /// Lists assignments for the authenticated user's current account.
     ///
     /// Mirrors `GET /assignments`. Production derives account context from the
@@ -246,6 +291,37 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
     }
 
     // MARK: - Objective-C / completion-handler API
+
+    /// Fetches review evidence and delivers it on the main queue.
+    @objc(identityReviewWithDocumentId:assignmentId:signerId:completion:)
+    public func identityReview(
+        documentId: String, assignmentId: String, signerId: String,
+        completion: @escaping (SignerIdentityReview?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.identityReview(documentId: documentId, assignmentId: assignmentId, signerId: signerId) },
+                       completion: completion)
+    }
+
+    /// Downloads evidence bytes and delivers them on the main queue.
+    @objc(downloadIdentityReviewImageWithDocumentId:assignmentId:signerId:name:completion:)
+    public func downloadIdentityReviewImage(
+        documentId: String, assignmentId: String, signerId: String, name: String,
+        completion: @escaping (Data?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.downloadIdentityReviewImage(documentId: documentId, assignmentId: assignmentId, signerId: signerId, name: name) },
+                       completion: completion)
+    }
+
+    /// Decides the review and delivers the updated evidence on the main queue.
+    @objc(reviewIdentityVerificationWithDocumentId:assignmentId:signerId:payload:completion:)
+    public func reviewIdentityVerification(
+        documentId: String, assignmentId: String, signerId: String,
+        payload: ReviewIdentityVerificationPayload,
+        completion: @escaping (SignerIdentityReview?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.reviewIdentityVerification(documentId: documentId, assignmentId: assignmentId, signerId: signerId, payload: payload) },
+                       completion: completion)
+    }
 
     /// Lists assignments and delivers the result on the **main queue**.
     @objc(listAssignmentsWithAccountId:completion:)

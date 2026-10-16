@@ -93,7 +93,7 @@ public final class FieldResource: BaseResource, @unchecked Sendable {
     /// credential. Signer-facing flows pass the access code from the signing
     /// URL; the request then carries only that code and never the workspace
     /// credential. Body: `{ "value": any }`. Response `data`:
-    /// `{ "field_id", "value", "is_valid", "error" }`.
+    /// `{ "type", "success", "error_message" }`.
     ///
     /// - Throws: ``ValidationError`` before any I/O when `signerAccessCode` is
     ///   present but empty.

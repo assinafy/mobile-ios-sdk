@@ -119,6 +119,15 @@ final class CredentialScopeTests: XCTestCase {
     func testSignerScopedRoutesOmitWorkspaceCredential() async throws {
         let signers = SignerResource(http: mock, defaultAccountId: "acc")
 
+        mock.stubEnvelope(["can_start": true])
+        _ = try await signers.identityVerification(signerAccessCode: "code")
+        assertNoCredential("/signers/identity-verification")
+
+        mock.stubEnvelope(["id": "session", "url": "https://verify.example.invalid/c/session#t=synthetic"])
+        _ = try await signers.startIdentityVerification(
+            signerAccessCode: "code", payload: StartIdentityVerificationPayload(consent: true))
+        assertNoCredential("/signers/identity-verification")
+
         mock.stubEnvelope(["id": "s1", "full_name": "S"])
         _ = try await signers.getSelf(signerAccessCode: "code")
         assertNoCredential("/signers/self")
@@ -354,7 +363,7 @@ final class CredentialScopeTests: XCTestCase {
         _ = try await oauth.exchangeAuthorizationCode(
             .authorizationCode(
                 code: "c",
-                redirectURI: "myapp://cb",
+                redirectURI: "https://app.example.invalid/callback",
                 codeVerifier: OAuthPKCE().codeVerifier,
                 clientId: "client"
             )

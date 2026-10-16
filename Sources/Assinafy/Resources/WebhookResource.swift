@@ -138,12 +138,34 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
         return result.data
     }
 
+    /// Mirrors `GET /accounts/{accountId}/webhooks/endpoints?url=...` with exact URL matching.
+    public func listEndpoints(url: String, accountId: String? = nil) async throws -> [WebhookEndpoint] {
+        try validateURL(url)
+        let id = try self.accountId(accountId)
+        let result: PaginatedResult<WebhookEndpoint> = try await callList(
+            "Failed to find webhook endpoint",
+            request: .get("/accounts/\(id)/webhooks/endpoints", queryItems: [URLQueryItem(name: "url", value: url)])
+        )
+        // Sandbox ignores the URL query, so retain exact matching locally as well.
+        return result.data.filter { $0.url == url }
+    }
+
+    /// Mirrors `DELETE /accounts/{accountId}/webhooks/endpoints?url=...`.
+    /// Deletes only the endpoint registered with this exact URL; absence returns 404.
+    public func deleteEndpoint(url: String, accountId: String? = nil) async throws {
+        try validateURL(url)
+        let id = try self.accountId(accountId)
+        try await callVoid("Failed to delete webhook endpoint", request: .delete(
+            "/accounts/\(id)/webhooks/endpoints", queryItems: [URLQueryItem(name: "url", value: url)]
+        ))
+    }
+
     /// Creates a webhook endpoint.
     ///
     /// Mirrors `POST /accounts/{accountId}/webhooks/endpoints`. OAuth scope: `webhooks:write`.
     /// The API answers `403` past the plan's endpoint limit and `400` when another
-    /// endpoint already uses the URL. With `signingEnabled`, read the generated
-    /// secret with ``signingSecret(endpointId:accountId:)``.
+    /// endpoint already uses the URL. Save the returned ``WebhookEndpoint/secret``
+    /// when signing is enabled; OAuth applications cannot retrieve it later.
     public func createEndpoint(
         _ payload: CreateWebhookEndpointPayload,
         accountId: String? = nil
@@ -242,6 +264,21 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
     }
 
     // MARK: - Objective-C / completion-handler API
+
+    /// Finds endpoints by exact URL and delivers them on the main queue.
+    @objc(listWebhookEndpointsWithURL:accountId:completion:)
+    public func listEndpoints(
+        url: String, accountId: String?,
+        completion: @escaping ([WebhookEndpoint]?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.listEndpoints(url: url, accountId: accountId) }, completion: completion)
+    }
+
+    /// Deletes an endpoint by exact URL and delivers completion on the main queue.
+    @objc(deleteWebhookEndpointWithURL:accountId:completion:)
+    public func deleteEndpoint(url: String, accountId: String?, completion: @escaping (Error?) -> Void) {
+        withVoidCompletion({ try await self.deleteEndpoint(url: url, accountId: accountId) }, completion: completion)
+    }
 
     /// Registers a webhook and delivers the result on the **main queue**.
     @objc(registerWebhook:accountId:completion:)

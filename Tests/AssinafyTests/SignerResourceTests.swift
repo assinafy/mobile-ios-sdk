@@ -17,6 +17,24 @@ final class SignerResourceTests: XCTestCase {
 
     // MARK: - Validation
 
+    func testCreatePayloadSupportsGovernmentIdAndKeepsLegacyShape() throws {
+        let old = CreateSignerPayload(fullName: "Signer", email: "signer@example.invalid")
+        let new = CreateSignerPayload(fullName: "Signer", email: "signer@example.invalid", governmentId: "00000000000")
+        let oldBody = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.assinafy.encode(old)) as? [String: Any])
+        let newBody = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.assinafy.encode(new)) as? [String: Any])
+        XCTAssertNil(oldBody["government_id"])
+        XCTAssertEqual(newBody["government_id"] as? String, "00000000000")
+    }
+
+    func testLegacyPublicArtifactRejectsBlankCodeBeforeIO() async {
+        do {
+            _ = try await resource.downloadSignerDocumentArtifact(
+                signerId: "signer", documentId: "doc", artifact: .original, signerAccessCode: " ")
+            XCTFail("Expected ValidationError")
+        } catch { XCTAssertTrue(error is ValidationError) }
+        XCTAssertNil(mock.lastRequest)
+    }
+
     func testThrowsWhenUpdatingWithoutSignerID() async {
         await assertThrowsValidationError {
             _ = try await self.resource.update(signerId: "", payload: UpdateSignerPayload(fullName: "Test"))

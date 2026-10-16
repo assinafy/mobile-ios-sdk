@@ -37,10 +37,13 @@ final class WebhookEndpointTests: XCTestCase {
     }
 
     func testCreateEndpointSendsDocumentedBody() async throws {
-        mock.stubEnvelope(endpointJSON)
-        _ = try await webhooks.createEndpoint(CreateWebhookEndpointPayload(
+        var createdJSON = endpointJSON
+        createdJSON["secret"] = "whsec_synthetic"
+        mock.stubEnvelope(createdJSON)
+        let endpoint = try await webhooks.createEndpoint(CreateWebhookEndpointPayload(
             url: "https://example.invalid/hook", email: "ops@example.invalid",
             events: ["document_ready"], name: "ERP", signingEnabled: true))
+        XCTAssertEqual(endpoint.secret, "whsec_synthetic")
         XCTAssertEqual(mock.lastRequest?.method, .post)
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc/webhooks/endpoints")
         let json = try body()
@@ -50,6 +53,41 @@ final class WebhookEndpointTests: XCTestCase {
         XCTAssertEqual(json["name"] as? String, "ERP")
         XCTAssertEqual(json["is_active"] as? Bool, true)
         XCTAssertEqual(json["signing_enabled"] as? Bool, true)
+    }
+
+    func testURLLookupKeepsOnlyExactMatchAndDeleteSendsURL() async throws {
+        let url = "https://example.invalid/hook?tenant=a&key=b"
+        var matching = endpointJSON
+        matching["url"] = url
+        mock.stubEnvelopeList([endpointJSON, matching])
+        let matches = try await webhooks.listEndpoints(url: url, accountId: "override")
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.url, url)
+        XCTAssertNil(matches.first?.secret)
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/override/webhooks/endpoints")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [URLQueryItem(name: "url", value: url)])
+        XCTAssertEqual(mock.lastRequest?.credential, .workspace)
+
+        mock.stubEnvelopeList([])
+        try await webhooks.deleteEndpoint(url: url)
+        XCTAssertEqual(mock.lastRequest?.method, .delete)
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc/webhooks/endpoints")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [URLQueryItem(name: "url", value: url)])
+        XCTAssertNil(mock.lastRequest?.body)
+    }
+
+    func testURLMethodsRejectInvalidURLBeforeIO() async {
+        for url in ["", "file:///tmp/hook", "https://user:password@example.invalid/hook"] {
+            do {
+                _ = try await webhooks.listEndpoints(url: url)
+                XCTFail("Expected ValidationError")
+            } catch { XCTAssertTrue(error is ValidationError) }
+            do {
+                try await webhooks.deleteEndpoint(url: url)
+                XCTFail("Expected ValidationError")
+            } catch { XCTAssertTrue(error is ValidationError) }
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
     }
 
     func testCreateEndpointRejectsInvalidURLBeforeSending() async {

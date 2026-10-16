@@ -186,9 +186,10 @@ public final class OAuthAuthorizationRequest: NSObject {
     ///   ``OAuthResource/defaultAuthorizationEndpoint`` or the
     ///   `authorization_endpoint` from ``OAuthAuthorizationServerMetadata``.
     /// - Returns: The URL to open, or `nil` when a required value is blank or
-    ///   `endpoint` is not an absolute HTTPS URL.
+    ///   `endpoint` or the redirect URI is not an absolute HTTPS URL, or the
+    ///   redirect URI contains credentials or a fragment.
     @objc public func authorizationURL(endpoint: String) -> URL? {
-        guard !clientId.isBlank, !redirectURI.isBlank, !state.isBlank,
+        guard !clientId.isBlank, Self.isValidRedirectURI(redirectURI), !state.isBlank,
               OAuthPKCE.isValidVerifier(pkce.codeVerifier),
               let base = AssinafyClientConfiguration.normalisedBaseURL(endpoint),
               var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
@@ -210,6 +211,16 @@ public final class OAuthAuthorizationRequest: NSObject {
         }
         components.queryItems = items
         return components.url
+    }
+
+    /// Assinafy registers exact HTTPS callbacks, including any query string.
+    static func isValidRedirectURI(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https",
+              components.host?.isEmpty == false,
+              components.user == nil, components.password == nil,
+              components.fragment == nil, components.url != nil else { return false }
+        return value == value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -452,8 +463,8 @@ public final class OAuthTokenPayload: NSObject, Encodable {
             guard code?.isBlank == false else {
                 throw ValidationError("OAuth authorization code is required")
             }
-            guard redirectURI?.isBlank == false else {
-                throw ValidationError("OAuth redirect URI is required")
+            guard let redirectURI, OAuthAuthorizationRequest.isValidRedirectURI(redirectURI) else {
+                throw ValidationError("OAuth redirect URI must be an absolute HTTPS URL without credentials or fragment")
             }
             guard let verifier = codeVerifier, OAuthPKCE.isValidVerifier(verifier) else {
                 throw ValidationError(

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.11.0] - 2026-10-16
+
+### Added
+
+- Hosted biometric verification with explicit consent, workspace evidence/image retrieval and review decisions.
+- Biometric `IdDocumentFaceMatchBasic` assignments, identity webhook events, and `pending_identity_review` readiness handling.
+- Signer creation with `governmentId`, signer verification state, and template-list default document tags.
+- Webhook endpoint lookup and deletion by exact registered URL, with Objective-C completion methods.
+
+### Fixed
+
+- Webhook creation retains the one-time signing secret for OAuth integrations.
+- OAuth authorization and code exchange require registered-style HTTPS callbacks.
+- Document readiness recognizes completed signatures awaiting identity review.
+
 ## [1.10.1] - 2026-10-12
 
 ### Added

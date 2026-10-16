@@ -22,6 +22,8 @@ public final class Signer: NSObject {
     public let notificationHistory: [SignerNotificationHistory]
     /// CPF the signer reported, when the API returns it.
     public let governmentId: String?
+    /// Provider identity verification state for this assignment, when reported.
+    public let identityVerificationStatus: String?
 
     init(id: String, fullName: String, email: String,
          whatsappPhoneNumber: String? = nil, hasAcceptedTerms: Bool = false) {
@@ -34,6 +36,7 @@ public final class Signer: NSObject {
         self.notified = nil
         self.completed = false; self.notificationHistory = []
         self.governmentId = nil
+        self.identityVerificationStatus = nil
     }
 
     init(
@@ -49,8 +52,10 @@ public final class Signer: NSObject {
         notified: NSNumber? = nil,
         completed: Bool = false,
         notificationHistory: [SignerNotificationHistory] = [],
-        governmentId: String? = nil
+        governmentId: String? = nil,
+        identityVerificationStatus: String? = nil
     ) {
+        self.identityVerificationStatus = identityVerificationStatus
         self.governmentId = governmentId
         self.resource = resource
         self.id = id; self.fullName = fullName; self.email = email
@@ -81,6 +86,7 @@ extension Signer: Decodable {
         case notificationMethods = "notification_methods"
         case notificationHistory = "notification_history"
         case governmentId        = "government_id"
+        case identityVerificationStatus = "identity_verification_status"
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -98,7 +104,8 @@ extension Signer: Decodable {
             notified:             try c.decodeIfPresent(Bool.self, forKey: .notified).map { NSNumber(value: $0) },
             completed:            try c.decodeIfPresent(Bool.self,    forKey: .completed) ?? false,
             notificationHistory:  try c.decodeIfPresent([SignerNotificationHistory].self, forKey: .notificationHistory) ?? [],
-            governmentId:         try c.decodeIfPresent(String.self, forKey: .governmentId)
+            governmentId:         try c.decodeIfPresent(String.self, forKey: .governmentId),
+            identityVerificationStatus: try c.decodeIfPresent(String.self, forKey: .identityVerificationStatus)
         )
     }
 }
@@ -174,6 +181,8 @@ public final class CreateSignerPayload: NSObject, Encodable {
     public let email: String?
     /// The signer's WhatsApp-enabled phone number in E.164 format.
     public let whatsappPhoneNumber: String?
+    /// CPF or CNPJ required by the chosen verification method.
+    public private(set) var governmentId: String?
 
     /// Creates a new signer payload.
     ///
@@ -189,11 +198,21 @@ public final class CreateSignerPayload: NSObject, Encodable {
         self.fullName = fullName
         self.email = email
         self.whatsappPhoneNumber = whatsappPhoneNumber
+        self.governmentId = nil
+    }
+
+    /// Creates a signer with the identifier used by certificate or biometric verification.
+    @objc(initWithFullName:email:whatsappPhoneNumber:governmentId:)
+    public convenience init(fullName: String, email: String? = nil,
+                            whatsappPhoneNumber: String? = nil, governmentId: String) {
+        self.init(fullName: fullName, email: email, whatsappPhoneNumber: whatsappPhoneNumber)
+        self.governmentId = governmentId
     }
 
     enum CodingKeys: String, CodingKey {
         case fullName = "full_name"
         case email
+        case governmentId = "government_id"
         case whatsappPhoneNumber = "whatsapp_phone_number"
     }
 
@@ -201,6 +220,7 @@ public final class CreateSignerPayload: NSObject, Encodable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(fullName, forKey: .fullName)
         try c.encodeIfPresent(email, forKey: .email)
+        try c.encodeIfPresent(governmentId, forKey: .governmentId)
         try c.encodeIfPresent(whatsappPhoneNumber, forKey: .whatsappPhoneNumber)
     }
 }
@@ -280,10 +300,13 @@ public final class SignerSelfInfo: NSObject {
     public let isSignatureReusable: Bool
     /// CPF the signer reported, when the API returns it.
     public let governmentId: String?
+    /// Verification method selected on this signature request.
+    public let verificationMethod: String?
 
     init(resource: String? = nil, id: String, fullName: String, email: String?, whatsappPhoneNumber: String? = nil,
          hasAcceptedTerms: Bool, hasSignature: Bool, hasInitial: Bool,
-         isSignatureReusable: Bool = false, governmentId: String? = nil) {
+         isSignatureReusable: Bool = false, governmentId: String? = nil, verificationMethod: String? = nil) {
+        self.verificationMethod = verificationMethod
         self.governmentId = governmentId
         self.resource = resource
         self.id = id; self.fullName = fullName; self.email = email
@@ -306,6 +329,7 @@ extension SignerSelfInfo: Decodable {
         case hasInitial         = "has_initial"
         case isSignatureReusable = "is_signature_reusable"
         case governmentId        = "government_id"
+        case verificationMethod = "verification_method"
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -320,7 +344,8 @@ extension SignerSelfInfo: Decodable {
             hasSignature:        try c.decodeIfPresent(Bool.self, forKey: .hasSignature) ?? false,
             hasInitial:          try c.decodeIfPresent(Bool.self, forKey: .hasInitial) ?? false,
             isSignatureReusable: try c.decodeIfPresent(Bool.self, forKey: .isSignatureReusable) ?? false,
-            governmentId:        try c.decodeIfPresent(String.self, forKey: .governmentId)
+            governmentId:        try c.decodeIfPresent(String.self, forKey: .governmentId),
+            verificationMethod: try c.decodeIfPresent(String.self, forKey: .verificationMethod)
         )
     }
 }
@@ -561,7 +586,7 @@ extension DeclineMultipleDocumentsPayload: @unchecked Sendable {}
 /// | --- | --- | --- |
 /// | ``email`` | One-time code sent to the signer's email | Free |
 /// | ``whatsapp`` | One-time code sent over WhatsApp | Verification free; the required WhatsApp channel costs 0.45 credits |
-/// | ``digitalCertificate`` | The signer signs with their own ICP-Brasil certificate | 2 credits |
+/// | ``digitalCertificate`` | The signer signs with their own ICP-Brasil certificate | 0.5 credits plus notification |
 public enum SignerVerificationMethod: String, Sendable, CaseIterable {
     /// A one-time code sent to the signer's email address. The default.
     case email = "Email"
@@ -581,7 +606,7 @@ public enum SignerVerificationMethod: String, Sendable, CaseIterable {
     /// through the Web PKI browser extension, so the choice between them is the
     /// signer's and needs nothing from the integration.
     ///
-    /// Requires the Digital Certificate feature on the account, charges 2
+    /// Requires the Digital Certificate feature on the account, charges 0.5
     /// credits, and the signer must have a CPF or CNPJ in `government_id` and
     /// be **alone in their signing step**. A CPF requires that person's
     /// certificate — an e-CPF, or an e-CNPJ naming them as legal

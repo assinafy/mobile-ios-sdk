@@ -31,13 +31,32 @@ final class OAuthResourceTests: XCTestCase {
     ) -> OAuthAuthorizationRequest {
         OAuthAuthorizationRequest(
             clientId: "client-123",
-            redirectURI: "myapp://oauth-callback",
+            redirectURI: "https://app.example.invalid/oauth/callback",
             scopes: scopes,
             resource: resource
         )
     }
 
     // MARK: - PKCE
+
+    func testRedirectURIsRequireExactHTTPSCallbacksBeforeIO() async throws {
+        for uri in ["myapp://callback", "http://localhost/callback", "https://app.example.invalid/callback#fragment",
+                    "https://user:password@app.example.invalid/callback", " "] {
+            let request = OAuthAuthorizationRequest(clientId: "client", redirectURI: uri, scopes: [.documentsRead])
+            XCTAssertNil(request.authorizationURL(endpoint: OAuthResource.defaultAuthorizationEndpoint))
+            do {
+                _ = try await oauth.exchangeAuthorizationCode(.authorizationCode(
+                    code: "code", redirectURI: uri, codeVerifier: request.pkce.codeVerifier, clientId: "client"))
+                XCTFail("Expected ValidationError")
+            } catch { XCTAssertTrue(error is ValidationError) }
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+        let uri = "https://app.example.invalid/callback/?tenant=example"
+        let request = OAuthAuthorizationRequest(clientId: "client", redirectURI: uri, scopes: [.documentsRead])
+        let url = try XCTUnwrap(request.authorizationURL(endpoint: OAuthResource.defaultAuthorizationEndpoint))
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(items?.first(where: { $0.name == "redirect_uri" })?.value, uri)
+    }
 
     func testPKCEVerifierMatchesRFC7636Grammar() {
         let allowed = CharacterSet(charactersIn:
@@ -67,7 +86,7 @@ final class OAuthResourceTests: XCTestCase {
     func testAuthorizationURLCarriesEveryRequiredParameter() throws {
         let request = OAuthAuthorizationRequest(
             clientId: "client-123",
-            redirectURI: "myapp://oauth-callback",
+            redirectURI: "https://app.example.invalid/oauth/callback",
             scopeStrings: [OAuthScope.documentsRead.rawValue, OAuthScope.webhooksWrite, OAuthScope.offlineAccess.rawValue],
             pkce: OAuthPKCE(),
             state: "state-123",
@@ -85,7 +104,7 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertEqual(components.path, "/oauth/authorize")
         XCTAssertEqual(items["response_type"], "code")
         XCTAssertEqual(items["client_id"], "client-123")
-        XCTAssertEqual(items["redirect_uri"], "myapp://oauth-callback")
+        XCTAssertEqual(items["redirect_uri"], "https://app.example.invalid/oauth/callback")
         XCTAssertEqual(items["state"], request.state)
         XCTAssertEqual(items["code_challenge"], request.pkce.codeChallenge)
         XCTAssertEqual(items["code_challenge_method"], "S256")
@@ -103,7 +122,7 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertNil(makeRequest().authorizationURL(endpoint: "http://auth.assinafy.com.br/oauth/authorize"))
         XCTAssertNil(makeRequest().authorizationURL(endpoint: "not a url"))
         XCTAssertNil(
-            OAuthAuthorizationRequest(clientId: " ", redirectURI: "myapp://cb", scopes: [])
+            OAuthAuthorizationRequest(clientId: " ", redirectURI: "https://app.example.invalid/callback", scopes: [])
                 .authorizationURL(endpoint: OAuthResource.defaultAuthorizationEndpoint)
         )
     }
@@ -112,7 +131,7 @@ final class OAuthResourceTests: XCTestCase {
 
     func testCallbackReturnsCodeWhenStateAndIssuerMatch() throws {
         let request = makeRequest()
-        let url = URL(string: "myapp://oauth-callback?code=abc123&state=\(request.state)&iss=https://auth.assinafy.com.br")!
+        let url = URL(string: "https://app.example.invalid/oauth/callback?code=abc123&state=\(request.state)&iss=https://auth.assinafy.com.br")!
         let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
         let code = try callback.validate(against: request, issuer: "https://auth.assinafy.com.br")
         XCTAssertEqual(code, "abc123")
@@ -121,7 +140,7 @@ final class OAuthResourceTests: XCTestCase {
 
     func testCallbackRejectsMismatchedState() throws {
         let request = makeRequest()
-        let url = URL(string: "myapp://oauth-callback?code=abc123&state=not-the-state")!
+        let url = URL(string: "https://app.example.invalid/oauth/callback?code=abc123&state=not-the-state")!
         let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
         XCTAssertThrowsError(try callback.validate(against: request)) { error in
             XCTAssertTrue(error is ValidationError, "got \(type(of: error))")
@@ -131,7 +150,7 @@ final class OAuthResourceTests: XCTestCase {
     func testCallbackRejectsMissingState() throws {
         let request = makeRequest()
         let callback = try XCTUnwrap(
-            OAuthCallback(callbackURL: URL(string: "myapp://oauth-callback?code=abc123")!)
+            OAuthCallback(callbackURL: URL(string: "https://app.example.invalid/oauth/callback?code=abc123")!)
         )
         XCTAssertThrowsError(try callback.validate(against: request))
     }
@@ -139,7 +158,7 @@ final class OAuthResourceTests: XCTestCase {
     func testCallbackRejectsMismatchedOrMissingIssuer() throws {
         let request = makeRequest()
         for query in ["code=abc&state=\(request.state)&iss=https://evil.example", "code=abc&state=\(request.state)"] {
-            let callback = try XCTUnwrap(OAuthCallback(callbackURL: URL(string: "myapp://oauth-callback?\(query)")!))
+            let callback = try XCTUnwrap(OAuthCallback(callbackURL: URL(string: "https://app.example.invalid/oauth/callback?\(query)")!))
             XCTAssertThrowsError(
                 try callback.validate(against: request, issuer: "https://auth.assinafy.com.br")
             )
@@ -155,7 +174,7 @@ final class OAuthResourceTests: XCTestCase {
             "error=access_denied&state=\(request.state)&iss=https://evil.example",
             "error=access_denied&state=\(request.state)",
         ] {
-            let callback = try XCTUnwrap(OAuthCallback(callbackURL: URL(string: "myapp://oauth-callback?\(query)")!))
+            let callback = try XCTUnwrap(OAuthCallback(callbackURL: URL(string: "https://app.example.invalid/oauth/callback?\(query)")!))
             XCTAssertThrowsError(try callback.validate(against: request)) { error in
                 XCTAssertTrue(error is ValidationError, "\(query) got \(type(of: error))")
             }
@@ -164,7 +183,7 @@ final class OAuthResourceTests: XCTestCase {
 
     func testCallbackSurfacesServerReportedError() throws {
         let request = makeRequest()
-        let url = URL(string: "myapp://oauth-callback?error=access_denied&error_description=User%20declined&state=\(request.state)&iss=https://auth.assinafy.com.br")!
+        let url = URL(string: "https://app.example.invalid/oauth/callback?error=access_denied&error_description=User%20declined&state=\(request.state)&iss=https://auth.assinafy.com.br")!
         let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
         XCTAssertThrowsError(try callback.validate(against: request)) { error in
             guard let apiError = error as? APIError else {
@@ -177,7 +196,7 @@ final class OAuthResourceTests: XCTestCase {
 
     func testCallbackWithoutCodeOrErrorIsRejected() throws {
         let request = makeRequest()
-        let url = URL(string: "myapp://oauth-callback?state=\(request.state)&iss=https://auth.assinafy.com.br")!
+        let url = URL(string: "https://app.example.invalid/oauth/callback?state=\(request.state)&iss=https://auth.assinafy.com.br")!
         let callback = try XCTUnwrap(OAuthCallback(callbackURL: url))
         XCTAssertThrowsError(try callback.validate(against: request))
     }
@@ -188,10 +207,10 @@ final class OAuthResourceTests: XCTestCase {
         let request = makeRequest()
         let query = "code=abc&state=\(request.state)&iss=https://auth.assinafy.com.br"
         for duplicate in ["code=second", "state=second", "iss=second", "error=a&error=b", "error_description=a&error_description=b"] {
-            XCTAssertNil(OAuthCallback(callbackURL: URL(string: "myapp://oauth-callback?\(query)&\(duplicate)")!))
+            XCTAssertNil(OAuthCallback(callbackURL: URL(string: "https://app.example.invalid/oauth/callback?\(query)&\(duplicate)")!))
         }
         let callback = try XCTUnwrap(OAuthCallback(
-            callbackURL: URL(string: "myapp://oauth-callback?\(query)&error=access_denied")!
+            callbackURL: URL(string: "https://app.example.invalid/oauth/callback?\(query)&error=access_denied")!
         ))
         XCTAssertThrowsError(try callback.validate(against: request)) { error in
             XCTAssertTrue(error is ValidationError)
@@ -252,7 +271,7 @@ final class OAuthResourceTests: XCTestCase {
         let token = try await oauth.exchangeAuthorizationCode(
             .authorizationCode(
                 code: "code-1",
-                redirectURI: "myapp://oauth-callback",
+                redirectURI: "https://app.example.invalid/oauth/callback",
                 codeVerifier: verifier,
                 clientId: "client-123",
                 resource: "https://api.assinafy.com.br"
@@ -266,7 +285,7 @@ final class OAuthResourceTests: XCTestCase {
         let sent = body(mock.lastRequest)
         XCTAssertEqual(sent["grant_type"] as? String, "authorization_code")
         XCTAssertEqual(sent["code"] as? String, "code-1")
-        XCTAssertEqual(sent["redirect_uri"] as? String, "myapp://oauth-callback")
+        XCTAssertEqual(sent["redirect_uri"] as? String, "https://app.example.invalid/oauth/callback")
         XCTAssertEqual(sent["code_verifier"] as? String, verifier)
         XCTAssertEqual(sent["client_id"] as? String, "client-123")
         XCTAssertEqual(sent["resource"] as? String, "https://api.assinafy.com.br")
@@ -286,7 +305,7 @@ final class OAuthResourceTests: XCTestCase {
         let token = try await oauth.exchangeAuthorizationCode(
             .authorizationCode(
                 code: "c",
-                redirectURI: "myapp://cb",
+                redirectURI: "https://app.example.invalid/callback",
                 codeVerifier: OAuthPKCE().codeVerifier,
                 clientId: "client-123"
             )
@@ -386,7 +405,7 @@ final class OAuthResourceTests: XCTestCase {
             _ = try await self.oauth.exchangeAuthorizationCode(
                 .authorizationCode(
                     code: "",
-                    redirectURI: "myapp://cb",
+                    redirectURI: "https://app.example.invalid/callback",
                     codeVerifier: OAuthPKCE().codeVerifier,
                     clientId: "c"
                 )
@@ -399,7 +418,7 @@ final class OAuthResourceTests: XCTestCase {
             _ = try await self.oauth.exchangeAuthorizationCode(
                 .authorizationCode(
                     code: "c",
-                    redirectURI: "myapp://cb",
+                    redirectURI: "https://app.example.invalid/callback",
                     codeVerifier: OAuthPKCE().codeVerifier,
                     clientId: " "
                 )
@@ -412,7 +431,7 @@ final class OAuthResourceTests: XCTestCase {
             _ = try await self.oauth.exchangeAuthorizationCode(
                 .authorizationCode(
                     code: "c",
-                    redirectURI: "myapp://cb",
+                    redirectURI: "https://app.example.invalid/callback",
                     codeVerifier: "too-short",
                     clientId: "client-123"
                 )

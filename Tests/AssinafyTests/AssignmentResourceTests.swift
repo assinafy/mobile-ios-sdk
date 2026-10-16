@@ -333,7 +333,7 @@ final class AssignmentResourceTests: XCTestCase {
                 .descriptor(
                     id: "signer-id-must-not-be-sent",
                     verificationMethod: "Whatsapp",
-                    notificationMethods: ["Email", "Whatsapp"],
+                    notificationMethods: ["Whatsapp"],
                     step: 2
                 )
             ],

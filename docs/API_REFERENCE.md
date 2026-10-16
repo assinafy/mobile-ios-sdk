@@ -383,7 +383,7 @@ signer code exactly where shown.
 
 | Async SDK method | Auth | Exact request | Wire response and SDK result |
 | --- | --- | --- | --- |
-| `create(_:accountId:)` | Account | `POST /accounts/{accountId}/signers`; required `full_name`; optional `email`, `whatsapp_phone_number` | `Signer`. If `email` is present, the SDK first searches and reuses an exact case-insensitive match. Full-name-only creation is supported. |
+| `create(_:accountId:)` | Account | `POST /accounts/{accountId}/signers`; required `full_name`; optional `email`, `whatsapp_phone_number`, `government_id` | `Signer`. If `email` is present, the SDK first searches and reuses an exact case-insensitive match. Full-name-only creation is supported. |
 | `get(signerId:accountId:)` | Account | `GET /accounts/{accountId}/signers/{signerId}` | `Signer` |
 | `list(params:accountId:)` | Account | `GET /accounts/{accountId}/signers`; v1 values are optional `search`, `page`, `per-page`; generic `ListParams` also forwards nonempty compatibility `sort` and caller-defined `extra` | `PaginatedResult<Signer>` |
 | `update(signerId:payload:accountId:)` | Account | `PUT /accounts/{accountId}/signers/{signerId}`; partial `full_name`, `email`, `whatsapp_phone_number`, `government_id` | Updated `Signer` |
@@ -427,7 +427,7 @@ Unless marked public, document operations require account auth.
 | `search(search:status:page:perPage:accountId:)` | Account | Same path; optional `search`, `status`; required Swift pagination arguments below `1` are omitted, otherwise emit `page`, `per-page` | Same result |
 | `get(documentId:)` | Account | `GET /documents/{documentId}` | `Document` -> `DocumentDetails` |
 | `rename(documentId:name:)` | Account | `PATCH /documents/{documentId}`; JSON `{ "name": string }` | Updated `DocumentDetails` |
-| `waitUntilReady(documentId:options:)` | Account | Local polling helper over `GET /documents/{documentId}` | Returns `DocumentUploadResponse` at `metadata_ready`, `pending_signature`, `certificating`, or `certificated`; throws `AssinafySDKError` on `failed`, `expired`, `rejected_by_signer`, `rejected_by_user`, or timeout; invalid intervals throw `ValidationError` |
+| `waitUntilReady(documentId:options:)` | Account | Local polling helper over `GET /documents/{documentId}` | Returns `DocumentUploadResponse` at `metadata_ready`, `pending_signature`, `pending_identity_review`, `certificating`, or `certificated`; throws `AssinafySDKError` on `failed`, `expired`, `rejected_by_signer`, `rejected_by_user`, or timeout; invalid intervals throw `ValidationError` |
 | `downloadArtifact(documentId:artifact:)` | Account | `GET /documents/{documentId}/download/{artifact}` | Raw PDF/ZIP `Data` |
 | `downloadThumbnail(documentId:)` | Account | `GET /documents/{documentId}/thumbnail` | Raw image `Data` |
 | `downloadPage(documentId:pageId:)` | Account | `GET /documents/{documentId}/pages/{pageId}/download` | Raw image `Data` |
@@ -447,7 +447,7 @@ Unless marked public, document operations require account auth.
 | `confirmSignerData(documentId:signerAccessCode:payload:)` | Signer | Same request | Source-compatible overload that validates success and discards `data`; returns `Void` |
 
 For document creation from a template, every signer requires `role_id` and `id`.
-Optional signer keys are `verification_method=Email|Whatsapp|DigitalCertificate`,
+Optional signer keys are `verification_method=Email|Whatsapp|DigitalCertificate|IdDocumentFaceMatchBasic`,
 `notification_methods: [Email|Whatsapp]`, and positive `step`. Optional top-level
 keys are `editor_fields: [{field_id, value}]`, `name`, `message`, `expires_at`,
 and `tags`. Here, and only here, `tags` are tag **names** that the API may create;
@@ -471,8 +471,8 @@ Only `role_id` is required. Signer IDs, signing steps, editor values, document
 metadata, expiry, and tags are not part of the estimate request.
 
 For new email-token integrations, use the one-request `email:` overload. The
-payload overload remains available for its synthesized result and WhatsApp
-channel support. `ConfirmSignerDataPayload` omits every `nil` optional field and
+payload overload returns the typed email `SendTokenResponse` in the same request;
+it rejects the WhatsApp channel before I/O. `ConfirmSignerDataPayload` omits every `nil` optional field and
 emits `has_accepted_terms` only when `true`; `whatsapp_phone_number` and
 `has_accepted_terms` are compatibility fields accepted by signing flows.
 
@@ -489,7 +489,7 @@ signer auth.
 | `resetExpiration(documentId:assignmentId:newExpiresAt:)` | Account | `PUT /documents/{documentId}/assignments/{assignmentId}/reset-expiration`; canonical JSON `{ "expires_at": string }`; a blank value is rejected locally | Updated `Assignment` |
 | `resetExpiration(documentId:assignmentId:expiresAt:)` | Account | Compatibility overload of the same `PUT`; sends `{ "expires_at": string|null }`, including explicit JSON `null` when omitted | Updated `Assignment` |
 | `resendNotification(documentId:assignmentId:signerId:)` | Account | `PUT /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/resend`; no body | `ResendNotificationResponse` |
-| `estimateResendCost(documentId:assignmentId:signerId:)` | Account | `POST` to the preceding signer path plus `/estimate-resend-cost`; no body | `CostEstimate` |
+| `estimateResendCost(documentId:assignmentId:signerId:)` | Account | `POST /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/estimate-resend-cost`; no body | `CostEstimate` |
 | `sign(documentId:assignmentId:signerAccessCode:fields:)` | Signer | `POST /documents/{documentId}/assignments/{assignmentId}?signer-access-code={code}`; top-level JSON array of `{itemId, fieldId, pageId, value}` | Bare envelope; returns `Void`. Confirm virtual signer data first; an empty array is valid for virtual assignments. |
 | `decline(documentId:assignmentId:signerAccessCode:reason:)` | Signer | `PUT /documents/{documentId}/assignments/{assignmentId}/reject?signer-access-code={code}`; JSON `decline_reason` | Bare envelope; returns `Void` |
 | `listWhatsappNotifications(documentId:assignmentId:)` | Account | `GET /documents/{documentId}/assignments/{assignmentId}/whatsapp-notifications` | `[WhatsappNotification]` |
@@ -636,7 +636,7 @@ the `endpoints` routes manage each one.
 | Async SDK method | Exact request | Wire response and SDK result |
 | --- | --- | --- |
 | `listEndpoints(accountId:)` | `GET /accounts/{accountId}/webhooks/endpoints`; scope `account:read` | `data: [WebhookEndpoint]`, oldest first -> `[WebhookEndpoint]` |
-| `createEndpoint(_:accountId:)` | `POST /accounts/{accountId}/webhooks/endpoints`; required `url`, `email`, `events`; optional `name`, `is_active` (default `true`), `signing_enabled` (default `false`); scope `webhooks:write` | `WebhookEndpoint`. `403` past the plan limit; `400` when another endpoint uses the URL |
+| `createEndpoint(_:accountId:)` | `POST /accounts/{accountId}/webhooks/endpoints`; required `url`, `email`, `events`; optional `name`, `is_active` (default `true`), `signing_enabled` (default `false`); scope `webhooks:write` | `WebhookEndpoint`, including one-time `secret` when signing is enabled. `403` past the plan limit; `400` when another endpoint uses the URL |
 | `getEndpoint(id:accountId:)` | `GET /accounts/{accountId}/webhooks/endpoints/{endpointId}`; scope `account:read` | `WebhookEndpoint` |
 | `updateEndpoint(id:_:accountId:)` | `PUT /accounts/{accountId}/webhooks/endpoints/{endpointId}`; any nonempty subset of `url`, `email`, `events`, `name`, `is_active`, `signing_enabled`; scope `webhooks:write` | Updated `WebhookEndpoint`. Enabling signing creates a secret if none exists; disabling discards it |
 | `deleteEndpoint(id:accountId:)` | `DELETE /accounts/{accountId}/webhooks/endpoints/{endpointId}`; scope `webhooks:write` | Documented `data: []`; returns `Void` |
@@ -708,8 +708,8 @@ complete encoded shape for public request models and query containers.
 
 ### Signer and document requests
 
-- `CreateSignerPayload`: required `full_name`; optional `email` and
-  `whatsapp_phone_number`. The SDK rejects a blank name and validates a supplied
+- `CreateSignerPayload`: required `full_name`; optional `email`,
+  `whatsapp_phone_number` and `government_id` (four-argument initializer). The SDK rejects a blank name and validates a supplied
   email before searching or creating. With an email, creation first searches
   for and reuses an exact case-insensitive match.
 - `UpdateSignerPayload`: partial `full_name`, `email`,
@@ -765,8 +765,8 @@ complete encoded shape for public request models and query containers.
   `CreateAssignmentPayload`: signer IDs, steps, message, expiry, and copy
   receivers are removed. Virtual estimates require signers; collect estimates
   require entries.
-- Canonical expiration reset sends `{ "expires_at": string }`; the compatibility
-  `expiresAt:` overload can explicitly send `null`.
+- Expiration reset always sends `expires_at`; a date sets it and the `expiresAt:`
+  overload sends explicit `null` to clear it.
 - `TemplateSigner`: required `role_id`; document creation also requires `id`.
   Optional values are `verification_method`, `notification_methods`, and
   positive `step`. Template cost estimation removes signer IDs and steps.
@@ -908,13 +908,13 @@ channel was used. The four verification counters add to `signature_requests`.
   `email?: string`, `whatsapp_phone_number?: string`,
   `government_id?: string`, `has_accepted_terms: boolean`.
 - `SignerSelf`: all `Signer` fields plus `has_signature: boolean`,
-  `has_initial: boolean`, `is_signature_reusable: boolean`.
+  `has_initial: boolean`, `is_signature_reusable: boolean`, `verification_method?: string`.
 - `AcceptTermsResponse` is a source-compatible SDK view with `full_name`,
   `email`, and `has_accepted_terms`; the canonical bare response has no data,
   so the SDK synthesizes empty strings and `true`.
 - `AssignmentSigner`: all `Signer` fields plus
   `verification_method?: string`, `notification_methods?: [string]`,
-  `step?: integer`, `notified?: boolean`, `completed?: boolean`, and
+  `identity_verification_status?: string`, `step?: integer`, `notified?: boolean`, `completed?: boolean`, and
   `notification_history?: [NotificationHistoryEntry]`.
 - `NotificationHistoryEntry`: `event: string`, `status: sent|failed`,
   `error_code?: string`, `error_message?: string`, `sent_at?: date-time`,
@@ -1044,7 +1044,8 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
   tolerates extension/legacy `id` and `created_at` fields.
 - `WebhookEndpoint`: `id: string`, `name?: string`, `url: string`,
   `email: string`, `events: [string]`, `is_active: boolean`,
-  `signing_enabled: boolean`, `created_at: date-time`, `updated_at: date-time`.
+  `signing_enabled: boolean`, `created_at: date-time`, `updated_at: date-time`;
+  `secret?: string` is returned only by creation when signing is enabled.
 - `WebhookEventType`: `id: string`, `description: string`.
 - `WebhookDispatch`: `resource: string`, `id: string`, `event: string`,
   `activity_id: integer`, `endpoint?: URL string`, `endpoint_id?: string`,
@@ -1070,6 +1071,7 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
   virtual.
 - `SignerVerificationMethod` encodes `.email`, `.whatsapp`, and
   `.digitalCertificate` as `Email`, `Whatsapp`, and `DigitalCertificate`.
+  Biometric assignments use the raw-string `IdDocumentFaceMatchBasic` forms.
   `SignerNotificationMethod` encodes `.email` and `.whatsapp` the same way.
   `SignerReference.signer(id:verification:notifications:step:)` and
   `TemplateSigner(roleId:id:verification:notifications:step:)` take these
@@ -1085,7 +1087,7 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
     token), both presented through the Web PKI browser extension, producing a
     qualified PAdES signature. It requires the Digital Certificate feature, a
     CPF or CNPJ in the signer's `government_id`, and that the signer be alone
-    in their step; it bills 2 credits. A CPF requires that person's certificate
+    in their step; it bills 0.5 credits plus its notification. A CPF requires that person's certificate
     (an e-CPF, or an e-CNPJ naming them as legal representative); a CNPJ
     requires an e-CNPJ for that company. The signing handshake itself happens
     in the browser and is not wrapped by this SDK.
@@ -1099,7 +1101,8 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
   `metadata_ready`, `pending_signature`, `expired`, `certificating`,
   `certificated`, `rejected_by_signer`, `rejected_by_user`, and `failed`.
   Unknown strings decode to `.unknown`; `stringValue` performs the reverse
-  mapping.
+  mapping. `pending_identity_review` remains available in document `statusString` and maps
+  to `.unknown` in the existing enum; readiness polling recognizes the raw status.
 - `WebhookEventType` provides constants for `document_uploaded`,
   `document_metadata_ready`, `document_prepared`, `assignment_created`,
   `document_ready`, `signature_requested`, `signer_created`,
@@ -1107,7 +1110,9 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
   `signer_data_confirmed`, `signer_viewed_document`,
   `signer_signed_document`, `signer_rejected_document`,
   `user_rejected_document`, `document_processing_failed`, `template_created`,
-  `template_processed`, and `template_processing_failed`. `defaultEvents`
+  `template_processed`, `template_processing_failed`, `signer_identity_verified`,
+  `signer_identity_verification_failed`, `signer_identity_review_required`,
+  `signer_identity_review_approved`, and `signer_identity_review_rejected`. `defaultEvents`
   contains document ready/prepared, signer signed/rejected, and document
   processing failed.
 
@@ -1393,3 +1398,94 @@ ASSINAFY_TEST_EMAIL_B="recipient-b@example.invalid"
 
 Use two distinct controlled recipients. Never commit credentials, account IDs,
 signer access codes, personal addresses, or captured API payloads.
+
+
+## Identity document and face verification
+
+Select the raw `verificationMethod: "IdDocumentFaceMatchBasic"` on
+`SignerReference.descriptor` or `TemplateSigner`. The account needs the ID Document + Face Match
+feature and each signer needs a valid CPF in `government_id`. Set it with
+`CreateSignerPayload(fullName:email:whatsappPhoneNumber:governmentId:)`; the original
+initializer omits it. `create` reuses an email match without updating it, so call
+`signers.update` with `UpdateSignerPayload(..., governmentId:)` for an existing signer.
+Email or WhatsApp may notify a biometric signer; exactly one channel is allowed.
+Estimate the per-signer fee before assignment creation. It is charged once per signer,
+including when an expired capture session is restarted.
+
+These operations use the normal `{status,message,data}` envelope. Signer requests carry
+only `signer-access-code`; workspace requests carry the configured credential.
+[Complete requests and responses](PAYLOADS.md#startidentityverificationpayload) include
+all evidence fields. These routes are deployed on production; sandbox currently returns 404.
+
+| Async SDK method | Auth | Exact request | Response |
+| --- | --- | --- | --- |
+| `signers.identityVerification(signerAccessCode:)` | Signer | `GET /signers/identity-verification?signer-access-code={code}`; no body | `IdentityVerificationState`: `can_start: Bool`, nullable `status`, `url`, `expires_at`, `completed_at` |
+| `signers.startIdentityVerification(signerAccessCode:payload:)` | Signer | `POST` to the same path/query; JSON `{ "consent": true }` | `IdentityVerificationSession`: `id`, `url`, nullable `expires_at` |
+| `assignments.identityReview(documentId:assignmentId:signerId:)` | Account | `GET /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification`; no body | `SignerIdentityReview` |
+| `assignments.downloadIdentityReviewImage(documentId:assignmentId:signerId:name:)` | Account | Same path plus `/images/{name}`; no body | Raw JPEG, PNG or PDF `Data`, available only while `InReview` |
+| `assignments.reviewIdentityVerification(documentId:assignmentId:signerId:payload:)` | Account | `POST` to the review path plus `/review`; JSON `{ "decision": "Approved" | "Rejected", "note": string? }` | Updated `SignerIdentityReview` |
+
+`StartIdentityVerificationPayload(consent:)` requires explicit true before I/O.
+`ReviewIdentityVerificationPayload(decision:note:)` requires exactly `Approved` or
+`Rejected` and at most 2,000 Unicode scalar values in its optional note. A nil note is
+omitted. Invalid image names, path IDs and blank access codes fail before I/O.
+
+`IdentityVerificationState.canStart` is true before the first session or after `Expired`.
+Other statuses are `Pending`, `InReview`, `Approved`, `Declined` and `Abandoned`.
+A declined or abandoned verification requires a new document and assignment. Open a
+capture `url` unchanged, including its `#t=` fragment. It is a bearer link: never log it
+or persist it in browser storage. `expires_at` limits capture, not later processing.
+
+`InReview` allows viewing, confirming signer data and signing. Once all signers finish,
+the `pending_identity_review` status holds certification until every open review is
+approved. Rejection cancels the document as `rejected_by_user` and notifies signers and
+copy recipients. Notes are recorded for the workspace/provider, never shown to signers.
+
+`SignerIdentityReview` contains `id`, `status`, `provider`, `verificationMethod`,
+`reasonCodes`, `evidenceAvailable`, nullable `expected`, `document`, `matches`,
+`rulesetVersion`, `evidenceSHA256`, `reviewedBy`, `reviewedAt`, `reviewNote`, `completedAt`,
+and arrays `checks` and `images`. Wire keys are snake_case. Missing arrays become empty;
+missing evidence remains nil and `evidenceAvailable` defaults false.
+
+| Nested model | Wire fields and SDK mapping |
+| --- | --- |
+| `IdentityReviewReason` | `code`, `description` -> `reasonDescription`; unknown reasons retain the code |
+| `IdentityReviewPerson` | Nullable `name`, `cpf`; `type` is present only for the document read |
+| `IdentityReviewMatches` | Nullable `cpf` and `birth_date` Booleans, `name` similarity (0–1); all use `NSNumber?` for Objective-C |
+| `IdentityReviewCheck` | `name`, `result`, nullable numeric `score` (`NSNumber?`), `reasons: [String]` |
+| `IdentityReviewUser` | Reviewer `id`, `name` |
+
+The valid image names are `document_front`, `document_back`, `document_pdf`, and `face`.
+The provider supplies images transiently; they disappear after the decision. Do not
+persist sensitive evidence. `Signer.identityVerificationStatus` and
+`SignerSelfInfo.verificationMethod` expose the assignment's current verification state.
+
+All five operations provide explicit main-queue Objective-C forms:
+`identityVerificationWithSignerAccessCode:completion:`,
+`startIdentityVerificationWithSignerAccessCode:payload:completion:`,
+`identityReviewWithDocumentId:assignmentId:signerId:completion:`,
+`downloadIdentityReviewImageWithDocumentId:assignmentId:signerId:name:completion:`, and
+`reviewIdentityVerificationWithDocumentId:assignmentId:signerId:payload:completion:`.
+
+## Webhooks by URL and creation secrets
+
+| Async SDK method | Auth | Request | Response |
+| --- | --- | --- | --- |
+| `webhooks.listEndpoints(url:accountId:)` | Account | `GET /accounts/{accountId}/webhooks/endpoints?url={exactURL}`; no body | `[WebhookEndpoint]` with exact URL matches; the SDK also filters locally because sandbox ignores this query |
+| `webhooks.deleteEndpoint(url:accountId:)` | Account | `DELETE` at the same path/query; no body | Success envelope with `data: []`, returned as `Void`; 404 when absent |
+
+The original no-filter listing and ID deletion remain available. Exact URL forms require
+an absolute HTTP(S) URL without user information and preserve query/trailing-slash values.
+Their main-queue selectors are `listWebhookEndpointsWithURL:accountId:completion:` and
+`deleteWebhookEndpointWithURL:accountId:completion:`.
+
+`createEndpoint` returns `WebhookEndpoint.secret` once when signing is enabled. Save it
+securely on the receiving server. List/view responses omit it. OAuth applications cannot
+read or rotate secrets; if lost, delete that application's endpoint and register a new one.
+API-key callers may use `signingSecret` and `rotateSigningSecret`.
+
+Subscribe to biometric events with `WebhookEventType.signerIdentityVerified`,
+`signerIdentityVerificationFailed`, `signerIdentityReviewRequired`,
+`signerIdentityReviewApproved`, and `signerIdentityReviewRejected`. The default event list
+is unchanged. Verify the raw body before processing and deduplicate using `webhook-id`;
+a valid signature can be delivered more than once inside the timestamp tolerance.

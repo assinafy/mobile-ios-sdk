@@ -375,7 +375,7 @@ final class ContractEndpointTests: XCTestCase {
             signers: [
                 .signer(id: "s1", verification: .email, notifications: [.email], step: 1),
                 .signer(id: "s2", verification: .whatsapp, notifications: [.whatsapp], step: 2),
-                .signer(id: "s3", verification: .digitalCertificate, notifications: [.email, .whatsapp], step: 3),
+                .signer(id: "s3", verification: .digitalCertificate, notifications: [.whatsapp], step: 3),
             ]
         )
         let body = try buildAssignmentBody(payload)
@@ -386,7 +386,7 @@ final class ContractEndpointTests: XCTestCase {
 
         XCTAssertEqual(signers.map { $0["verification_method"] as? String },
                        ["Email", "Whatsapp", "DigitalCertificate"])
-        XCTAssertEqual(signers[2]["notification_methods"] as? [String], ["Email", "Whatsapp"])
+        XCTAssertEqual(signers[2]["notification_methods"] as? [String], ["Whatsapp"])
         XCTAssertEqual(signers.map { $0["step"] as? Int }, [1, 2, 3])
     }
 

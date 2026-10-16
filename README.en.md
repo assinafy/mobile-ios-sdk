@@ -55,7 +55,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.10.1"
+        from: "1.11.0"
     ),
 ],
 targets: [
@@ -422,7 +422,9 @@ fails immediately with `ValidationError` instead of consuming a round-trip.
 
 ### 2. Wait for processing
 
-A freshly uploaded document is `metadata_processing` and cannot yet be assigned or deleted.
+A freshly uploaded document may be `uploaded` or `metadata_processing`. Virtual assignments
+can be queued in those states; collect assignments need ready pages. Wait for processing
+before deleting the document.
 Poll until it is ready:
 
 ```swift
@@ -432,7 +434,7 @@ let document = try await client.documents.waitUntilReady(
 )
 ```
 
-`waitUntilReady` returns as soon as the document reaches `metadataReady`, `pendingSignature`,
+`waitUntilReady` returns as soon as the document reaches `metadataReady`, `pendingSignature`, `pending_identity_review`,
 `certificating`, or `certificated`. It throws `AssinafySDKError` on a terminal status
 (`failed`, `expired`, `rejectedBySigner`, `rejectedByUser`) or when the deadline passes, and it
 honours task cancellation throughout.
@@ -538,7 +540,7 @@ one, both, or neither — the missing side is inferred. With neither, both defau
 | --- | --- | --- |
 | `.email` *(default)* | A one-time code (OTP) by email, required before signing | Free |
 | `.whatsapp` | A one-time code (OTP) over WhatsApp | Verification free; the notification costs 0.45 credits, paid plans only |
-| `.digitalCertificate` | The signer signs with their **own ICP-Brasil certificate (A1/A3)** through the Web PKI browser extension, producing a **qualified PAdES signature** | 2 credits |
+| `.digitalCertificate` | The signer signs with their **own ICP-Brasil certificate (A1/A3)** through the Web PKI browser extension, producing a **qualified PAdES signature** | 0.5 credits plus notification |
 
 ```swift
 let request = CreateAssignmentPayload(
@@ -568,6 +570,53 @@ e-CNPJ for that company, from any of its representatives.
 Reading a signer back, `signer.verification` and `signer.notifications` return the typed values,
 and `nil` or a shortened list when the server sends something this SDK release does not know.
 
+## Biometric identity verification
+
+Use `verificationMethod: "IdDocumentFaceMatchBasic"` in `SignerReference.descriptor` or
+`TemplateSigner` for hosted
+identity-document and face verification. The workspace needs the **ID Document + Face Match**
+feature, and the signer needs a valid CPF in `government_id`.
+`CreateSignerPayload(..., governmentId: cpf)` sends it; if `create` reuses a signer by email,
+update that signer with `UpdateSignerPayload(..., governmentId: cpf)`.
+Choose one notification, `.email` or `.whatsapp`, and call `assignments.estimateCost`
+before creation: the biometric fee is charged once per signer.
+
+After the signer explicitly consents:
+
+```swift
+let state = try await client.signers.identityVerification(signerAccessCode: accessCode)
+if state.canStart {
+    let session = try await client.signers.startIdentityVerification(
+        signerAccessCode: accessCode,
+        payload: StartIdentityVerificationPayload(consent: consentFromSigner)
+    )
+    // Open session.url unchanged, including #t=; never log the capture link.
+}
+```
+
+Open the hosted capture link and read the state again on return. `canStart` permits a start
+only before the first session or after `Expired`. `Declined` and `Abandoned` require a new
+document and assignment. Never persist the capture link in browser storage. `InReview`
+permits data confirmation and signing; `pending_identity_review` holds certification.
+The workspace reviewer reads evidence and images, then decides:
+
+```swift
+let review = try await client.assignments.identityReview(
+    documentId: documentId, assignmentId: assignmentId, signerId: signerId
+)
+_ = try await client.assignments.reviewIdentityVerification(
+    documentId: documentId, assignmentId: assignmentId, signerId: signerId,
+    payload: ReviewIdentityVerificationPayload(decision: decisionFromReviewer, note: reviewerNote)
+)
+```
+
+`review.images` lists names accepted by `downloadIdentityReviewImage`; images exist only
+while `InReview`. `Approved` releases certification once everyone is done; `Rejected` cancels
+the document and notifies signers and copy recipients. The note, up to 2,000 characters, is
+private to the workspace/provider. Subscribe to `signerIdentityVerified`,
+`signerIdentityVerificationFailed`, `signerIdentityReviewRequired`, `signerIdentityReviewApproved`
+and `signerIdentityReviewRejected`. [Full reference and payloads](docs/API_REFERENCE.md#identity-document-and-face-verification).
+
 ## The signer's side of the flow
 
 A signer arrives with an access code from their invitation. The full sequence is: read the
@@ -580,9 +629,13 @@ func signVirtualAssignment(
     assignmentId: String,
     accessCode: String,
     fullName: String,
-    email: String
+    email: String,
+    verificationCode: String
 ) async throws {
     _ = try await client.signers.getSelf(signerAccessCode: accessCode)
+    try await client.signers.verifyEmail(payload: VerifyEmailPayload(
+        verificationCode: verificationCode, signerAccessCode: accessCode
+    ))
     try await client.signers.acceptTermsWithoutResponse(signerAccessCode: accessCode)
     _ = try await client.documents.confirmSignerDataAndReturnSigner(
         documentId: documentId,
@@ -746,8 +799,10 @@ endpoint with `WebhookDispatchListParams.endpointId`.
 ### Signed deliveries
 
 With `signingEnabled`, every delivery carries the [Standard Webhooks](https://www.standardwebhooks.com)
-headers `webhook-id`, `webhook-timestamp`, and `webhook-signature`. The `whsec_…` secret is read
-with an API key (OAuth applications cannot read it):
+headers `webhook-id`, `webhook-timestamp`, and `webhook-signature`. Save `endpoint.secret`
+securely on your receiving server when creating a signed endpoint: creation returns it once.
+OAuth apps cannot retrieve or rotate it later; if lost, recreate their endpoint. API-key callers
+can also retrieve or rotate it:
 
 ```swift
 let secret  = try await client.webhooks.signingSecret(endpointId: endpoint.id)
@@ -767,7 +822,8 @@ let valid = WebhookSignature.verify(
 ```
 
 `verify` compares in constant time and rejects timestamps more than five minutes from the local
-clock, which blocks replays.
+clock. After verification, deduplicate by `webhook-id`, which stays the same on retries;
+a valid signature can arrive more than once within that window.
 
 The legacy subscription has no destructive delete. Stop delivery with `webhooks.inactivate()`;
 `webhooks.delete()` is deprecated and forwards to it.
@@ -836,7 +892,7 @@ refused outright.
 
 ## Objective-C
 
-Objective-C-compatible methods take completion handlers, which are always delivered on the main
+The explicit Objective-C completion methods documented below deliver on the main
 queue. The generated header is the source of truth for selectors; not every Swift-concurrency
 helper has a completion wrapper.
 
@@ -878,8 +934,8 @@ if (scope != nil) {
 | `client.oauth` | Discovery, PKCE authorization URL, code exchange, refresh, revocation, userinfo |
 | `client.workspaces` | Account CRUD, theme, statistics, logo upload/download/delete |
 | `client.documents` | Upload, list/search/get/rename/delete, processing status, pages, thumbnails, activities, artifacts, verification, template document creation, public token flow |
-| `client.signers` | Workspace signer CRUD, signer self-service, terms, verification, signature images, signer documents, batch sign and decline |
-| `client.assignments` | List, create, estimate, sign, decline, resend, expiration, WhatsApp notifications |
+| `client.signers` | Workspace signer CRUD, signer self-service, terms, OTP and biometric verification, signature images, signer documents, batch sign and decline |
+| `client.assignments` | List, create, estimate, sign, decline, resend, expiration, WhatsApp notifications, identity review and evidence |
 | `client.fields` | Definitions, field types, single and batch validation |
 | `client.tags` | Workspace tags and document attachments |
 | `client.templates` | Template listing and definition management |

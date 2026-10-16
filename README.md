@@ -59,7 +59,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.10.1"
+        from: "1.11.0"
     ),
 ],
 targets: [
@@ -415,8 +415,9 @@ inválido falha imediatamente com `ValidationError` em vez de gastar uma ida ao 
 
 ### 2. Aguarde o processamento
 
-Um documento recém-enviado está em `metadata_processing` e ainda não pode receber assignment nem
-ser excluído:
+Um documento recém-enviado pode estar em `uploaded` ou `metadata_processing`. Assignments
+virtuais podem ser criados nesses estados e aguardam o processamento; assignments `collect`
+precisam de páginas prontas. Aguarde o processamento antes de excluir:
 
 ```swift
 let documento = try await client.documents.waitUntilReady(
@@ -425,7 +426,7 @@ let documento = try await client.documents.waitUntilReady(
 )
 ```
 
-`waitUntilReady` retorna assim que o documento alcança `metadataReady`, `pendingSignature`,
+`waitUntilReady` retorna assim que o documento alcança `metadataReady`, `pendingSignature`, `pending_identity_review`,
 `certificating` ou `certificated`. Lança `AssinafySDKError` num status terminal (`failed`,
 `expired`, `rejectedBySigner`, `rejectedByUser`) ou quando o prazo expira, e honra cancelamento de
 tarefa do início ao fim.
@@ -542,7 +543,7 @@ ambos assumem `Email`.
 | --- | --- | --- |
 | `.email` *(padrão)* | Código de uso único (OTP) por e-mail, exigido antes de assinar | Gratuito |
 | `.whatsapp` | Código de uso único (OTP) por WhatsApp | Verificação gratuita; notificação 0,45 crédito, só em planos pagos |
-| `.digitalCertificate` | O signatário assina com o **próprio certificado ICP-Brasil (A1/A3)**, pela extensão de navegador Web PKI, gerando uma assinatura **PAdES qualificada** | 2 créditos |
+| `.digitalCertificate` | O signatário assina com o **próprio certificado ICP-Brasil (A1/A3)**, pela extensão de navegador Web PKI, gerando uma assinatura **PAdES qualificada** | 0,5 crédito mais notificação |
 
 ```swift
 let pedido = CreateAssignmentPayload(
@@ -575,10 +576,58 @@ Ao ler um signatário de volta, `signatario.verification` e `signatario.notifica
 valores tipados, e `nil` ou uma lista reduzida quando o servidor manda algo que esta versão do SDK
 não conhece.
 
+## Verificação biométrica de identidade
+
+Use `verificationMethod: "IdDocumentFaceMatchBasic"` em `SignerReference.descriptor` ou
+`TemplateSigner` para
+verificação de documento com reconhecimento facial. O workspace precisa do recurso
+**ID Document + Face Match** e o signatário de CPF válido em `government_id`.
+`CreateSignerPayload(..., governmentId: cpf)` envia esse dado; se `create` reutilizar um
+signatário pelo email, atualize-o com `UpdateSignerPayload(..., governmentId: cpf)`.
+Escolha uma notificação, `.email` ou `.whatsapp`, e consulte `assignments.estimateCost`
+antes de criar: a taxa biométrica é cobrada uma vez por signatário.
+
+Após consentimento explícito do signatário:
+
+```swift
+let state = try await client.signers.identityVerification(signerAccessCode: accessCode)
+if state.canStart {
+    let session = try await client.signers.startIdentityVerification(
+        signerAccessCode: accessCode,
+        payload: StartIdentityVerificationPayload(consent: consentFromSigner)
+    )
+    // Abra session.url sem alterar seu fragmento #t=; não registre o link em logs.
+}
+```
+
+Abra o link de captura hospedada e consulte o estado novamente ao retornar. `canStart`
+só permite começar antes da primeira sessão ou após `Expired`. `Declined` e `Abandoned`
+exigem outro documento e assignment. Não persista esse link no navegador. `InReview`
+permite confirmar dados e assinar; `pending_identity_review` mantém a certificação pendente.
+O revisor do workspace consulta evidências, imagens e decide:
+
+```swift
+let review = try await client.assignments.identityReview(
+    documentId: documentId, assignmentId: assignmentId, signerId: signerId
+)
+_ = try await client.assignments.reviewIdentityVerification(
+    documentId: documentId, assignmentId: assignmentId, signerId: signerId,
+    payload: ReviewIdentityVerificationPayload(decision: decisionFromReviewer, note: reviewerNote)
+)
+```
+
+`review.images` lista os nomes aceitos por `downloadIdentityReviewImage`; imagens só existem
+durante `InReview`. `Approved` libera a certificação quando todos terminaram; `Rejected`
+cancela o documento e notifica signatários e destinatários de cópia. A nota, até 2.000 caracteres,
+é privada para workspace/provedor. Assine os eventos `signerIdentityVerified`,
+`signerIdentityVerificationFailed`, `signerIdentityReviewRequired`, `signerIdentityReviewApproved`
+e `signerIdentityReviewRejected`. [Referência e payloads completos](docs/API_REFERENCE.md#identity-document-and-face-verification).
+
 ## O lado do signatário
 
 Um signatário chega com um código de acesso vindo do convite. A sequência completa é: ler o
-documento, aceitar os termos, confirmar os dados de identidade e então assinar.
+documento, verificar o OTP recebido por email ou WhatsApp, aceitar os termos, confirmar os dados
+de identidade e então assinar. `verifyEmail` verifica o código de ambos os canais.
 
 ```swift
 func assinarAssignmentVirtual(
@@ -587,9 +636,13 @@ func assinarAssignmentVirtual(
     assignmentId: String,
     accessCode: String,
     nomeCompleto: String,
-    email: String
+    email: String,
+    verificationCode: String
 ) async throws {
     _ = try await client.signers.getSelf(signerAccessCode: accessCode)
+    try await client.signers.verifyEmail(payload: VerifyEmailPayload(
+        verificationCode: verificationCode, signerAccessCode: accessCode
+    ))
     try await client.signers.acceptTermsWithoutResponse(signerAccessCode: accessCode)
     _ = try await client.documents.confirmSignerDataAndReturnSigner(
         documentId: documentId,
@@ -758,8 +811,10 @@ histórico de um endpoint com `WebhookDispatchListParams.endpointId`.
 ### Assinatura das entregas
 
 Com `signingEnabled`, cada entrega leva os cabeçalhos `webhook-id`, `webhook-timestamp` e
-`webhook-signature` no padrão [Standard Webhooks](https://www.standardwebhooks.com). O segredo
-`whsec_…` é lido por chave de API (aplicativos OAuth não têm acesso a ele):
+`webhook-signature` no padrão [Standard Webhooks](https://www.standardwebhooks.com). Guarde
+`endpoint.secret` no servidor receptor na criação: ele é retornado uma única vez. Apps OAuth
+não podem recuperá-lo ou rotacioná-lo depois; em caso de perda, recrie seu endpoint.
+Chamadores com chave de API também podem recuperar ou rotacionar o segredo:
 
 ```swift
 let segredo = try await client.webhooks.signingSecret(endpointId: endpoint.id)
@@ -779,7 +834,8 @@ let valida = WebhookSignature.verify(
 ```
 
 `verify` compara em tempo constante e recusa carimbos de tempo a mais de cinco minutos do relógio
-local, o que impede replays.
+local. Após verificar, deduplique pelo `webhook-id`, que permanece igual nos reenvios;
+uma assinatura válida pode chegar mais de uma vez dentro dessa janela.
 
 A API não tem exclusão destrutiva da assinatura legada. Interrompa a entrega com
 `webhooks.inactivate()`; `webhooks.delete()` está descontinuado e encaminha para ele.
@@ -848,7 +904,7 @@ saída.
 
 ## Objective-C
 
-Os métodos compatíveis com Objective-C recebem completion handlers, sempre entregues na **main
+Os métodos explícitos de completion para Objective-C documentados abaixo entregam na **main
 queue**. O header gerado é a fonte da verdade dos seletores; nem todo auxiliar de concorrência
 Swift tem um wrapper de completion.
 

@@ -144,6 +144,34 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
 
     // MARK: - Signer Self-Service (signer-facing flows)
 
+    /// Mirrors `GET /signers/identity-verification`, using only the signer access code.
+    /// `InReview` permits signing; certification waits for the workspace's decision.
+    public func identityVerification(signerAccessCode: String) async throws -> IdentityVerificationState {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        let request = APIRequest.get("/signers/identity-verification", queryItems: [
+            URLQueryItem(name: "signer-access-code", value: code),
+        ]).withoutWorkspaceCredential()
+        return try await call("Failed to fetch identity verification", request: request)
+    }
+
+    /// Mirrors `POST /signers/identity-verification`. Records explicit biometric consent.
+    /// Start only when `canStart` is true; preserve the returned capture URL's fragment.
+    public func startIdentityVerification(
+        signerAccessCode: String,
+        payload: StartIdentityVerificationPayload
+    ) async throws -> IdentityVerificationSession {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        guard payload.consent else { throw ValidationError("Explicit biometric consent is required") }
+        let request = APIRequest(
+            method: .post,
+            path: "/signers/identity-verification",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+            body: try JSONEncoder.assinafy.encode(payload),
+            credential: .withheld
+        )
+        return try await call("Failed to start identity verification", request: request)
+    }
+
     /// Fetches the signer's own information using a signer access code.
     ///
     /// - Parameter signerAccessCode: The signer access code from the signing URL.
@@ -444,7 +472,7 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         artifact: DocumentArtifactName,
         signerAccessCode: String
     ) async throws -> Data {
-        _ = signerAccessCode
+        _ = try requireId(signerAccessCode, name: "Signer access code")
         return try await downloadSignerDocumentArtifact(
             signerId: signerId,
             documentId: documentId,
@@ -472,6 +500,26 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
     }
 
     // MARK: - Objective-C / completion-handler API
+
+    /// Fetches the verification state and delivers it on the main queue.
+    @objc(identityVerificationWithSignerAccessCode:completion:)
+    public func identityVerification(
+        signerAccessCode: String,
+        completion: @escaping (IdentityVerificationState?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.identityVerification(signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Opens a consented session and delivers it on the main queue.
+    @objc(startIdentityVerificationWithSignerAccessCode:payload:completion:)
+    public func startIdentityVerification(
+        signerAccessCode: String,
+        payload: StartIdentityVerificationPayload,
+        completion: @escaping (IdentityVerificationSession?, Error?) -> Void
+    ) {
+        withCompletion({ try await self.startIdentityVerification(signerAccessCode: signerAccessCode, payload: payload) },
+                       completion: completion)
+    }
 
     /// Creates a signer and delivers the result on the **main queue**.
     ///

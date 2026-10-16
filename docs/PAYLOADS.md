@@ -64,8 +64,8 @@ methods validate status and discard any returned data.
 | `GET /v1/field-types` | No body | Array of [FieldType](#fieldtype) |
 | `GET /v1/users/self/notification-preferences` | No body | [NotificationPreferences](#notificationpreferences) |
 | `PUT /v1/users/self/notification-preferences` | [JSON](#request-18) | [NotificationPreferences](#notificationpreferences) |
-| `POST /v1/oauth/token` | [JSON](#request-19) | Flat [JSON](#response-9) |
-| `POST /v1/oauth/revoke` | [JSON](#request-20) | Empty body |
+| `POST /v1/oauth/token` | [Form fields](#request-19) | Flat [JSON](#response-9) |
+| `POST /v1/oauth/revoke` | [Form fields](#request-20) | Empty body |
 | `GET /v1/oauth/userinfo` | No body | Flat [JSON](#response-10) |
 | `GET /v1/documents/{documentId}/thumbnail` | No body | image/* bytes |
 | `GET /v1/documents/{documentId}/pages/{pageId}/download` | No body | image/* bytes |
@@ -134,6 +134,13 @@ and form encoding. Template create/get/update/delete use
 [the template SDK methods](API_REFERENCE.md#templates): creation is multipart
 `name` and `file`; updates encode `name`, `document_name`, and `message`;
 get/create/update return the `Template` data object; deletion returns an envelope.
+
+| `GET /v1/signers/identity-verification` | No body; signer access code query | [IdentityVerificationState](#identityverificationstate) |
+| `POST /v1/signers/identity-verification` | [Consent JSON](#startidentityverificationpayload); signer access code query | [IdentityVerificationSession](#identityverificationsession) |
+| `GET /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification` | No body | [SignerIdentityReview](#signeridentityreview) |
+| `GET /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/images/{name}` | No body | JPEG, PNG or PDF bytes |
+| `POST /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/review` | [Decision JSON](#reviewidentityverificationpayload) | [SignerIdentityReview](#signeridentityreview) |
+| `DELETE /v1/accounts/{accountId}/webhooks/endpoints` | No body; exact `url` query | Envelope with `data: []` |
 
 ## Request bodies
 
@@ -228,9 +235,6 @@ get/create/update return the `Template` data object; deletion returns an envelop
         "Email"
       ]
     }
-  ],
-  "entries": [
-    {}
   ]
 }
 ```
@@ -394,19 +398,17 @@ get/create/update return the `Template` data object; deletion returns an envelop
 
 `POST /v1/oauth/token`
 
+The object below lists form fields; the wire content type is
+`application/x-www-form-urlencoded`, not JSON. Mobile clients omit `client_secret`.
+
 ```json
 {
   "grant_type": "authorization_code",
-  "code": "example",
-  "redirect_uri": "https://app.example.invalid/resource",
-  "code_verifier": "example",
-  "refresh_token": "example",
+  "code": "ac_example_001",
+  "redirect_uri": "https://app.example.invalid/oauth/callback",
+  "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
   "client_id": "client_id_example_001",
-  "client_secret": "example",
-  "resource": "oauthtokenrequest",
-  "subject_token": "example",
-  "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
-  "requested_token_type": "urn:ietf:params:oauth:token-type:access_token"
+  "resource": "https://api.assinafy.com.br"
 }
 ```
 
@@ -414,12 +416,13 @@ get/create/update return the `Template` data object; deletion returns an envelop
 
 `POST /v1/oauth/revoke`
 
+Encode these fields as `application/x-www-form-urlencoded`.
+
 ```json
 {
-  "token": "example",
-  "token_type_hint": "access_token",
-  "client_id": "client_id_example_001",
-  "client_secret": "example"
+  "token": "rt_example_001",
+  "token_type_hint": "refresh_token",
+  "client_id": "client_id_example_001"
 }
 ```
 
@@ -442,7 +445,8 @@ get/create/update return the `Template` data object; deletion returns an envelop
 {
   "full_name": "example",
   "email": "signer@example.invalid",
-  "whatsapp_phone_number": null
+  "whatsapp_phone_number": null,
+  "government_id": "00000000000"
 }
 ```
 
@@ -819,13 +823,12 @@ Send the password, a live authenticator code, or a recovery code; one is enough.
 
 ```json
 {
-  "access_token": "example",
-  "issued_token_type": "example",
-  "token_type": "example",
-  "expires_in": 1,
-  "refresh_token": "example",
-  "scope": "example",
-  "id_token": "example"
+  "access_token": "at_example_001",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "rt_example_001",
+  "scope": "documents:read documents:write",
+  "id_token": "synthetic.id.token"
 }
 ```
 
@@ -912,7 +915,7 @@ Send the password, a live authenticator code, or a recovery code; one is enough.
   ],
   "scopes_supported": [
     "documents:read", "documents:write", "templates:read", "templates:write",
-    "account:read", "webhooks:write", "openid", "profile", "email", "offline_access"
+    "account:read", "webhooks:write", "openid", "profile", "email"
   ],
   "bearer_methods_supported": [
     "header"
@@ -1497,23 +1500,23 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
 ```json
 {
   "documents": 1,
-  "credits": 1,
+  "credits": 0.45,
   "needs_extra_document": true,
   "extra_document_cost": 1,
-  "total_credits": 1,
+  "total_credits": 1.45,
   "breakdown": [
     {
-      "code": "example",
-      "name": "example",
-      "cost": 1,
+      "code": "NotificationWhatsapp",
+      "name": "WhatsApp notification",
+      "cost": 0.45,
       "quantity": 1,
-      "unit_cost": 1
+      "unit_cost": 0.45
     }
   ],
-  "document_balance": 1,
-  "credit_balance": 1,
+  "document_balance": 0,
+  "credit_balance": 10,
   "has_sufficient_resources": true,
-  "blocking_reason": "PendingPayment",
+  "blocking_reason": null,
   "message": "Success"
 }
 ```
@@ -1794,9 +1797,9 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
   "hash": "example",
   "id": "id_example_001",
   "agreement_code": "example",
-  "status": "uploaded",
-  "page_count": "example",
-  "signer_count": "example",
+  "status": "certificated",
+  "page_count": "1",
+  "signer_count": "1",
   "completed_count": 1,
   "completed_at": "2099-01-01T12:00:00Z",
   "verified_at": "2099-01-01T12:00:00Z",
@@ -1915,5 +1918,127 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
   "certificate-page": "https://app.example.invalid/documents/document_example_001/certificate-page",
   "pades": "https://app.example.invalid/documents/document_example_001/pades",
   "bundle": "https://app.example.invalid/documents/document_example_001/bundle"
+}
+```
+
+
+### OAuthRefreshRequest
+
+`POST /v1/oauth/token`, form fields (`application/x-www-form-urlencoded`):
+
+```json
+{
+  "grant_type": "refresh_token",
+  "refresh_token": "rt_example_001",
+  "client_id": "client_id_example_001"
+}
+```
+
+### StartIdentityVerificationPayload
+
+`POST /v1/signers/identity-verification?signer-access-code={code}`. No workspace credential.
+
+```json
+{
+  "consent": true
+}
+```
+
+### IdentityVerificationState
+
+`GET /v1/signers/identity-verification?signer-access-code={code}` returns this in `data`:
+
+```json
+{
+  "can_start": false,
+  "status": "Pending",
+  "url": "https://verify.example.invalid/c/session_example_001#t=synthetic",
+  "expires_at": "2099-01-01T12:00:00Z",
+  "completed_at": null
+}
+```
+
+### IdentityVerificationSession
+
+The start request returns this in `data`. Capture URLs are bearer links; preserve fragments,
+open transiently, and never log them or persist them in browser storage.
+
+```json
+{
+  "id": "session_example_001",
+  "url": "https://verify.example.invalid/c/session_example_001#t=synthetic",
+  "expires_at": "2099-01-01T12:00:00Z"
+}
+```
+
+### ReviewIdentityVerificationPayload
+
+`POST /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/review`.
+`decision` is `Approved` or `Rejected`; `note` is optional, nullable, and at most 2,000 characters.
+
+```json
+{
+  "decision": "Approved",
+  "note": "Identity checked by the workspace reviewer."
+}
+```
+
+### SignerIdentityReview
+
+The workspace `GET .../identity-verification` and `POST .../identity-verification/review`
+return this in `data`. Every CPF below is a deliberately invalid synthetic placeholder.
+Images are available only during `InReview` through
+`GET .../identity-verification/images/{name}` (`document_front`, `document_back`,
+`document_pdf`, or `face`), with binary JPEG, PNG, or PDF responses and no request body.
+After a decision, `images` is empty; `reviewed_by`, `reviewed_at`, `review_note` and
+`completed_at` carry the decision metadata. Evidence can be null or unavailable.
+
+```json
+{
+  "id": "review_example_001",
+  "status": "InReview",
+  "provider": "AssinafyVerify",
+  "verification_method": "IdDocumentFaceMatchBasic",
+  "reason_codes": [{"code": "NAME_MISMATCH", "description": "Name requires review"}],
+  "evidence_available": true,
+  "expected": {"name": "Example Signer", "cpf": "00000000000"},
+  "document": {"type": "CNH", "name": "EXAMPLE SIGNER", "cpf": "00000000000"},
+  "matches": {"cpf": true, "name": 0.52, "birth_date": null},
+  "checks": [{"name": "name", "result": "review", "score": 0.52, "reasons": ["NAME_MISMATCH"]}],
+  "images": ["document_front", "document_back", "face"],
+  "ruleset_version": "example-ruleset",
+  "evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "reviewed_by": null,
+  "reviewed_at": null,
+  "review_note": null,
+  "completed_at": null
+}
+```
+
+### WebhookURLRequests
+
+`GET /v1/accounts/{accountId}/webhooks/endpoints?url={exactURL}` has no body and
+returns `data: [WebhookEndpoint]`; the SDK also filters exact URLs locally for sandbox.
+`DELETE` at the same URL has no body and returns the success envelope with `data: []`.
+The URL must match the registered URL exactly and is percent-encoded as one query value.
+
+### CreatedWebhookEndpoint
+
+`POST /v1/accounts/{accountId}/webhooks/endpoints` with `signing_enabled: true`
+returns the following in `data`. Save `secret` securely on your webhook server;
+list and view responses omit it. OAuth applications cannot retrieve or rotate it later.
+
+```json
+{
+  "id": "endpoint_example_001",
+  "name": "Marketplace",
+  "url": "https://app.example.invalid/hooks/assinafy",
+  "email": "ops@example.invalid",
+  "events": ["signer_identity_review_required", "signer_identity_review_approved"],
+  "is_active": true,
+  "signing_enabled": true,
+  "secret": "whsec_c3ludGhldGljLWtleS1mb3ItZG9jdW1lbnRhdGlvbg==",
+  "created_at": "2099-01-01T12:00:00Z",
+  "updated_at": "2099-01-01T12:00:00Z"
 }
 ```

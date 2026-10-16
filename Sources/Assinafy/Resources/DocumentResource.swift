@@ -205,6 +205,7 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
                 "Failed to fetch document",
                 request: .get("/documents/\(did)")
             )
+            if doc.statusString == "pending_identity_review" { return doc }
             switch doc.status {
             case .metadataReady, .pendingSignature, .certificating, .certificated:
                 return doc

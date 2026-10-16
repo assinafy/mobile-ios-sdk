@@ -25,6 +25,12 @@ final class TemplateResourceTests: XCTestCase {
         ]
     }
 
+    func testListItemRetainsDefaultDocumentTags() throws {
+        let item = try JSONDecoder.assinafy.decode(TemplateListItem.self, from: Data(
+            #"{"id":"t","name":"Template","status":"ready","created_at":"2026-10-16","default_document_tags":[{"id":"tag","name":"Contracts"}]}"#.utf8))
+        XCTAssertEqual(item.defaultDocumentTags.first?.id, "tag")
+    }
+
     func testListUsesTemplatesEndpoint() async throws {
         mock.stubEnvelopeList([templateDict()])
         let result = try await resource.list()

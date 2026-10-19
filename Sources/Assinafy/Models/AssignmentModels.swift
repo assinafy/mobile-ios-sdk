@@ -424,7 +424,8 @@ public struct CreateAssignmentPayload: Sendable {
 
     /// Creates an assignment request payload.
     /// - Parameters:
-    ///   - method: Virtual or collect signing method.
+    ///   - method: Virtual or collect signing method. Digital-certificate
+    ///     signers require ``AssignmentMethod/virtual``.
     ///   - signers: Signers participating in the assignment.
     ///   - entries: Page field placements required for collect assignments.
     ///   - message: Optional invitation message.
@@ -568,6 +569,7 @@ func buildAssignmentBody(_ payload: CreateAssignmentPayload) throws -> Assignmen
     guard !payload.signers.isEmpty else {
         throw ValidationError("At least one signer is required")
     }
+    try validateDigitalCertificateAssignmentMethod(payload)
     let signerBodies = try payload.signers.map { ref in
         try buildSignerBody(ref)
     }
@@ -592,6 +594,7 @@ func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> A
     if payload.signers.isEmpty {
         throw ValidationError("Assignment estimates require at least one signer")
     }
+    try validateDigitalCertificateAssignmentMethod(payload)
     let signers = payload.signers.map { reference -> AssignmentEstimateSignerBody in
         switch reference {
         case .id:
@@ -612,6 +615,19 @@ func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> A
         signers: signers,
         entries: entries
     )
+}
+
+private func validateDigitalCertificateAssignmentMethod(_ payload: CreateAssignmentPayload) throws {
+    let hasDigitalCertificateSigner = payload.signers.contains { reference in
+        guard case .descriptor(_, let verificationMethod, _, _) = reference else { return false }
+        return verificationMethod == SignerVerificationMethod.digitalCertificate.rawValue
+    }
+    guard payload.method == .virtual || !hasDigitalCertificateSigner else {
+        throw ValidationError(
+            "DigitalCertificate signers require a virtual assignment",
+            errors: ["method": "digital_certificate_requires_virtual_assignment"]
+        )
+    }
 }
 
 private func buildSignerBody(_ ref: SignerReference) throws -> AssignmentSignerBody {

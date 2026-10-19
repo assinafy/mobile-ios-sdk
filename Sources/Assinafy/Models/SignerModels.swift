@@ -608,7 +608,8 @@ public enum SignerVerificationMethod: String, Sendable, CaseIterable {
     ///
     /// Requires the Digital Certificate feature on the account, charges 0.5
     /// credits, and the signer must have a CPF or CNPJ in `government_id` and
-    /// be **alone in their signing step**. A CPF requires that person's
+    /// be **alone in their signing step**. The assignment method must be
+    /// ``AssignmentMethod/virtual``. A CPF requires that person's
     /// certificate — an e-CPF, or an e-CNPJ naming them as legal
     /// representative; a CNPJ requires an e-CNPJ for that company, from any of
     /// its representatives.

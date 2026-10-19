@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1] - 2026-10-19
+
+### Fixed
+
+- Collect assignments with `DigitalCertificate` signers now fail locally before creation or cost
+  estimation with the stable validation code `digital_certificate_requires_virtual_assignment`.
+
 ## [1.11.0] - 2026-10-16
 
 ### Added

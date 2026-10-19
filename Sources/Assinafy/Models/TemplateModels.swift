@@ -324,7 +324,8 @@ public final class TemplateSigner: NSObject, Encodable {
     ///   - roleId: Template role ID.
     ///   - id: Signer ID; required when creating a document.
     ///   - verification: How the signer proves their identity. Omit for
-    ///     ``SignerVerificationMethod/email``.
+    ///     ``SignerVerificationMethod/email``. A digital-certificate signer
+    ///     requires a template with no placed signer fields.
     ///   - notifications: Channels used to notify the signer. Omit for email only.
     ///   - step: Optional one-based signing order. A
     ///     ``SignerVerificationMethod/digitalCertificate`` signer must be alone

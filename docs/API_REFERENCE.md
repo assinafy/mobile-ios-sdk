@@ -453,6 +453,10 @@ keys are `editor_fields: [{field_id, value}]`, `name`, `message`, `expires_at`,
 and `tags`. Here, and only here, `tags` are tag **names** that the API may create;
 the document-tag attachment endpoints use tag IDs.
 
+`DigitalCertificate` may be assigned only through a template with no placed
+signer fields. The API derives a `collect` assignment from any such placement,
+and certificate signers require the generated assignment to be `virtual`.
+
 Template cost estimation intentionally sends a narrower body:
 
 ```json
@@ -540,6 +544,13 @@ string. Its required fields are `left`, `top`, `width`, `height`, and `fontSize`
 `fontFamily` and `backgroundColor` are optional. Coordinates are pixels in the
 API's 150-DPI page image. `left` and `top` must be nonnegative; width, height,
 and font size must be positive and the rectangle must fit the selected page.
+
+`DigitalCertificate` signers require `method: virtual`. Certificate signing
+completes the signer's virtual item through the hosted Web PKI flow; the ordinary
+field-signing endpoint does not accept certificate signers, so a `collect`
+assignment containing one cannot be completed. Both `create` and `estimateCost`
+reject that combination before network I/O with `ValidationError` and the stable
+field code `errors["method"] = "digital_certificate_requires_virtual_assignment"`.
 
 Assignment estimation deliberately removes signer descriptor IDs and steps,
 message, expiry, and copy receivers. A virtual estimate requires a nonempty
@@ -1087,7 +1098,8 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
     token), both presented through the Web PKI browser extension, producing a
     qualified PAdES signature. It requires the Digital Certificate feature, a
     CPF or CNPJ in the signer's `government_id`, and that the signer be alone
-    in their step; it bills 0.5 credits plus its notification. A CPF requires that person's certificate
+    in their step. The assignment must be `virtual`; it bills 0.5 credits plus
+    its notification. A CPF requires that person's certificate
     (an e-CPF, or an e-CNPJ naming them as legal representative); a CNPJ
     requires an e-CNPJ for that company. The signing handshake itself happens
     in the browser and is not wrapped by this SDK.

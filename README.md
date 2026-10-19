@@ -59,7 +59,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.11.0"
+        from: "1.11.1"
     ),
 ],
 targets: [
@@ -564,9 +564,11 @@ máquina do signatário, A3 vive num cartão inteligente ou token USB. Ambos sã
 mesma extensão Web PKI, então a escolha entre eles é do signatário e não exige nada da integração.
 
 O certificado digital exige o recurso habilitado na conta (planos Standard e Pro), CPF ou CNPJ em
-`government_id`, e que o signatário esteja **sozinho no seu passo**. Um CPF exige o certificado
-daquela pessoa — um e-CPF, ou um e-CNPJ que a nomeie como representante legal; um CNPJ exige um
-e-CNPJ daquela empresa, de qualquer um de seus representantes.
+`government_id`, que o signatário esteja **sozinho no seu passo** e um assignment `.virtual`. Um
+assignment collect — ou um template com qualquer campo de signatário posicionado — não pode usar
+`.digitalCertificate`. Um CPF exige o certificado daquela pessoa — um e-CPF, ou um e-CNPJ que a
+nomeie como representante legal; um CNPJ exige um e-CNPJ daquela empresa, de qualquer um de seus
+representantes.
 
 > Como a assinatura por certificado acontece por um handshake com a extensão de navegador Web PKI,
 > ela não é concluída pelo fluxo de assinatura nativo deste SDK — encaminhe o signatário à página

@@ -55,7 +55,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.11.0"
+        from: "1.11.1"
     ),
 ],
 targets: [
@@ -560,9 +560,10 @@ signer's machine, A3 lives on a smart card or USB token. Both are presented thro
 PKI extension, so the choice between them is the signer's and asks nothing of the integration.
 
 Digital certificates require the feature on the account (Standard and Pro plans), a CPF or CNPJ in
-`government_id`, and that the signer be **alone in their step**. A CPF requires that person's
-certificate — an e-CPF, or an e-CNPJ naming them as legal representative; a CNPJ requires an
-e-CNPJ for that company, from any of its representatives.
+`government_id`, that the signer be **alone in their step**, and a `.virtual` assignment. A collect
+assignment—or a template with any placed signer fields—cannot use `.digitalCertificate`. A CPF
+requires that person's certificate — an e-CPF, or an e-CNPJ naming them as legal representative;
+a CNPJ requires an e-CNPJ for that company, from any of its representatives.
 
 > Because certificate signing happens through a handshake with the Web PKI browser extension, it
 > is not completed by this SDK's native signing calls — send the signer to the web signing page.

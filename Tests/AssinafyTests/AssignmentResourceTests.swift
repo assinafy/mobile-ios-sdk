@@ -136,12 +136,12 @@ final class AssignmentPayloadTests: XCTestCase {
         let field = AssignmentField(signerId: "s1", fieldId: "f1", displaySettings: settings)
         let payload = CreateAssignmentPayload(
             method: .collect,
-            signers: [.descriptor(verificationMethod: "DigitalCertificate")],
+            signers: [.descriptor(verificationMethod: "Whatsapp")],
             entries: [AssignmentEntry(pageId: "p1", fields: [field])]
         )
         let body = try buildAssignmentEstimateBody(payload)
         // collect is priced per signer too, so the channels must reach the API.
-        XCTAssertEqual(body.signers?[0].verificationMethod, "DigitalCertificate")
+        XCTAssertEqual(body.signers?[0].verificationMethod, "Whatsapp")
         XCTAssertEqual(body.entries?.count, 1)
     }
 
@@ -261,6 +261,35 @@ final class AssignmentResourceTests: XCTestCase {
                     signers: [.descriptor(verificationMethod: "Email")]
                 )
             )
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+
+    func testCreateAndEstimateRejectCollectDigitalCertificateBeforeRequest() async {
+        let payload = CreateAssignmentPayload(
+            method: .collect,
+            signers: [.descriptor(id: "s1", verificationMethod: "DigitalCertificate")],
+            entries: [AssignmentEntry(pageId: "p1", fields: [
+                AssignmentField(signerId: "s1", fieldId: "f1")
+            ])]
+        )
+        let operations: [() async throws -> Void] = [
+            { _ = try await self.resource.create(documentId: "doc1", payload: payload) },
+            { _ = try await self.resource.estimateCost(documentId: "doc1", payload: payload) },
+        ]
+
+        for operation in operations {
+            do {
+                try await operation()
+                XCTFail("Expected ValidationError")
+            } catch let error as ValidationError {
+                XCTAssertEqual(
+                    error.errors["method"] as? String,
+                    "digital_certificate_requires_virtual_assignment"
+                )
+            } catch {
+                XCTFail("Expected ValidationError, got \(type(of: error))")
+            }
         }
         XCTAssertTrue(mock.allRequests.isEmpty)
     }

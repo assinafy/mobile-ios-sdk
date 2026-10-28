@@ -45,6 +45,10 @@ final class AuthResourceTests: XCTestCase {
             "DocumentProcessingFailed": true,
             "TemplateProcessingFailed": false,
             "SignerWhatsappFailed": true,
+            "ContractRenewalNotice": false,
+            "ContractExpiring": true,
+            "ContractExpired": false,
+            "ContractRenewed": true,
         ]
     }
 
@@ -135,6 +139,10 @@ final class AuthResourceTests: XCTestCase {
         XCTAssertTrue(result.documentProcessingFailed)
         XCTAssertFalse(result.templateProcessingFailed)
         XCTAssertTrue(result.signerWhatsappFailed)
+        XCTAssertFalse(result.contractRenewalNotice)
+        XCTAssertTrue(result.contractExpiring)
+        XCTAssertFalse(result.contractExpired)
+        XCTAssertTrue(result.contractRenewed)
         XCTAssertEqual(mock.lastRequest?.method, .get)
         XCTAssertEqual(mock.lastRequest?.path, "/users/self/notification-preferences")
     }
@@ -165,6 +173,52 @@ final class AuthResourceTests: XCTestCase {
             )
         }
         XCTAssertNil(mock.lastRequest)
+    }
+
+    func testContractNotificationPreferencesSendBooleansAndOmitUnchangedKeys() async throws {
+        mock.stubEnvelope(notificationPreferencesDict())
+        _ = try await resource.updateNotificationPreferences(UpdateNotificationPreferencesPayload(
+            contractRenewalNotice: false, contractExpiring: true, contractExpired: false, contractRenewed: true
+        ))
+        let data = try XCTUnwrap(mock.lastRequest?.body)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Bool])
+        XCTAssertEqual(body, [
+            "ContractRenewalNotice": false, "ContractExpiring": true,
+            "ContractExpired": false, "ContractRenewed": true,
+        ])
+        XCTAssertEqual(mock.lastRequest?.credential, .workspace)
+    }
+
+    func testLegacyNotificationPreferencesUseContractDefaults() throws {
+        let legacy = notificationPreferencesDict().filter { !$0.key.hasPrefix("Contract") }
+        let response = try JSONDecoder.assinafy.decode(
+            NotificationPreferences.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertTrue(response.contractRenewalNotice)
+        XCTAssertTrue(response.contractExpiring)
+        XCTAssertTrue(response.contractExpired)
+        XCTAssertTrue(response.contractRenewed)
+        let constructed = NotificationPreferences(
+            documentCompleted: true, signerDeclined: true, documentCancelled: true,
+            documentAboutToExpire: true, documentExpired: true, documentExpirationReset: true,
+            documentProcessingFailed: true, templateProcessingFailed: true, signerWhatsappFailed: true)
+        XCTAssertTrue(constructed.contractRenewed)
+
+        var malformed = notificationPreferencesDict()
+        malformed["ContractRenewed"] = "false"
+        XCTAssertThrowsError(try JSONDecoder.assinafy.decode(
+            NotificationPreferences.self, from: JSONSerialization.data(withJSONObject: malformed)))
+    }
+
+    func testContractNotificationUpdateCompletionUsesMainQueue() async {
+        mock.stubEnvelope(notificationPreferencesDict())
+        let done = expectation(description: "contract notification completion")
+        resource.updateNotificationPreferences(UpdateNotificationPreferencesPayload(contractRenewed: false)) { result, error in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertNotNil(result)
+            XCTAssertNil(error)
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 2)
     }
 
     func testChangePasswordUsesPut() async throws {

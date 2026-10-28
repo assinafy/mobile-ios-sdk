@@ -118,8 +118,23 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         perPage: Int,
         accountId: String? = nil
     ) async throws -> PaginatedResult<DocumentListItem> {
+        try await self.search(search: search, status: status, sort: nil,
+                              page: page, perPage: perPage, accountId: accountId)
+    }
+
+    /// Mirrors `GET /accounts/{accountId}/documents/search` with sorting and pagination.
+    /// `sort` accepts `name` or `updated_at`, prefixed with `-` for descending order.
+    public func search(
+        search: String? = nil,
+        status: String? = nil,
+        sort: String?,
+        page: Int = 0,
+        perPage: Int = 0,
+        accountId: String? = nil
+    ) async throws -> PaginatedResult<DocumentListItem> {
         let id = try self.accountId(accountId)
         var items: [URLQueryItem] = []
+        if let sort, !sort.isEmpty { items.append(.init(name: "sort", value: sort)) }
         if let search { items.append(.init(name: "search", value: search)) }
         if let status { items.append(.init(name: "status", value: status)) }
         if page > 0 { items.append(.init(name: "page", value: "\(page)")) }
@@ -269,20 +284,26 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
                                   request: .get("/documents/\(did)/pages/\(pid)/download"))
     }
 
-    /// Fetches the activity log for a document.
-    ///
-    /// - Parameters:
-    ///   - documentId: The document identifier.
-    /// - Returns: An array of ``DocumentActivity`` entries in chronological order.
+    /// Fetches the first page of document activities, newest first (20 by default).
+    /// Use ``activities(documentId:params:)`` to read subsequent pages.
     public func activities(
         documentId: String
     ) async throws -> [DocumentActivity] {
+        try await activities(documentId: documentId, params: ListParams()).data
+    }
+
+    /// Mirrors `GET /documents/{documentId}/activities` with pagination metadata.
+    /// `params` supports `page`, `per-page`, and `sort`: `-id` (newest first) or `id`.
+    public func activities(
+        documentId: String,
+        params: ListParams
+    ) async throws -> PaginatedResult<DocumentActivity> {
         let did = try requireId(documentId, name: "Document ID")
-        let result: PaginatedResult<DocumentActivity> = try await callList(
+        let items = params.toQueryItems()
+        return try await callList(
             "Failed to fetch document activities",
-            request: .get("/documents/\(did)/activities")
+            request: .get("/documents/\(did)/activities", queryItems: items.isEmpty ? nil : items)
         )
-        return result.data
     }
 
     /// Permanently deletes a document from the workspace.
@@ -627,6 +648,16 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         withListCompletion({ try await self.search(search: search, status: status, page: page, perPage: perPage, accountId: accountId) }, completion: completion)
     }
 
+    /// Searches with sorting and pagination and delivers items on the main queue.
+    @objc(searchWithSearch:status:sort:page:perPage:accountId:completion:)
+    public func search(
+        search: String?, status: String?, sort: String?, page: Int, perPage: Int, accountId: String?,
+        completion: @escaping ([DocumentListItem]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.search(search: search, status: status, sort: sort,
+                                                   page: page, perPage: perPage, accountId: accountId) }, completion: completion)
+    }
+
     /// Completion form of `waitUntilReady`; delivers the result on the main queue.
     @objc(waitUntilReadyWithDocumentId:options:completion:)
     public func waitUntilReady(
@@ -673,6 +704,24 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         completion: @escaping ([DocumentActivity]?, Error?) -> Void
     ) {
         withCompletion({ try await self.activities(documentId: documentId) }, completion: completion)
+    }
+
+    /// Reads an activity page and delivers the items on the main queue.
+    @nonobjc
+    public func activities(
+        documentId: String, params: ListParams,
+        completion: @escaping ([DocumentActivity]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.activities(documentId: documentId, params: params) }, completion: completion)
+    }
+
+    /// Accepts `page`, `per-page`, and `sort` and delivers activity items on the main queue.
+    @objc(activitiesWithDocumentId:query:completion:)
+    public func activities(
+        documentId: String, query: [String: String],
+        completion: @escaping ([DocumentActivity]?, Error?) -> Void
+    ) {
+        withListCompletion({ try await self.activities(documentId: documentId, params: ListParams(extra: query)) }, completion: completion)
     }
 
     /// Completion form of `createFromTemplate`; delivers the result on the main queue.

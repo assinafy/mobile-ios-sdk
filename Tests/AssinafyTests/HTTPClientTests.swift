@@ -166,6 +166,21 @@ final class HTTPClientTests: XCTestCase {
         XCTAssertEqual(String(data: response.data, encoding: .utf8), "{\"ok\":true}")
     }
 
+    func testQueryPreservesLiteralPlusForFormDecoding() throws {
+        let request = APIRequest.get("/signers", queryItems: [
+            URLQueryItem(name: "search", value: "signer+alias@example.invalid"),
+            URLQueryItem(name: "url", value: "https://example.invalid/hook?q=a+b%2Bc"),
+        ])
+
+        let built = try transport().buildURLRequest(from: request)
+
+        XCTAssertEqual(
+            built.url?.absoluteString,
+            "https://sandbox.example.invalid/v1/signers?search=signer%2Balias@example.invalid"
+                + "&url=https://example.invalid/hook?q%3Da%2Bb%252Bc"
+        )
+    }
+
     func testDefaultSessionRequiresTLS12() {
         let session = URLSessionHTTPClient.makeSession(timeout: 30)
         XCTAssertEqual(session.configuration.tlsMinimumSupportedProtocolVersion, .TLSv12)

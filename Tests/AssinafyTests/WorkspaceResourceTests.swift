@@ -22,6 +22,7 @@ final class WorkspaceResourceTests: XCTestCase {
             "created_at": "2024-01-01",
             "is_delete_allowed": true,
             "roles": ["owner"],
+            "limits": ["webhook_endpoints": 3],
         ]
     }
 
@@ -108,6 +109,7 @@ final class WorkspaceResourceTests: XCTestCase {
         XCTAssertEqual(workspace.notificationSenderType, "Account")
         XCTAssertEqual(workspace.roles, ["owner"])
         XCTAssertTrue(workspace.isDeleteAllowed)
+        XCTAssertEqual(workspace.limits?.webhookEndpoints?.intValue, 3)
     }
 
     func testListReturnsPaginationMeta() async throws {
@@ -135,6 +137,21 @@ final class WorkspaceResourceTests: XCTestCase {
         await assertThrowsValidationError {
             _ = try await self.resource.get(workspaceId: "")
         }
+    }
+
+    func testAccountLimitsPreserveAbsentAndExplicitZeroValues() async throws {
+        var account = workspaceDict()
+        account.removeValue(forKey: "limits")
+        mock.stubEnvelopeList([account])
+        let list = try await resource.list()
+        XCTAssertNil(list.data.first?.limits)
+
+        account["limits"] = ["webhook_endpoints": 0]
+        mock.stubEnvelope(account)
+        let detail = try await resource.get(workspaceId: "ws1")
+        XCTAssertEqual(detail.limits?.webhookEndpoints?.intValue, 0)
+        let absent = try JSONDecoder.assinafy.decode(WorkspaceLimits.self, from: Data("{}".utf8))
+        XCTAssertNil(absent.webhookEndpoints)
     }
 
     func testUpdateUsesCorrectPath() async throws {

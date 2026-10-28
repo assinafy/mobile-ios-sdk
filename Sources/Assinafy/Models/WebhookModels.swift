@@ -28,6 +28,14 @@ public final class WebhookEventType: NSObject {
     @objc public static let templateCreated         = "template_created"
     @objc public static let templateProcessed       = "template_processed"
     @objc public static let templateProcessingFailed = "template_processing_failed"
+    @objc public static let documentContractUpdated = "document_contract_updated"
+    @objc public static let documentContractRenewalNotice = "document_contract_renewal_notice"
+    @objc public static let documentContractExpiring = "document_contract_expiring"
+    @objc public static let documentContractExpired = "document_contract_expired"
+    @objc public static let documentContractRenewed = "document_contract_renewed"
+    @objc public static let documentContractTerminated = "document_contract_terminated"
+    @objc public static let documentContractAmended = "document_contract_amended"
+    @objc public static let documentContractAmendmentUpdated = "document_contract_amendment_updated"
 
     /// The default set of events registered when none are specified.
     @objc public static let defaultEvents: [String] = [
@@ -54,7 +62,7 @@ public final class WebhookRegisterPayload: NSObject, Encodable {
     /// Creates a webhook registration payload.
     ///
     /// - Parameters:
-    ///   - url: The absolute HTTP or HTTPS endpoint that receives delivery POST requests.
+    ///   - url: Delivery endpoint. New or changed URLs must use HTTPS and resolve to a public address.
     ///   - email: Contact email for delivery failure notifications.
     ///   - events: Specific event types to subscribe to. Defaults to ``WebhookEventType/defaultEvents``.
     ///   - isActive: Whether the subscription is active. Defaults to `true`.
@@ -82,13 +90,19 @@ public final class WebhookSubscription: NSObject {
     public let email: String?
     public let events: [String]
     public let isActive: Bool
+    /// Whether deliveries are paused after repeated failures.
+    public let isHeld: Bool
+    /// Unix timestamp when the pause began; `nil` while deliveries run.
+    public let heldSince: NSNumber?
     public let createdAt: String?
     public let updatedAt: String?
 
     init(id: String? = nil, url: String?, email: String?, events: [String],
-         isActive: Bool, createdAt: String? = nil, updatedAt: String? = nil) {
+         isActive: Bool, createdAt: String? = nil, updatedAt: String? = nil,
+         isHeld: Bool = false, heldSince: NSNumber? = nil) {
         self.id = id; self.url = url; self.email = email
         self.events = events; self.isActive = isActive
+        self.isHeld = isHeld; self.heldSince = heldSince
         self.createdAt = createdAt; self.updatedAt = updatedAt
     }
 }
@@ -99,6 +113,8 @@ extension WebhookSubscription: Decodable {
     enum CodingKeys: String, CodingKey {
         case id, url, email, events
         case isActive  = "is_active"
+        case isHeld = "is_held"
+        case heldSince = "held_since"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -112,7 +128,9 @@ extension WebhookSubscription: Decodable {
             events:    try c.decodeIfPresent([String].self, forKey: .events) ?? [],
             isActive:  try c.decodeIfPresent(Bool.self,     forKey: .isActive) ?? false,
             createdAt: try c.decodeIfPresent(String.self,   forKey: .createdAt),
-            updatedAt: try c.decodeIfPresent(String.self,   forKey: .updatedAt)
+            updatedAt: try c.decodeIfPresent(String.self,   forKey: .updatedAt),
+            isHeld:    try c.decodeIfPresent(Bool.self, forKey: .isHeld) ?? false,
+            heldSince: try c.decodeIfPresent(Int.self, forKey: .heldSince).map(NSNumber.init(value:))
         )
     }
 }
@@ -165,6 +183,14 @@ public final class WebhookDispatch: NSObject {
     /// JSON object delivered to the webhook endpoint, or `nil` when unavailable.
     public let payload: [String: Any]?
     public let delivered: Bool
+    /// Stable `webhook-id` shared by every attempt of this event to this endpoint.
+    public let webhookId: String?
+    /// One-based attempt number, when returned by the server.
+    public let attempt: NSNumber?
+    /// Delivery kind: `scheduled`, `probe`, or `manual`.
+    public let kind: String?
+    /// Whether the server will make another attempt after this one.
+    public let willRetry: Bool
     /// HTTP status returned by the endpoint, or `nil` when the connection failed.
     public let httpStatusCode: NSNumber?
     /// Compatibility view of ``httpStatusCode``; connection failures map to `0`.
@@ -181,11 +207,14 @@ public final class WebhookDispatch: NSObject {
          endpoint: String? = nil, endpointId: String? = nil,
          payloadJSON: JSONValue? = nil, payload: [String: Any]? = nil,
          delivered: Bool, httpStatusCode: NSNumber? = nil, responseBody: String? = nil,
-         deliveryError: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
+         deliveryError: String? = nil, createdAt: String? = nil, updatedAt: String? = nil,
+         webhookId: String? = nil, attempt: NSNumber? = nil, kind: String? = nil,
+         willRetry: Bool = false) {
         self.resource = resource
         self.id = id; self.event = event; self.activityId = activityId
         self.endpoint = endpoint; self.endpointId = endpointId; self.payloadJSON = payloadJSON
         self.payload = payload; self.delivered = delivered
+        self.webhookId = webhookId; self.attempt = attempt; self.kind = kind; self.willRetry = willRetry
         self.httpStatusCode = httpStatusCode
         self.responseBody = responseBody; self.deliveryError = deliveryError
         self.createdAt = createdAt; self.updatedAt = updatedAt
@@ -196,7 +225,9 @@ extension WebhookDispatch: @unchecked Sendable {}
 
 extension WebhookDispatch: Decodable {
     enum CodingKeys: String, CodingKey {
-        case resource, id, event, endpoint, payload, delivered
+        case resource, id, event, endpoint, payload, delivered, attempt, kind
+        case webhookId = "webhook_id"
+        case willRetry = "will_retry"
         case activityId  = "activity_id"
         case endpointId  = "endpoint_id"
         case httpStatus  = "http_status"
@@ -226,7 +257,11 @@ extension WebhookDispatch: Decodable {
             responseBody: try c.decodeIfPresent(String.self,  forKey: .responseBody),
             deliveryError:try c.decodeIfPresent(String.self,  forKey: .deliveryError),
             createdAt:    try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
-            updatedAt:    try decodeFlexibleOptionalString(from: c, forKey: .updatedAt)
+            updatedAt:    try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
+            webhookId:    try c.decodeIfPresent(String.self, forKey: .webhookId),
+            attempt:      try c.decodeIfPresent(Int.self, forKey: .attempt).map(NSNumber.init(value:)),
+            kind:         try c.decodeIfPresent(String.self, forKey: .kind),
+            willRetry:    try c.decodeIfPresent(Bool.self, forKey: .willRetry) ?? false
         )
     }
 
@@ -307,7 +342,7 @@ extension WebhookDispatchListParams: @unchecked Sendable {}
 @objcMembers
 public final class WebhookEndpoint: NSObject {
     public let id: String
-    /// Returned once on creation with signing enabled. Save securely on your webhook server.
+    /// Returned when creation or an update generates a signing secret. Save on your webhook server.
     public let secret: String?
     /// Label that tells endpoints apart.
     public let name: String?
@@ -318,14 +353,20 @@ public final class WebhookEndpoint: NSObject {
     public let isActive: Bool
     /// Whether deliveries carry a `webhook-signature` header (see ``WebhookSignature``).
     public let signingEnabled: Bool
+    /// Whether deliveries are paused after repeated failures.
+    public let isHeld: Bool
+    /// Unix timestamp when the pause began; `nil` while deliveries run.
+    public let heldSince: NSNumber?
     public let createdAt: String?
     public let updatedAt: String?
 
     init(id: String, name: String?, url: String, email: String, events: [String],
-         isActive: Bool, signingEnabled: Bool, createdAt: String?, updatedAt: String?, secret: String? = nil) {
+         isActive: Bool, signingEnabled: Bool, createdAt: String?, updatedAt: String?, secret: String? = nil,
+         isHeld: Bool = false, heldSince: NSNumber? = nil) {
         self.secret = secret
         self.id = id; self.name = name; self.url = url; self.email = email
         self.events = events; self.isActive = isActive; self.signingEnabled = signingEnabled
+        self.isHeld = isHeld; self.heldSince = heldSince
         self.createdAt = createdAt; self.updatedAt = updatedAt
     }
 }
@@ -337,6 +378,8 @@ extension WebhookEndpoint: Decodable {
         case id, name, url, email, events, secret
         case isActive       = "is_active"
         case signingEnabled = "signing_enabled"
+        case isHeld = "is_held"
+        case heldSince = "held_since"
         case createdAt      = "created_at"
         case updatedAt      = "updated_at"
     }
@@ -353,7 +396,9 @@ extension WebhookEndpoint: Decodable {
             signingEnabled: try c.decodeIfPresent(Bool.self, forKey: .signingEnabled) ?? false,
             createdAt:      try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
             updatedAt:      try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
-            secret:         try c.decodeIfPresent(String.self, forKey: .secret)
+            secret:         try c.decodeIfPresent(String.self, forKey: .secret),
+            isHeld:         try c.decodeIfPresent(Bool.self, forKey: .isHeld) ?? false,
+            heldSince:      try c.decodeIfPresent(Int.self, forKey: .heldSince).map(NSNumber.init(value:))
         )
     }
 }
@@ -373,7 +418,7 @@ public final class CreateWebhookEndpointPayload: NSObject, Encodable {
     /// Creates an endpoint registration.
     ///
     /// - Parameters:
-    ///   - url: Absolute HTTP or HTTPS URL that receives deliveries. Must differ from the workspace's other endpoints.
+    ///   - url: HTTPS URL resolving to a public address. Must differ from the workspace's other endpoints.
     ///   - email: Contact email for delivery-failure notices.
     ///   - events: Event types to deliver. Defaults to ``WebhookEventType/defaultEvents``.
     ///   - name: Optional label that tells endpoints apart.
@@ -400,7 +445,8 @@ extension CreateWebhookEndpointPayload: @unchecked Sendable {}
 /// Partial update for ``WebhookResource/updateEndpoint(id:_:accountId:)``; `nil` values are omitted.
 ///
 /// Turning ``signingEnabled`` on generates a secret when the endpoint has none and
-/// keeps the current one otherwise; turning it off discards the secret.
+/// keeps the current one otherwise; turning it off discards the secret. An update
+/// that turns signing on returns the new secret once in ``WebhookEndpoint/secret``.
 @objcMembers
 public final class UpdateWebhookEndpointPayload: NSObject, Encodable {
     public let url: String?

@@ -116,6 +116,7 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
 
     /// Retries a failed webhook delivery.
     ///
+    /// Sends once even while the endpoint is paused; a successful delivery lifts the pause.
     /// - Parameters:
     ///   - dispatchId: The unique identifier of the failed delivery.
     ///   - accountId: Override the client's default account ID.
@@ -186,6 +187,8 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
 
     /// Updates the fields set on `payload`.
     ///
+    /// Turning signing on returns a new secret once in ``WebhookEndpoint/secret``.
+    /// Changing the URL or sending `is_active: true` lifts a delivery pause.
     /// Mirrors `PUT /accounts/{accountId}/webhooks/endpoints/{endpointId}`. OAuth scope: `webhooks:write`.
     public func updateEndpoint(
         id endpointId: String,
@@ -225,7 +228,7 @@ public final class WebhookResource: BaseResource, @unchecked Sendable {
     ///
     /// Mirrors `POST /accounts/{accountId}/webhooks/endpoints/{endpointId}/secret/rotate`.
     /// The old secret stops working immediately. The API answers `400` when signing
-    /// is disabled. Not available to OAuth applications.
+    /// is disabled. OAuth applications require the `webhooks:write` scope.
     public func rotateSigningSecret(endpointId: String, accountId: String? = nil) async throws -> String {
         let path = try endpointPath(endpointId, accountId: accountId) + "/secret/rotate"
         let result: WebhookSigningSecret = try await call("Failed to rotate webhook signing secret",

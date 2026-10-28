@@ -17,7 +17,7 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
     // MARK: - Swift async API
 
     /// Mirrors `GET /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification`.
-    /// Workspace-only evidence summary; images are available separately while InReview.
+    /// Workspace evidence summary, available with the `documents:read` OAuth scope.
     public func identityReview(
         documentId: String, assignmentId: String, signerId: String
     ) async throws -> SignerIdentityReview {
@@ -27,6 +27,7 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
 
     /// Mirrors `GET /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/images/{name}`.
     /// Returns JPEG, PNG, or PDF bytes only while InReview; do not persist sensitive evidence.
+    /// OAuth applications receive 403; a person reviews the evidence in Assinafy.
     public func downloadIdentityReviewImage(
         documentId: String, assignmentId: String, signerId: String, name: String
     ) async throws -> Data {
@@ -40,6 +41,7 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
     /// Mirrors `POST /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/review`.
     /// Approval releases certification when every signer is done. Rejection cancels the
     /// document and notifies all recipients; the optional note is never shown to signers.
+    /// OAuth applications receive 403; a person makes the decision in Assinafy.
     public func reviewIdentityVerification(
         documentId: String, assignmentId: String, signerId: String,
         payload: ReviewIdentityVerificationPayload
@@ -63,21 +65,20 @@ public final class AssignmentResource: BaseResource, @unchecked Sendable {
 
     /// Lists assignments for the authenticated user's current account.
     ///
-    /// Mirrors `GET /assignments`. Production derives account context from the
-    /// credentials. An explicitly supplied `accountId` is retained for legacy
-    /// deployments; clients configured for the Assinafy sandbox add their default
-    /// account because that host requires the compatibility query.
+    /// Mirrors `GET /assignments`. API-key and session credentials require
+    /// `accountId`; OAuth tokens can derive the workspace from the token.
+    /// Sends the explicit account or the client's default when available.
     ///
     /// - Parameters:
-    ///   - params: Pagination parameters (`page`, `per-page`).
-    ///   - accountId: Explicit account identifier for deployments that require it.
+    ///   - params: Pagination and sort (`created_at`, `expires_at`, `id`; prefix `-` for descending).
+    ///   - accountId: Override the client's default workspace.
     /// - Returns: A ``PaginatedResult`` of ``Assignment`` objects.
     public func list(
         params: ListParams = ListParams(),
         accountId: String? = nil
     ) async throws -> PaginatedResult<Assignment> {
         var items = params.toQueryItems()
-        if let accountId = accountId ?? (usesSandboxCompatibility ? defaultAccountId : nil) {
+        if let accountId = accountId ?? defaultAccountId {
             items.append(URLQueryItem(
                 name: "accountId",
                 value: try requireId(accountId, name: "Account ID")

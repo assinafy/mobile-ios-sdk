@@ -4,7 +4,7 @@
 
 Acesso nativo em Swift e Objective-C à [API Assinafy v1](https://api.assinafy.com.br/v1/docs) —
 plataforma brasileira de assinatura eletrônica: documentos, signatários, assignments, campos, tags,
-templates, workspaces, webhooks e autenticação.
+templates, contratos, workspaces, webhooks e autenticação.
 
 O SDK cobre todas as operações do documento OpenAPI v1 publicado. As requisições são
 `async`/`await` primeiro, com wrappers de completion handler para Objective-C. As respostas
@@ -35,7 +35,8 @@ Sem dependências de terceiros: apenas Foundation e CryptoKit.
 18. [Mapa de recursos](#mapa-de-recursos)
 19. [Ambientes](#ambientes)
 20. [Testes](#testes)
-21. [Versionamento](#versionamento)
+21. [Gestão de contratos](#gestão-de-contratos)
+22. [Versionamento](#versionamento)
 
 ## Requisitos
 
@@ -59,7 +60,7 @@ Adicione o pacote e o produto ao `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.11.1"
+        from: "1.12.0"
     ),
 ],
 targets: [
@@ -606,6 +607,8 @@ Abra o link de captura hospedada e consulte o estado novamente ao retornar. `can
 só permite começar antes da primeira sessão ou após `Expired`. `Declined` e `Abandoned`
 exigem outro documento e assignment. Não persista esse link no navegador. `InReview`
 permite confirmar dados e assinar; `pending_identity_review` mantém a certificação pendente.
+Apps OAuth com `documents:read` podem consultar o resumo da revisão. Imagens e decisões
+exigem uma credencial direta do workspace; OAuth recebe `403` nessas duas operações.
 O revisor do workspace consulta evidências, imagens e decide:
 
 ```swift
@@ -626,6 +629,9 @@ cancela o documento e notifica signatários e destinatários de cópia. A nota, 
 e `signerIdentityReviewRejected`. [Referência e payloads completos](docs/API_REFERENCE.md#identity-document-and-face-verification).
 
 ## O lado do signatário
+
+Use o código de acesso da mensagem de convite. Um link de `signingUrls` do workspace pode
+apontar para a página pública do documento; o ID desse documento não é o código do signatário.
 
 Um signatário chega com um código de acesso vindo do convite. A sequência completa é: ler o
 documento, verificar o OTP recebido por email ou WhatsApp, aceitar os termos, confirmar os dados
@@ -736,6 +742,70 @@ definição de templates — `templates.create(name:pdfData:)`, `get`, `update` 
 API ao vivo mas não consta do documento OpenAPI publicado; confirme a disponibilidade no seu
 ambiente antes de depender dela.
 
+Também é possível mapear uma função por email com
+`TemplateSigner(roleId:email:name:whatsappPhoneNumber:verificationMethod:notificationMethods:step:)`;
+use `id` para reutilizar um signatário já conhecido.
+
+## Gestão de contratos
+
+Envie o documento primeiro e associe os termos com `client.contracts`. É uma gravação
+separada: se falhar, o documento continua disponível. Solicite assinaturas pelo fluxo normal
+de assignments. Também é possível associar termos a um documento existente. Leituras exigem
+`documents:read`; gravações exigem `documents:write` e um plano com gestão de contratos.
+
+```swift
+let uploaded = try await client.documents.upload(pdfData)
+let saved = try await client.contracts.update(
+    documentId: uploaded.id,
+    payload: UpdateContractPayload(
+        status: "active", value: NSDecimalNumber(string: "1200.50"), currency: "BRL",
+        startDate: "2026-11-01", endDate: "2027-10-31", autoRenew: NSNumber(value: false)
+    )
+)
+let filters = ContractListParams()
+filters.status = "active,expired"
+filters.endingWithinDays = 45
+filters.expand = "document"
+let page = try await client.contracts.list(params: filters)
+
+if let contract = saved.contract {
+    let renewed = try await client.contracts.renew(
+        documentId: uploaded.id,
+        payload: RenewContractPayload(term: contract.term, updatedAt: contract.updatedAt)
+    )
+    _ = try await client.contracts.terminate(
+        documentId: uploaded.id,
+        payload: TerminateContractPayload(reason: "Contract closed", updatedAt: renewed.updatedAt)
+    )
+}
+```
+
+O exemplo mostra renovação e encerramento como ações separadas. Envie o último `updatedAt`
+lido para proteger alterações simultâneas; em um `409`, leia novamente e peça ao usuário
+para resolver o conflito. Renove com o `term` atual ou um `endDate` posterior explícito.
+Em resultado incerto, mantenha a requisição original para impedir uma renovação duplicada.
+
+Propriedades nil deixam os termos intactos. `clearFields: ["counterparty_name"]` envia
+JSON null. `externalReferences` substitui a lista inteira; uma lista vazia a limpa. Valores
+monetários usam `NSDecimalNumber`. Datas seguem o calendário de Brasília. `hasContract`
+no documento é anulável: nil significa que a API não resolveu o indicador.
+
+Para um aditivo assinado, envie seu documento e grave `parentDocumentId`,
+`relationType: "amendment"`, `"renewal"` ou `"termination"` e os termos que ele modifica.
+`contracts.get` retorna `ContractDetails.contract` ou `.amendment`; `contracts.related`
+retorna a raiz e seus instrumentos a partir de qualquer documento da família. Instrumentos
+pendentes são aplicados na ordem de certificação; consulte `applyError` quando houver espera.
+Um instrumento aplicado é somente leitura. Limpar `parent_document_id` desvincula um
+instrumento pendente; nele, um termo null remove a alteração do conjunto pendente.
+
+O processamento horário envia avisos ao responsável, expira contratos ou executa renovações
+automáticas. As preferências `ContractRenewalNotice`, `ContractExpiring`, `ContractExpired`
+e `ContractRenewed` controlam esses emails. Assine eventos `document_contract_*` e recupere
+atualizações perdidas paginando contratos por `-updated_at`. As atividades são paginadas
+por `documents.activities(documentId:params:)`. Leituras continuam disponíveis sem o plano;
+o ciclo de vida retoma quando o recurso volta.
+Veja [campos, métodos e payloads completos](docs/API_REFERENCE.md#contract-management).
+
 ## Tags, campos e JSON não tipado
 
 ```swift
@@ -808,15 +878,18 @@ try await client.webhooks.retryDispatch(dispatchId: tentativas.data[0].id)
 
 `register`, `get` e `inactivate` continuam atuando sobre o endpoint mais antigo. Mais de um endpoint
 além do limite do plano retorna `403`; duas URLs iguais no mesmo workspace retornam `400`. Filtre o
-histórico de um endpoint com `WebhookDispatchListParams.endpointId`.
+histórico de um endpoint com `WebhookDispatchListParams.endpointId`. Consulte o limite em
+`workspaces.get(workspaceId:).limits?.webhookEndpoints`. `isHeld` e `heldSince` indicam
+entregas suspensas; `webhookId`, `attempt`, `kind` e `willRetry` descrevem cada tentativa.
+URLs novas ou alteradas precisam de HTTPS e endereço público.
 
 ### Assinatura das entregas
 
 Com `signingEnabled`, cada entrega leva os cabeçalhos `webhook-id`, `webhook-timestamp` e
 `webhook-signature` no padrão [Standard Webhooks](https://www.standardwebhooks.com). Guarde
-`endpoint.secret` no servidor receptor na criação: ele é retornado uma única vez. Apps OAuth
-não podem recuperá-lo ou rotacioná-lo depois; em caso de perda, recrie seu endpoint.
-Chamadores com chave de API também podem recuperar ou rotacionar o segredo:
+`endpoint.secret` no servidor receptor na criação ou ao ativar a assinatura: o novo segredo
+é retornado uma única vez. Apps OAuth com `webhooks:write` podem rotacioná-lo, mas não
+consultar o segredo existente. Chaves de API permitem a consulta e a rotação:
 
 ```swift
 let segredo = try await client.webhooks.signingSecret(endpointId: endpoint.id)
@@ -946,6 +1019,7 @@ if (escopo != nil) {
 | `client.auth` | Login, login social e vínculo, autenticação em dois fatores, operações de senha, gestão de chave de API, usuário atual, preferências de notificação, estatísticas |
 | `client.oauth` | Descoberta, URL de autorização com PKCE, troca de código, renovação, revogação, userinfo |
 | `client.workspaces` | CRUD de conta, tema, estatísticas, upload/download/exclusão de logo |
+| `client.contracts` | Termos contratuais, aditivos, filtros, renovação, encerramento e conflitos de atualização |
 | `client.documents` | Envio, listar/buscar/obter/renomear/excluir, status de processamento, páginas, miniaturas, atividades, artefatos, verificação, criação a partir de template, fluxo público de token |
 | `client.signers` | CRUD de signatários do workspace, autoatendimento, termos, verificação, imagens de assinatura, documentos do signatário, assinatura e recusa em lote |
 | `client.assignments` | Listar, criar, estimar, assinar, recusar, reenviar, expiração, notificações WhatsApp |

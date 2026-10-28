@@ -89,6 +89,22 @@ public final class UpdateWorkspacePayload: NSObject, Encodable {
 
 extension UpdateWorkspacePayload: @unchecked Sendable {}
 
+/// Plan limits included in account details; omitted limits remain unknown.
+@objcMembers
+public final class WorkspaceLimits: NSObject, Decodable {
+    /// Maximum webhook endpoints allowed for this workspace.
+    public let webhookEndpoints: NSNumber?
+
+    enum CodingKeys: String, CodingKey { case webhookEndpoints = "webhook_endpoints" }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        webhookEndpoints = try c.decodeIfPresent(Int.self, forKey: .webhookEndpoints).map(NSNumber.init(value:))
+    }
+}
+
+extension WorkspaceLimits: @unchecked Sendable {}
+
 // MARK: - WorkspaceResponse
 
 /// A workspace (account) returned by the API.
@@ -106,17 +122,21 @@ public final class WorkspaceResponse: NSObject {
     public let roles: [String]
     /// Whether the API currently permits deletion of this account.
     public let isDeleteAllowed: Bool
+    /// Plan limits returned by the server, when available.
+    public let limits: WorkspaceLimits?
     public let createdAt: String
 
     init(resource: String? = nil, id: String, name: String, primaryColor: String? = nil,
          secondaryColor: String? = nil, notificationSenderType: String? = nil,
-         roles: [String] = [], isDeleteAllowed: Bool = false, createdAt: String) {
+         roles: [String] = [], isDeleteAllowed: Bool = false, createdAt: String,
+         limits: WorkspaceLimits? = nil) {
         self.resource = resource
         self.id = id; self.name = name
         self.primaryColor = primaryColor; self.secondaryColor = secondaryColor
         self.notificationSenderType = notificationSenderType
         self.roles = roles
         self.isDeleteAllowed = isDeleteAllowed
+        self.limits = limits
         self.createdAt = createdAt
     }
 }
@@ -125,7 +145,7 @@ extension WorkspaceResponse: @unchecked Sendable {}
 
 extension WorkspaceResponse: Decodable {
     enum CodingKeys: String, CodingKey {
-        case resource, id, name, roles
+        case resource, id, name, roles, limits
         case primaryColor   = "primary_color"
         case secondaryColor = "secondary_color"
         case notificationSenderType = "notification_sender_type"
@@ -144,7 +164,8 @@ extension WorkspaceResponse: Decodable {
             notificationSenderType: try c.decodeIfPresent(String.self, forKey: .notificationSenderType),
             roles:           try c.decodeIfPresent([String].self, forKey: .roles) ?? [],
             isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
-            createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt)
+            createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt),
+            limits:          try c.decodeIfPresent(WorkspaceLimits.self, forKey: .limits)
         )
     }
 }
@@ -161,19 +182,22 @@ public final class WorkspaceListItem: NSObject {
     public let secondaryColor: String?
     public let notificationSenderType: String?
     public let isDeleteAllowed: Bool
+    /// Plan limits may be omitted from list responses.
+    public let limits: WorkspaceLimits?
     public let roles: [String]
     public let createdAt: String
 
     init(resource: String? = nil, id: String, name: String,
          primaryColor: String? = nil, secondaryColor: String? = nil,
          notificationSenderType: String? = nil, isDeleteAllowed: Bool,
-         roles: [String], createdAt: String) {
+         roles: [String], createdAt: String, limits: WorkspaceLimits? = nil) {
         self.resource = resource
         self.id = id; self.name = name
         self.primaryColor = primaryColor
         self.secondaryColor = secondaryColor
         self.notificationSenderType = notificationSenderType
         self.isDeleteAllowed = isDeleteAllowed; self.roles = roles
+        self.limits = limits
         self.createdAt = createdAt
     }
 }
@@ -182,7 +206,7 @@ extension WorkspaceListItem: @unchecked Sendable {}
 
 extension WorkspaceListItem: Decodable {
     enum CodingKeys: String, CodingKey {
-        case resource, id, name, roles
+        case resource, id, name, roles, limits
         case primaryColor = "primary_color"
         case secondaryColor = "secondary_color"
         case notificationSenderType = "notification_sender_type"
@@ -201,7 +225,8 @@ extension WorkspaceListItem: Decodable {
             notificationSenderType: try c.decodeIfPresent(String.self, forKey: .notificationSenderType),
             isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
             roles:           try c.decodeIfPresent([String].self, forKey: .roles) ?? [],
-            createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt)
+            createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt),
+            limits:          try c.decodeIfPresent(WorkspaceLimits.self, forKey: .limits)
         )
     }
 }

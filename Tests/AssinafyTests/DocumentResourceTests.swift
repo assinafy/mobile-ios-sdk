@@ -164,6 +164,36 @@ final class DocumentResourceTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/legacy-account/documents/search")
     }
 
+    func testSearchForwardsSortWithPagination() async throws {
+        mock.stubEnvelopeList([])
+        _ = try await resource.search(search: "contract", status: "certificated", sort: "name", page: 2, perPage: 10)
+        XCTAssertEqual(mock.lastRequest?.method, .get)
+        XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/documents/search")
+        let query = Dictionary(uniqueKeysWithValues: (mock.lastRequest?.queryItems ?? []).map { ($0.name, $0.value) })
+        XCTAssertEqual(query["sort"], "name")
+        XCTAssertEqual(query["search"], "contract")
+        XCTAssertEqual(query["status"], "certificated")
+        XCTAssertEqual(query["page"], "2")
+        XCTAssertEqual(query["per-page"], "10")
+    }
+
+    func testActivitiesRetainPaginationAndForwardSort() async throws {
+        mock.stubEnvelopeList([
+            ["id": 21, "event": "document_uploaded", "message": "Uploaded", "created_at": "2026-10-28T12:00:00Z"],
+        ], headers: MockHTTPClient.paginationHeaders(currentPage: 2, perPage: 20, total: 21, pageCount: 2))
+        let result = try await resource.activities(documentId: "doc1", params: ListParams(page: 2, perPage: 20, sort: "id"))
+        XCTAssertEqual(result.data.first?.id, 21)
+        XCTAssertEqual(result.meta?.currentPage, 2)
+        XCTAssertEqual(result.meta?.total, 21)
+        XCTAssertEqual(mock.lastRequest?.path, "/documents/doc1/activities")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [
+            URLQueryItem(name: "page", value: "2"), URLQueryItem(name: "per-page", value: "20"), URLQueryItem(name: "sort", value: "id"),
+        ])
+        mock.stubEnvelopeList([])
+        _ = try await resource.activities(documentId: "doc1")
+        XCTAssertNil(mock.lastRequest?.queryItems)
+    }
+
     // MARK: - Get
 
     func testGetUsesCorrectPath() async throws {
@@ -444,6 +474,8 @@ final class DocumentResourceTests: XCTestCase {
             "id": "doc1",
             "account_id": "account1",
             "template_id": "template1",
+            "verification_code": "certificate-code",
+            "verification_url": "https://example.invalid/verify/certificate-code",
             "name": "contract.pdf",
             "status": "declined",
             "artifacts": ["original": "https://api.assinafy.com.br/document/original"],
@@ -472,19 +504,29 @@ final class DocumentResourceTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: document)
 
         let listItem = try JSONDecoder.assinafy.decode(DocumentListItem.self, from: data)
+        XCTAssertEqual(listItem.verificationCode, "certificate-code")
+        XCTAssertEqual(listItem.verificationURL, "https://example.invalid/verify/certificate-code")
         XCTAssertEqual(listItem.resource, "document")
         XCTAssertEqual(listItem.declinedBy?.resource, "signer")
         XCTAssertEqual(listItem.assignment?.resource, "assignment")
         XCTAssertEqual(listItem.signingUrl, "https://api.assinafy.com.br/sign/document")
 
         let upload = try JSONDecoder.assinafy.decode(DocumentUploadResponse.self, from: data)
+        XCTAssertEqual(upload.verificationCode, "certificate-code")
+        XCTAssertEqual(upload.verificationURL, "https://example.invalid/verify/certificate-code")
         XCTAssertEqual(upload.resource, "document")
         XCTAssertEqual(upload.declinedBySigner?.whatsappPhoneNumber, "+5500000000000")
         XCTAssertEqual(upload.declinedBy?.fullName, "Test Signer")
         XCTAssertEqual(upload.assignment?.resource, "assignment")
         XCTAssertEqual(upload.signingUrl, "https://api.assinafy.com.br/sign/document")
 
+        let publicDocument = try JSONDecoder.assinafy.decode(PublicDocumentInfo.self, from: data)
+        XCTAssertEqual(publicDocument.verificationCode, "certificate-code")
+        XCTAssertEqual(publicDocument.verificationURL, "https://example.invalid/verify/certificate-code")
+
         let details = try JSONDecoder.assinafy.decode(DocumentDetails.self, from: data)
+        XCTAssertEqual(details.verificationCode, "certificate-code")
+        XCTAssertEqual(details.verificationURL, "https://example.invalid/verify/certificate-code")
         XCTAssertEqual(details.resource, "document")
         XCTAssertEqual(details.templateId, "template1")
         XCTAssertEqual(details.declinedBySigner?.resource, "signer")
@@ -764,6 +806,29 @@ final class DocumentResourceTests: XCTestCase {
         XCTAssertEqual(signers.first?["step"] as? Int, 1)
         XCTAssertEqual(editorFields.first?["field_id"] as? String, "field1")
         XCTAssertEqual(json["tags"] as? [String], ["Contracts"])
+    }
+
+    func testCreateFromTemplateSupportsSignerEmailAndOmitsIdentityFromEstimate() async throws {
+        let signer = TemplateSigner(roleId: "role1", email: "signer@example.invalid", name: "Signer",
+                                    whatsappPhoneNumber: "+5500000000000", verificationMethod: "Whatsapp", notificationMethods: ["Whatsapp"])
+        mock.stubEnvelope(uploadResponseDict())
+        _ = try await resource.createFromTemplate(templateId: "template1", signers: [signer])
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(mock.lastRequest?.body)) as? [String: Any])
+        let sent = try XCTUnwrap((body["signers"] as? [[String: Any]])?.first)
+        XCTAssertEqual(sent["email"] as? String, "signer@example.invalid")
+        XCTAssertEqual(sent["name"] as? String, "Signer")
+        XCTAssertEqual(sent["whatsapp_phone_number"] as? String, "+5500000000000")
+        XCTAssertNil(sent["id"])
+        mock.stubEnvelope(["total_credits": 0.45])
+        _ = try await resource.estimateCostFromTemplate(templateId: "template1", signers: [signer])
+        let estimate = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(mock.lastRequest?.body)) as? [String: Any])
+        let estimateSigner = try XCTUnwrap((estimate["signers"] as? [[String: Any]])?.first)
+        XCTAssertEqual(Set(estimateSigner.keys), ["role_id", "verification_method", "notification_methods"])
+        let count = mock.allRequests.count
+        await assertThrowsValidationError {
+            _ = try await self.resource.createFromTemplate(templateId: "template1", signers: [TemplateSigner(roleId: "role1", email: "invalid")])
+        }
+        XCTAssertEqual(mock.allRequests.count, count)
     }
 
     func testCreateFromTemplateRequiresRoleAndSignerIDsBeforeRequest() async {

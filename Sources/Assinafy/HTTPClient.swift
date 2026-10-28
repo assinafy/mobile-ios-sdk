@@ -354,6 +354,8 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
 
         if let items = request.queryItems, !items.isEmpty {
             components.queryItems = items
+            // Form query decoders treat an unescaped plus as a space.
+            components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         }
 
         guard let url = components.url else {

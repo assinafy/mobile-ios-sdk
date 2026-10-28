@@ -230,11 +230,15 @@ private enum NotificationPreferenceCodingKeys: String, CodingKey {
     case documentProcessingFailed = "DocumentProcessingFailed"
     case templateProcessingFailed = "TemplateProcessingFailed"
     case signerWhatsappFailed = "SignerWhatsappFailed"
+    case contractRenewalNotice = "ContractRenewalNotice"
+    case contractExpiring = "ContractExpiring"
+    case contractExpired = "ContractExpired"
+    case contractRenewed = "ContractRenewed"
 }
 
 /// The authenticated user's owner-notification preferences.
 ///
-/// All nine fields are returned by `GET /users/self/notification-preferences`.
+/// All thirteen fields are returned by `GET /users/self/notification-preferences`.
 @objcMembers
 public final class NotificationPreferences: NSObject, Decodable {
     public let documentCompleted: Bool
@@ -246,6 +250,14 @@ public final class NotificationPreferences: NSObject, Decodable {
     public let documentProcessingFailed: Bool
     public let templateProcessingFailed: Bool
     public let signerWhatsappFailed: Bool
+    /// Notify when a tracked contract enters its notice period.
+    public let contractRenewalNotice: Bool
+    /// Notify when a tracked contract ends in 45 or 30 days.
+    public let contractExpiring: Bool
+    /// Notify when a tracked contract ends without renewal.
+    public let contractExpired: Bool
+    /// Notify when a tracked contract automatically renews.
+    public let contractRenewed: Bool
 
     /// Creates a complete owner-notification preference value.
     /// - Parameters:
@@ -258,7 +270,7 @@ public final class NotificationPreferences: NSObject, Decodable {
     ///   - documentProcessingFailed: Notify when document processing fails.
     ///   - templateProcessingFailed: Notify when template processing fails.
     ///   - signerWhatsappFailed: Notify when signer WhatsApp delivery fails.
-    public init(
+    public convenience init(
         documentCompleted: Bool,
         signerDeclined: Bool,
         documentCancelled: Bool,
@@ -269,6 +281,32 @@ public final class NotificationPreferences: NSObject, Decodable {
         templateProcessingFailed: Bool,
         signerWhatsappFailed: Bool
     ) {
+        self.init(
+            documentCompleted: documentCompleted, signerDeclined: signerDeclined,
+            documentCancelled: documentCancelled, documentAboutToExpire: documentAboutToExpire,
+            documentExpired: documentExpired, documentExpirationReset: documentExpirationReset,
+            documentProcessingFailed: documentProcessingFailed, templateProcessingFailed: templateProcessingFailed,
+            signerWhatsappFailed: signerWhatsappFailed, contractRenewalNotice: true,
+            contractExpiring: true, contractExpired: true, contractRenewed: true
+        )
+    }
+
+    /// Creates document and contract notification preferences.
+    public init(
+        documentCompleted: Bool,
+        signerDeclined: Bool,
+        documentCancelled: Bool,
+        documentAboutToExpire: Bool,
+        documentExpired: Bool,
+        documentExpirationReset: Bool,
+        documentProcessingFailed: Bool,
+        templateProcessingFailed: Bool,
+        signerWhatsappFailed: Bool,
+        contractRenewalNotice: Bool,
+        contractExpiring: Bool,
+        contractExpired: Bool,
+        contractRenewed: Bool
+    ) {
         self.documentCompleted = documentCompleted
         self.signerDeclined = signerDeclined
         self.documentCancelled = documentCancelled
@@ -278,6 +316,10 @@ public final class NotificationPreferences: NSObject, Decodable {
         self.documentProcessingFailed = documentProcessingFailed
         self.templateProcessingFailed = templateProcessingFailed
         self.signerWhatsappFailed = signerWhatsappFailed
+        self.contractRenewalNotice = contractRenewalNotice
+        self.contractExpiring = contractExpiring
+        self.contractExpired = contractExpired
+        self.contractRenewed = contractRenewed
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -291,7 +333,11 @@ public final class NotificationPreferences: NSObject, Decodable {
             documentExpirationReset: try c.decode(Bool.self, forKey: .documentExpirationReset),
             documentProcessingFailed: try c.decode(Bool.self, forKey: .documentProcessingFailed),
             templateProcessingFailed: try c.decode(Bool.self, forKey: .templateProcessingFailed),
-            signerWhatsappFailed: try c.decode(Bool.self, forKey: .signerWhatsappFailed)
+            signerWhatsappFailed: try c.decode(Bool.self, forKey: .signerWhatsappFailed),
+            contractRenewalNotice: try c.decodeIfPresent(Bool.self, forKey: .contractRenewalNotice) ?? true,
+            contractExpiring: try c.decodeIfPresent(Bool.self, forKey: .contractExpiring) ?? true,
+            contractExpired: try c.decodeIfPresent(Bool.self, forKey: .contractExpired) ?? true,
+            contractRenewed: try c.decodeIfPresent(Bool.self, forKey: .contractRenewed) ?? true
         )
     }
 }
@@ -312,9 +358,13 @@ public final class UpdateNotificationPreferencesPayload: NSObject, Encodable {
     public let documentProcessingFailed: NSNumber?
     public let templateProcessingFailed: NSNumber?
     public let signerWhatsappFailed: NSNumber?
+    public let contractRenewalNotice: NSNumber?
+    public let contractExpiring: NSNumber?
+    public let contractExpired: NSNumber?
+    public let contractRenewed: NSNumber?
 
     /// Creates a partial notification-preference update; `nil` values are omitted.
-    public init(
+    public convenience init(
         documentCompleted: NSNumber? = nil,
         signerDeclined: NSNumber? = nil,
         documentCancelled: NSNumber? = nil,
@@ -325,6 +375,32 @@ public final class UpdateNotificationPreferencesPayload: NSObject, Encodable {
         templateProcessingFailed: NSNumber? = nil,
         signerWhatsappFailed: NSNumber? = nil
     ) {
+        self.init(
+            documentCompleted: documentCompleted, signerDeclined: signerDeclined,
+            documentCancelled: documentCancelled, documentAboutToExpire: documentAboutToExpire,
+            documentExpired: documentExpired, documentExpirationReset: documentExpirationReset,
+            documentProcessingFailed: documentProcessingFailed, templateProcessingFailed: templateProcessingFailed,
+            signerWhatsappFailed: signerWhatsappFailed, contractRenewalNotice: nil,
+            contractExpiring: nil, contractExpired: nil, contractRenewed: nil
+        )
+    }
+
+    /// Creates a partial document and contract notification update; `nil` values are omitted.
+    public init(
+        documentCompleted: NSNumber? = nil,
+        signerDeclined: NSNumber? = nil,
+        documentCancelled: NSNumber? = nil,
+        documentAboutToExpire: NSNumber? = nil,
+        documentExpired: NSNumber? = nil,
+        documentExpirationReset: NSNumber? = nil,
+        documentProcessingFailed: NSNumber? = nil,
+        templateProcessingFailed: NSNumber? = nil,
+        signerWhatsappFailed: NSNumber? = nil,
+        contractRenewalNotice: NSNumber? = nil,
+        contractExpiring: NSNumber? = nil,
+        contractExpired: NSNumber? = nil,
+        contractRenewed: NSNumber? = nil
+    ) {
         self.documentCompleted = documentCompleted
         self.signerDeclined = signerDeclined
         self.documentCancelled = documentCancelled
@@ -334,6 +410,10 @@ public final class UpdateNotificationPreferencesPayload: NSObject, Encodable {
         self.documentProcessingFailed = documentProcessingFailed
         self.templateProcessingFailed = templateProcessingFailed
         self.signerWhatsappFailed = signerWhatsappFailed
+        self.contractRenewalNotice = contractRenewalNotice
+        self.contractExpiring = contractExpiring
+        self.contractExpired = contractExpired
+        self.contractRenewed = contractRenewed
     }
 
     var isEmpty: Bool {
@@ -341,6 +421,8 @@ public final class UpdateNotificationPreferencesPayload: NSObject, Encodable {
             && documentAboutToExpire == nil && documentExpired == nil
             && documentExpirationReset == nil && documentProcessingFailed == nil
             && templateProcessingFailed == nil && signerWhatsappFailed == nil
+            && contractRenewalNotice == nil && contractExpiring == nil
+            && contractExpired == nil && contractRenewed == nil
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -354,6 +436,10 @@ public final class UpdateNotificationPreferencesPayload: NSObject, Encodable {
         if let value = documentProcessingFailed { try c.encode(value.boolValue, forKey: .documentProcessingFailed) }
         if let value = templateProcessingFailed { try c.encode(value.boolValue, forKey: .templateProcessingFailed) }
         if let value = signerWhatsappFailed { try c.encode(value.boolValue, forKey: .signerWhatsappFailed) }
+        if let value = contractRenewalNotice { try c.encode(value.boolValue, forKey: .contractRenewalNotice) }
+        if let value = contractExpiring { try c.encode(value.boolValue, forKey: .contractExpiring) }
+        if let value = contractExpired { try c.encode(value.boolValue, forKey: .contractExpired) }
+        if let value = contractRenewed { try c.encode(value.boolValue, forKey: .contractRenewed) }
     }
 }
 

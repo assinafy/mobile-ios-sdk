@@ -184,12 +184,14 @@ extension AssinafyClientConfiguration: @unchecked Sendable {}
 public final class AssinafyClient: NSObject {
 
     /// The SDK version string included in the `User-Agent` header.
-    public static let sdkVersion = "1.11.1"
+    public static let sdkVersion = "1.12.0"
 
     // MARK: Resources
 
     /// Manages document uploads, details, and artifact downloads.
     public let documents: DocumentResource
+    /// Tracks contract terms, amendments, renewals, and terminations on documents.
+    public let contracts: ContractResource
     /// Manages signer creation, lookup, and updates.
     public let signers: SignerResource
     /// Manages signing assignments linking documents to signers.
@@ -261,6 +263,7 @@ public final class AssinafyClient: NSObject {
             logger: logger,
             usesSandboxCompatibility: sandboxCompatibility
         )
+        contracts   = ContractResource(http: http, defaultAccountId: accountId, logger: logger)
         signers     = SignerResource(http: http, defaultAccountId: accountId, logger: logger)
         assignments = AssignmentResource(
             http: http,
@@ -330,6 +333,7 @@ public final class AssinafyClient: NSObject {
         self.http = http
         self.config = AssinafyClientConfiguration(apiKey: "test", defaultAccountId: defaultAccountId)
         documents   = DocumentResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
+        contracts   = ContractResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         signers     = SignerResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         assignments = AssignmentResource(http: http, defaultAccountId: defaultAccountId, logger: logger)
         webhooks    = WebhookResource(http: http, defaultAccountId: defaultAccountId, logger: logger)

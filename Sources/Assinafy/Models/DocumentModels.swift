@@ -183,6 +183,12 @@ public final class DocumentListItem: NSObject {
     /// Resource discriminator returned by the API when present.
     public let resource: String?
     public let id: String
+    /// Public certificate verification code, when available.
+    public let verificationCode: String?
+    /// Public page for checking this document’s certificate.
+    public let verificationURL: String?
+    /// Whether this document has tracked terms; nil means the API did not resolve the flag.
+    public let hasContract: NSNumber?
     public let name: String
     public let status: DocumentStatus
     public let statusString: String
@@ -207,7 +213,10 @@ public final class DocumentListItem: NSObject {
          pages: [DocumentPage] = [], tags: [Tag] = [],
          createdAt: String, updatedAt: String? = nil, isClosed: Bool = false,
          declineReason: String? = nil, declinedBy: Signer? = nil,
-         signingUrl: String? = nil) {
+         signingUrl: String? = nil, verificationCode: String? = nil, verificationURL: String? = nil, hasContract: NSNumber? = nil) {
+        self.verificationCode = verificationCode
+        self.verificationURL = verificationURL
+        self.hasContract = hasContract
         self.resource = resource
         self.id = id
         self.name = name
@@ -232,6 +241,9 @@ extension DocumentListItem: @unchecked Sendable {}
 
 extension DocumentListItem: Decodable {
     enum CodingKeys: String, CodingKey {
+        case verificationCode = "verification_code"
+        case verificationURL = "verification_url"
+        case hasContract = "has_contract"
         case resource, id, name, status, assignment, artifacts, pages, tags
         case accountId = "account_id"
         case templateId = "template_id"
@@ -263,7 +275,10 @@ extension DocumentListItem: Decodable {
             isClosed:      try c.decodeIfPresent(Bool.self,   forKey: .isClosed) ?? false,
             declineReason: try c.decodeIfPresent(String.self, forKey: .declineReason),
             declinedBy:    try c.decodeIfPresent(Signer.self, forKey: .declinedBy),
-            signingUrl:    try c.decodeIfPresent(String.self, forKey: .signingUrl)
+            signingUrl:    try c.decodeIfPresent(String.self, forKey: .signingUrl),
+            verificationCode: try c.decodeIfPresent(String.self, forKey: .verificationCode),
+            verificationURL: try c.decodeIfPresent(String.self, forKey: .verificationURL),
+            hasContract: try c.decodeIfPresent(Bool.self, forKey: .hasContract).map { NSNumber(value: $0) }
         )
     }
 }
@@ -306,6 +321,12 @@ public final class DocumentUploadResponse: NSObject {
     /// Resource discriminator returned by the API.
     public let resource: String?
     public let id: String
+    /// Public certificate verification code, when available.
+    public let verificationCode: String?
+    /// Public page for checking this document’s certificate.
+    public let verificationURL: String?
+    /// Whether this document has tracked terms; nil means the API did not resolve the flag.
+    public let hasContract: NSNumber?
     public let accountId: String?
     public let templateId: String?
     public let name: String
@@ -331,7 +352,11 @@ public final class DocumentUploadResponse: NSObject {
          createdAt: String, updatedAt: String, isClosed: Bool = false,
          signingUrl: String? = nil, declineReason: String? = nil,
          declinedBySigner: Signer? = nil, declinedBy: DeclinedBySigner? = nil,
-         tags: [Tag] = [], assignment: Assignment? = nil) {
+         tags: [Tag] = [], assignment: Assignment? = nil,
+         verificationCode: String? = nil, verificationURL: String? = nil, hasContract: NSNumber? = nil) {
+        self.verificationCode = verificationCode
+        self.verificationURL = verificationURL
+        self.hasContract = hasContract
         self.resource = resource
         self.id = id; self.accountId = accountId; self.templateId = templateId
         self.name = name; self.status = status; self.statusString = statusString
@@ -350,6 +375,9 @@ extension DocumentUploadResponse: @unchecked Sendable {}
 
 extension DocumentUploadResponse: Decodable {
     enum CodingKeys: String, CodingKey {
+        case verificationCode = "verification_code"
+        case verificationURL = "verification_url"
+        case hasContract = "has_contract"
         case resource, id, name, status, artifacts, pages, tags, assignment
         case accountId    = "account_id"
         case templateId   = "template_id"
@@ -385,7 +413,10 @@ extension DocumentUploadResponse: Decodable {
                 DeclinedBySigner(id: $0.id, fullName: $0.fullName, email: $0.email)
             },
             tags:          try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
-            assignment:    try c.decodeIfPresent(Assignment.self, forKey: .assignment)
+            assignment:    try c.decodeIfPresent(Assignment.self, forKey: .assignment),
+            verificationCode: try c.decodeIfPresent(String.self, forKey: .verificationCode),
+            verificationURL: try c.decodeIfPresent(String.self, forKey: .verificationURL),
+            hasContract: try c.decodeIfPresent(Bool.self, forKey: .hasContract).map { NSNumber(value: $0) }
         )
     }
 }
@@ -450,12 +481,20 @@ public final class DocumentDetails: NSObject {
     /// Resource discriminator returned by the API.
     public let resource: String?
     public let id: String
+    /// Public certificate verification code, when available.
+    public let verificationCode: String?
+    /// Public page for checking this document’s certificate.
+    public let verificationURL: String?
+    /// Whether this document has tracked terms; nil means the API did not resolve the flag.
+    public let hasContract: NSNumber?
     public let accountId: String?
     public let templateId: String?
     public let name: String
     public let status: DocumentStatus
     public let statusString: String
     public let assignment: Assignment?
+    /// This signer’s request state, returned by signer-facing document endpoints.
+    public let currentSigner: Signer?
     public let downloadUrl: String?
     public let downloadFinalUrl: String?
     public let signingUrl: String?
@@ -480,7 +519,12 @@ public final class DocumentDetails: NSObject {
          createdAt: String, updatedAt: String, isClosed: Bool = false,
          declineReason: String? = nil, declinedBySigner: Signer? = nil,
          declinedBy: DeclinedBySigner? = nil,
-         activities: [DocumentActivity]? = nil) {
+         activities: [DocumentActivity]? = nil, currentSigner: Signer? = nil,
+         verificationCode: String? = nil, verificationURL: String? = nil, hasContract: NSNumber? = nil) {
+        self.verificationCode = verificationCode
+        self.verificationURL = verificationURL
+        self.hasContract = hasContract
+        self.currentSigner = currentSigner
         self.resource = resource
         self.id = id; self.accountId = accountId; self.templateId = templateId; self.name = name
         self.status = status; self.statusString = statusString
@@ -499,7 +543,11 @@ extension DocumentDetails: @unchecked Sendable {}
 
 extension DocumentDetails: Decodable {
     enum CodingKeys: String, CodingKey {
+        case verificationCode = "verification_code"
+        case verificationURL = "verification_url"
+        case hasContract = "has_contract"
         case resource, id, name, status, assignment, artifacts, pages, activities
+        case currentSigner = "current_signer"
         case accountId       = "account_id"
         case templateId      = "template_id"
         case downloadUrl     = "download_url"
@@ -540,7 +588,11 @@ extension DocumentDetails: Decodable {
             declinedBy: declinedBySigner.map {
                 DeclinedBySigner(id: $0.id, fullName: $0.fullName, email: $0.email)
             },
-            activities:       try c.decodeIfPresent([DocumentActivity].self, forKey: .activities)
+            activities:       try c.decodeIfPresent([DocumentActivity].self, forKey: .activities),
+            currentSigner:    try c.decodeIfPresent(Signer.self, forKey: .currentSigner),
+            verificationCode: try c.decodeIfPresent(String.self, forKey: .verificationCode),
+            verificationURL: try c.decodeIfPresent(String.self, forKey: .verificationURL),
+            hasContract: try c.decodeIfPresent(Bool.self, forKey: .hasContract).map { NSNumber(value: $0) }
         )
     }
 }
@@ -836,6 +888,12 @@ public final class PublicDocumentInfo: NSObject {
     /// Resource discriminator returned for single-resource responses.
     public let resource: String?
     public let id: String
+    /// Public certificate verification code, when available.
+    public let verificationCode: String?
+    /// Public page for checking this document’s certificate.
+    public let verificationURL: String?
+    /// Whether this document has tracked terms; nil means the API did not resolve the flag.
+    public let hasContract: NSNumber?
     public let accountId: String?
     public let templateId: String?
     public let name: String
@@ -876,8 +934,12 @@ public final class PublicDocumentInfo: NSObject {
         createdAt: String? = nil,
         updatedAt: String? = nil,
         pageCount: Int? = nil,
-        createdBy: String? = nil
+        createdBy: String? = nil,
+        verificationCode: String? = nil, verificationURL: String? = nil, hasContract: NSNumber? = nil
     ) {
+        self.verificationCode = verificationCode
+        self.verificationURL = verificationURL
+        self.hasContract = hasContract
         self.resource = resource
         self.id = id
         self.accountId = accountId
@@ -904,6 +966,9 @@ extension PublicDocumentInfo: @unchecked Sendable {}
 
 extension PublicDocumentInfo: Decodable {
     enum CodingKeys: String, CodingKey {
+        case verificationCode = "verification_code"
+        case verificationURL = "verification_url"
+        case hasContract = "has_contract"
         case resource, id, name, status, artifacts, tags, assignment, pages
         case accountId = "account_id"
         case templateId = "template_id"
@@ -942,7 +1007,10 @@ extension PublicDocumentInfo: Decodable {
             createdAt: try decodeFlexibleOptionalString(from: c, forKey: .createdAt),
             updatedAt: try decodeFlexibleOptionalString(from: c, forKey: .updatedAt),
             pageCount: count,
-            createdBy: try c.decodeIfPresent(String.self, forKey: .createdBy)
+            createdBy: try c.decodeIfPresent(String.self, forKey: .createdBy),
+            verificationCode: try c.decodeIfPresent(String.self, forKey: .verificationCode),
+            verificationURL: try c.decodeIfPresent(String.self, forKey: .verificationURL),
+            hasContract: try c.decodeIfPresent(Bool.self, forKey: .hasContract).map { NSNumber(value: $0) }
         )
     }
 }

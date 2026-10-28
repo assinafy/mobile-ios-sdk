@@ -250,6 +250,19 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         imageData: Data,
         reuse: Bool = false
     ) async throws {
+        try await uploadSignature(signerAccessCode: signerAccessCode, type: type,
+                                  imageData: imageData, reusePreference: reuse ? true : nil)
+    }
+
+    /// Mirrors `POST /signature`, explicitly setting or preserving the reuse preference.
+    /// Pass false to stop reusing the saved image, true to opt in, or nil to leave it unchanged.
+    @nonobjc
+    public func uploadSignature(
+        signerAccessCode: String,
+        type: SignatureType,
+        imageData: Data,
+        reusePreference: Bool?
+    ) async throws {
         let code = try requireId(signerAccessCode, name: "Signer access code")
         guard imageData.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else {
             throw ValidationError("Signature image must be PNG data")
@@ -258,7 +271,7 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
             URLQueryItem(name: "signer-access-code", value: code),
             URLQueryItem(name: "type", value: type.stringValue)
         ]
-        if reuse { items.append(.init(name: "reuse", value: "true")) }
+        if let reusePreference { items.append(.init(name: "reuse", value: reusePreference ? "true" : "false")) }
         let request = APIRequest(
             method: .post,
             path: "/signature",
@@ -664,6 +677,17 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         completion: @escaping (Error?) -> Void
     ) {
         withVoidCompletion({ try await self.uploadSignature(signerAccessCode: signerAccessCode, type: type, imageData: imageData, reuse: reuse) }, completion: completion)
+    }
+
+    /// Uploads with an explicit reuse preference and completes on the main queue.
+    /// A nil preference preserves the server's existing setting.
+    @objc(uploadSignatureWithSignerAccessCode:type:imageData:reusePreference:completion:)
+    public func uploadSignature(
+        signerAccessCode: String, type: SignatureType, imageData: Data, reusePreference: NSNumber?,
+        completion: @escaping (Error?) -> Void
+    ) {
+        withVoidCompletion({ try await self.uploadSignature(signerAccessCode: signerAccessCode, type: type,
+                                                            imageData: imageData, reusePreference: reusePreference?.boolValue) }, completion: completion)
     }
 
     /// Completion form of `downloadSignature`; delivers the result on the main queue.

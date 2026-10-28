@@ -33,8 +33,58 @@ final class CompletionAdapterTests: XCTestCase {
         }
         await fulfillment(of: [completed], timeout: 2)
         XCTAssertEqual(mock.lastRequest?.queryItems, [
-            URLQueryItem(name: "page", value: "2"), URLQueryItem(name: "per-page", value: "10")
+            URLQueryItem(name: "page", value: "2"), URLQueryItem(name: "per-page", value: "10"),
+            URLQueryItem(name: "accountId", value: "account_1")
         ])
+    }
+
+    func testActivityQueryCompletionPreservesPageAndRunsOnMainQueue() async {
+        let mock = MockHTTPClient()
+        mock.stubEnvelopeList([])
+        let done = expectation(description: "activity page")
+        DocumentResource(http: mock).activities(documentId: "doc1", query: ["page": "2", "per-page": "20", "sort": "id"]) { items, error in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(items?.count, 0)
+            XCTAssertNil(error)
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 2)
+        XCTAssertEqual(mock.lastRequest?.queryItems, [
+            URLQueryItem(name: "page", value: "2"), URLQueryItem(name: "per-page", value: "20"), URLQueryItem(name: "sort", value: "id"),
+        ])
+    }
+
+    func testSortedSearchCompletionUsesMainQueueAndForwardsArguments() async {
+        let mock = MockHTTPClient()
+        mock.stubEnvelopeList([])
+        let done = expectation(description: "sorted search")
+        DocumentResource(http: mock, defaultAccountId: "account").search(
+            search: "contract", status: "certificated", sort: "name", page: 2, perPage: 10, accountId: nil
+        ) { items, error in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(items?.count, 0)
+            XCTAssertNil(error)
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 2)
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first { $0.name == "sort" }?.value, "name")
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first { $0.name == "page" }?.value, "2")
+    }
+
+    func testSignatureReuseOptOutCompletionUsesMainQueue() async {
+        let mock = MockHTTPClient()
+        mock.stubJSON(["status": 200])
+        let done = expectation(description: "signature opt-out")
+        SignerResource(http: mock).uploadSignature(
+            signerAccessCode: "code", type: .signature,
+            imageData: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), reusePreference: NSNumber(value: false)
+        ) { error in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertNil(error)
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 2)
+        XCTAssertEqual(mock.lastRequest?.queryItems?.first { $0.name == "reuse" }?.value, "false")
     }
 
     func testJSONCompletionValidatesBeforeSendingAndUsesMainQueue() async {

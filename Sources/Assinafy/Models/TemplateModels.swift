@@ -290,6 +290,12 @@ extension TemplateDetails: Decodable {
 public final class TemplateSigner: NSObject, Encodable {
     public let roleId: String
     public let id: String?
+    /// Reuses or creates a signer by email when no ID is supplied.
+    public let email: String?
+    /// Full name for a signer created from email.
+    public let name: String?
+    /// WhatsApp number for a signer created from email.
+    public let whatsappPhoneNumber: String?
     public let verificationMethod: String?
     public let notificationMethods: [String]?
     public let step: NSNumber?
@@ -308,7 +314,27 @@ public final class TemplateSigner: NSObject, Encodable {
         notificationMethods: [String]? = nil,
         step: NSNumber? = nil
     ) {
+        self.email = nil; self.name = nil; self.whatsappPhoneNumber = nil
         self.roleId = roleId; self.id = id
+        self.verificationMethod = verificationMethod
+        self.notificationMethods = notificationMethods
+        self.step = step
+    }
+
+    /// Maps a template role to an existing or new signer by email.
+    /// The server reuses a matching signer; name and phone apply only to a newly created signer.
+    @objc(initWithRoleId:email:name:whatsappPhoneNumber:verificationMethod:notificationMethods:step:)
+    public init(
+        roleId: String,
+        email: String,
+        name: String? = nil,
+        whatsappPhoneNumber: String? = nil,
+        verificationMethod: String? = nil,
+        notificationMethods: [String]? = nil,
+        step: NSNumber? = nil
+    ) {
+        self.roleId = roleId; self.id = nil
+        self.email = email; self.name = name; self.whatsappPhoneNumber = whatsappPhoneNumber
         self.verificationMethod = verificationMethod
         self.notificationMethods = notificationMethods
         self.step = step
@@ -347,7 +373,8 @@ public final class TemplateSigner: NSObject, Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id
+        case id, email, name
+        case whatsappPhoneNumber = "whatsapp_phone_number"
         case roleId              = "role_id"
         case verificationMethod  = "verification_method"
         case notificationMethods = "notification_methods"
@@ -358,6 +385,9 @@ public final class TemplateSigner: NSObject, Encodable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(roleId, forKey: .roleId)
         try c.encodeIfPresent(id, forKey: .id)
+        try c.encodeIfPresent(email, forKey: .email)
+        try c.encodeIfPresent(name, forKey: .name)
+        try c.encodeIfPresent(whatsappPhoneNumber, forKey: .whatsappPhoneNumber)
         try c.encodeIfPresent(verificationMethod, forKey: .verificationMethod)
         try c.encodeIfPresent(notificationMethods, forKey: .notificationMethods)
         if let step { try c.encode(step.intValue, forKey: .step) }
@@ -370,13 +400,17 @@ extension TemplateSigner {
     /// Validates the fields required when actually creating a document.
     func validateForDocumentCreation() throws {
         try validateRoleId()
-        guard let id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ValidationError("Signer ID is required for template document creation")
+        if let id {
+            guard !id.isBlank else { throw ValidationError("Signer ID cannot be empty") }
+        } else if let email {
+            try validateEmail(email)
+        } else {
+            throw ValidationError("Signer ID or email is required for template document creation")
         }
     }
 
     /// Builds the narrower signer object accepted by the cost-estimate endpoint.
-    /// Signer IDs and signing steps are intentionally omitted from this payload.
+    /// Signer identity and signing steps are omitted from this payload.
     func costEstimatePayload() throws -> TemplateSignerCostEstimatePayload {
         try validateRoleId()
         return TemplateSignerCostEstimatePayload(

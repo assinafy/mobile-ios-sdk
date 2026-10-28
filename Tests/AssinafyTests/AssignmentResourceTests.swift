@@ -207,7 +207,7 @@ final class AssignmentResourceTests: XCTestCase {
         ["resource": "assignment", "id": id, "method": "virtual", "signers": []]
     }
 
-    func testListUsesOnlyDocumentedPaginationWithoutRequiringAccount() async throws {
+    func testListUsesDefaultAccountAndPagination() async throws {
         mock.stubEnvelopeList([])
         _ = try await resource.list(params: ListParams(page: 2, perPage: 25))
         XCTAssertEqual(mock.lastRequest?.path, "/assignments")
@@ -216,7 +216,7 @@ final class AssignmentResourceTests: XCTestCase {
         }
         XCTAssertEqual(query["page"], "2")
         XCTAssertEqual(query["per-page"], "25")
-        XCTAssertNil(query["accountId"])
+        XCTAssertEqual(query["accountId"], "test-account")
         XCTAssertNil(query["account_id"])
     }
 
@@ -418,6 +418,33 @@ final class AssignmentResourceTests: XCTestCase {
         XCTAssertEqual(estimate.estimatedCost, 0.45)
     }
 
+    func testResendEstimateDecodesCreditsSufficiencyAndTotal() async throws {
+        for sufficient in [true, false] {
+            mock.stubEnvelope([
+                "total": 0.45, "credit_balance": NSNull(), "has_sufficient_credits": sufficient,
+                "breakdown": [["code": "NotificationWhatsappResend", "name": "WhatsApp reminder", "cost": 0.45]],
+            ])
+            let estimate = try await resource.estimateResendCost(documentId: "doc1", assignmentId: "a1", signerId: "s1")
+            XCTAssertEqual(estimate.estimatedCost, 0.45)
+            XCTAssertEqual(estimate.totalCredits, 0.45)
+            XCTAssertEqual(estimate.hasSufficientBalance, sufficient)
+            XCTAssertEqual(estimate.hasSufficientResources, sufficient)
+            XCTAssertEqual(estimate.documents, 0)
+            XCTAssertEqual(estimate.breakdown.first?.cost, 0.45)
+            XCTAssertTrue(estimate.raw["credit_balance"] is NSNull)
+        }
+    }
+
+    func testAssignmentPreservesDocumentAndCreationTime() async throws {
+        mock.stubEnvelopeList([["id": "a1", "document_id": "doc1", "created_at": "2026-10-28T12:00:00Z"]])
+        let assignment = try await resource.list().data.first
+        XCTAssertEqual(assignment?.documentId, "doc1")
+        XCTAssertEqual(assignment?.createdAt, "2026-10-28T12:00:00Z")
+        let deleted = try JSONDecoder.assinafy.decode(Assignment.self, from: Data(#"{"id":"a1","document_id":null}"#.utf8))
+        XCTAssertNil(deleted.documentId)
+        XCTAssertNil(deleted.createdAt)
+    }
+
     func testAssignmentDecodesCopyReceiversAsSignerObjects() async throws {
         mock.stubEnvelope([
             "id": "a1",
@@ -602,6 +629,18 @@ final class AssignmentResourceTests: XCTestCase {
         XCTAssertEqual(result.first?.buttonTexts, ["Abrir documento"])
         XCTAssertEqual(mock.lastRequest?.path,
                        "/documents/doc1/assignments/a1/whatsapp-notifications")
+    }
+
+    func testWhatsappNotificationsDecodeISO8601AndLegacyTimestamps() async throws {
+        mock.stubEnvelopeList([
+            ["sent_at": "2024-03-09T16:00:00Z"],
+            ["sent_at": "2024-03-09T16:00:00.500Z"],
+            ["sent_at": 1710000000],
+            ["sent_at": NSNull()],
+        ])
+        let messages = try await resource.listWhatsappNotifications(documentId: "doc1", assignmentId: "a1")
+        XCTAssertEqual(messages.map(\.sentAt), [1710000000, 1710000000, 1710000000, 0])
+        XCTAssertEqual(messages.map(\.sentAtString), ["2024-03-09T16:00:00Z", "2024-03-09T16:00:00.500Z", "1710000000", nil])
     }
 
     func testCreateAssignmentSendsCopyReceiverIDsAsStrings() async throws {

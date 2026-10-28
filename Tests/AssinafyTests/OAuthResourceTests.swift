@@ -118,6 +118,22 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertFalse(url.absoluteString.contains(request.pkce.codeVerifier))
     }
 
+    func testAuthorizationURLPreservesLiteralPlusInFormValues() throws {
+        let request = OAuthAuthorizationRequest(
+            clientId: "client+123",
+            redirectURI: "https://app.example.invalid/callback?tenant=a+b%2Bc",
+            scopes: [.documentsRead],
+            state: "state+a b"
+        )
+        let url = try XCTUnwrap(oauth.authorizationURL(for: request))
+        let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedQuery)
+
+        XCTAssertTrue(query.contains("client_id=client%2B123"))
+        XCTAssertTrue(query.contains("redirect_uri=https://app.example.invalid/callback?tenant%3Da%2Bb%252Bc"))
+        XCTAssertTrue(query.contains("state=state%2Ba%20b"))
+        XCTAssertFalse(query.contains("+"))
+    }
+
     func testAuthorizationURLRejectsBlankAndNonHTTPSInput() {
         XCTAssertNil(makeRequest().authorizationURL(endpoint: "http://auth.assinafy.com.br/oauth/authorize"))
         XCTAssertNil(makeRequest().authorizationURL(endpoint: "not a url"))
@@ -136,6 +152,23 @@ final class OAuthResourceTests: XCTestCase {
         let code = try callback.validate(against: request, issuer: "https://auth.assinafy.com.br")
         XCTAssertEqual(code, "abc123")
         XCTAssertEqual(try callback.validate(against: request), "abc123", "nil checks the production issuer")
+    }
+
+    func testCallbackDecodesFormSpacesAndLiteralPlusSeparately() throws {
+        let request = OAuthAuthorizationRequest(
+            clientId: "client", redirectURI: "https://app.example.invalid/callback",
+            scopes: [.documentsRead], state: "state+a b"
+        )
+        let base = "https://app.example.invalid/callback?state=state%2Ba+b&iss=https://auth.assinafy.com.br"
+        let approved = try XCTUnwrap(OAuthCallback(callbackURL: URL(string: base + "&code=code%2Bvalue")!))
+        XCTAssertEqual(try approved.validate(against: request), "code+value")
+
+        let declined = try XCTUnwrap(OAuthCallback(callbackURL: URL(
+            string: base + "&error=access_denied&error_description=User+declined%2Bdetails"
+        )!))
+        XCTAssertThrowsError(try declined.validate(against: request)) { error in
+            XCTAssertEqual((error as? APIError)?.oauthError?.description, "User declined+details")
+        }
     }
 
     func testCallbackRejectsMismatchedState() throws {

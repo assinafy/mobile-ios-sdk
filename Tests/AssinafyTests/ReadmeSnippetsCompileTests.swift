@@ -13,6 +13,33 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
     }
 
     @available(*, unavailable)
+    private func contractFlow(client: AssinafyClient, pdfData: Data) async throws {
+        let uploaded = try await client.documents.upload(pdfData)
+        let saved = try await client.contracts.update(
+            documentId: uploaded.id,
+            payload: UpdateContractPayload(
+                status: "active", value: NSDecimalNumber(string: "1200.50"), currency: "BRL",
+                startDate: "2026-11-01", endDate: "2027-10-31", autoRenew: NSNumber(value: false)
+            )
+        )
+        let filters = ContractListParams()
+        filters.status = "active,expired"
+        filters.endingWithinDays = 45
+        filters.expand = "document"
+        _ = try await client.contracts.list(params: filters)
+        if let contract = saved.contract {
+            let renewed = try await client.contracts.renew(
+                documentId: uploaded.id,
+                payload: RenewContractPayload(term: contract.term, updatedAt: contract.updatedAt)
+            )
+            _ = try await client.contracts.terminate(
+                documentId: uploaded.id,
+                payload: TerminateContractPayload(reason: "Contract closed", updatedAt: renewed.updatedAt)
+            )
+        }
+    }
+
+    @available(*, unavailable)
     private func biometricFlow(
         client: AssinafyClient, accessCode: String, documentId: String,
         assignmentId: String, signerId: String, consentFromSigner: Bool,

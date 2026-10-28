@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.12.0] - 2026-10-28
+
+### Added
+
+- Contract tracking with terms, amendments, filtered lists, renewals, termination, and concurrent-update protection.
+- Contract notification preferences, lifecycle webhook events, and document contract indicators.
+- Webhook delivery pause state, retry metadata, and workspace endpoint limits.
+- Paginated document activities, document search sorting, and template signer creation by email.
+- Document verification links, current-signer details, and assignment document identifiers and timestamps.
+- Explicit signature-image reuse opt-out with Swift and Objective-C completion forms.
+
+### Fixed
+
+- Assignment lists include the configured workspace on production and sandbox.
+- WhatsApp notification history accepts ISO-8601 timestamps while retaining integer timestamp access.
+- Resend estimates expose total cost and the sufficient-credit result.
+- Query and OAuth callback encoding preserves literal plus signs.
+
 ## [1.11.1] - 2026-10-19
 
 ### Fixed

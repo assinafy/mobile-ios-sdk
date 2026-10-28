@@ -40,6 +40,7 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
 
     /// Fetches the authenticated user's profile.
     ///
+    /// OAuth applications use ``OAuthResource/userInfo()`` instead.
     /// Mirrors `GET /users/self`.
     public func currentUser() async throws -> SelfResponse {
         return try await call("Failed to fetch current user", request: .get("/users/self"))
@@ -48,7 +49,7 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
     /// Fetches the user documented for `GET /users/self`.
     ///
     /// Both direct `data: User` and compatibility `{ user, accounts }` payloads
-    /// are accepted.
+    /// are accepted. OAuth applications use ``OAuthResource/userInfo()`` instead.
     public func currentUserProfile() async throws -> User {
         let response: SelfResponse = try await call(
             "Failed to fetch current user",
@@ -59,6 +60,7 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
 
     /// Fetches all owner-notification preferences for the authenticated user.
     ///
+    /// These personal settings are not available to third-party OAuth applications.
     /// Mirrors `GET /users/self/notification-preferences`.
     public func getNotificationPreferences() async throws -> NotificationPreferences {
         try await call(
@@ -71,6 +73,7 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
     ///
     /// Mirrors `PUT /users/self/notification-preferences`. At least one field
     /// must be supplied; omitted fields retain their current server value.
+    /// These personal settings are not available to third-party OAuth applications.
     public func updateNotificationPreferences(
         _ payload: UpdateNotificationPreferencesPayload
     ) async throws -> NotificationPreferences {
@@ -86,6 +89,7 @@ public final class AuthResource: BaseResource, @unchecked Sendable {
     /// Fetches the authenticated user's document-funnel KPIs, summed across all
     /// accounts they belong to.
     ///
+    /// OAuth applications use ``WorkspaceResource/stats(params:accountId:)`` instead.
     /// - Note: The sandbox host currently returns `404` for this endpoint.
     ///
     /// Mirrors `GET /users/self/stats`.

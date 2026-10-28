@@ -214,6 +214,10 @@ public final class Assignment: NSObject {
     /// Resource discriminator returned by the API.
     public let resource: String?
     public let id: String
+    /// The assigned document, or nil after its deletion.
+    public let documentId: String?
+    /// ISO-8601 assignment creation time.
+    public let createdAt: String?
     public let senderEmail: String?
     public let method: AssignmentMethod
     /// Raw API method string (e.g. `"virtual"`).
@@ -237,7 +241,10 @@ public final class Assignment: NSObject {
          method: AssignmentMethod, methodString: String,
          expiresAt: String? = nil, message: String? = nil, signers: [Signer] = [],
          copyReceivers: [Signer] = [], items: [AssignmentItem] = [],
-         summary: AssignmentSummary? = nil, signingUrls: [AssignmentSigningURL] = []) {
+         summary: AssignmentSummary? = nil, signingUrls: [AssignmentSigningURL] = [],
+         documentId: String? = nil, createdAt: String? = nil) {
+        self.documentId = documentId
+        self.createdAt = createdAt
         self.resource = resource
         self.id = id; self.senderEmail = senderEmail
         self.method = method; self.methodString = methodString
@@ -254,6 +261,8 @@ extension Assignment: @unchecked Sendable {}
 extension Assignment: Decodable {
     enum CodingKeys: String, CodingKey {
         case resource, id, method, message, signers, items, summary
+        case documentId = "document_id"
+        case createdAt = "created_at"
         case senderEmail    = "sender_email"
         case expiresAt      = "expires_at"
         case expiration
@@ -282,7 +291,9 @@ extension Assignment: Decodable {
             copyReceivers: try c.decodeIfPresent([Signer].self, forKey: .copyReceivers) ?? [],
             items:         try c.decodeIfPresent([AssignmentItem].self, forKey: .items) ?? [],
             summary:       try c.decodeIfPresent(AssignmentSummary.self, forKey: .summary),
-            signingUrls:   try c.decodeIfPresent([AssignmentSigningURL].self, forKey: .signingUrls) ?? []
+            signingUrls:   try c.decodeIfPresent([AssignmentSigningURL].self, forKey: .signingUrls) ?? [],
+            documentId:    try c.decodeIfPresent(String.self, forKey: .documentId),
+            createdAt:     try decodeFlexibleOptionalString(from: c, forKey: .createdAt)
         )
     }
 }
@@ -712,8 +723,10 @@ extension SignAssignmentField: @unchecked Sendable {}
 /// `GET /documents/{id}/assignments/{aid}/whatsapp-notifications`.
 @objcMembers
 public final class WhatsappNotification: NSObject {
-    /// Unix timestamp (seconds) when the WhatsApp message was sent.
+    /// Unix seconds, derived from ``sentAtString``; zero when no timestamp is available.
     public let sentAt: Int
+    /// The API's ISO-8601 send time, or a numeric string from older responses.
+    public let sentAtString: String?
     /// Rendered header text.
     public let header: String?
     /// Rendered body text.
@@ -726,8 +739,10 @@ public final class WhatsappNotification: NSObject {
     public let signerId: String?
 
     init(sentAt: Int, header: String? = nil, body: String? = nil,
-         buttonTexts: [String] = [], phoneNumber: String? = nil, signerId: String? = nil) {
+         buttonTexts: [String] = [], phoneNumber: String? = nil, signerId: String? = nil,
+         sentAtString: String? = nil) {
         self.sentAt = sentAt; self.header = header; self.body = body
+        self.sentAtString = sentAtString
         self.buttonTexts = buttonTexts
         self.phoneNumber = phoneNumber; self.signerId = signerId
     }
@@ -748,13 +763,21 @@ extension WhatsappNotification: Decodable {
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let buttons = try c.decodeIfPresent([Button].self, forKey: .buttons) ?? []
+        let sentAtString = try decodeFlexibleOptionalString(from: c, forKey: .sentAt)
+        let formatter = ISO8601DateFormatter()
+        let date = sentAtString.flatMap { value in
+            if let date = formatter.date(from: value) { return date }
+            formatter.formatOptions.insert(.withFractionalSeconds)
+            return formatter.date(from: value)
+        }
         self.init(
-            sentAt: try c.decodeIfPresent(Int.self, forKey: .sentAt) ?? 0,
+            sentAt: sentAtString.flatMap(Int.init) ?? date.map { Int($0.timeIntervalSince1970) } ?? 0,
             header: try c.decodeIfPresent(String.self, forKey: .header),
             body: try c.decodeIfPresent(String.self, forKey: .body),
             buttonTexts: buttons.compactMap(\.text),
             phoneNumber: try c.decodeIfPresent(String.self, forKey: .phoneNumber),
-            signerId: try c.decodeIfPresent(String.self, forKey: .signerId)
+            signerId: try c.decodeIfPresent(String.self, forKey: .signerId),
+            sentAtString: sentAtString
         )
     }
 }

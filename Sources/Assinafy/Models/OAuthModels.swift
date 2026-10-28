@@ -210,6 +210,8 @@ public final class OAuthAuthorizationRequest: NSObject {
             items.append(URLQueryItem(name: "resource", value: resource))
         }
         components.queryItems = items
+        // OAuth query values use form encoding, where a literal plus must be escaped.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         return components.url
     }
 
@@ -250,9 +252,11 @@ public final class OAuthCallback: NSObject {
     /// - Parameter callbackURL: The URL delivered to the app's redirect handler.
     /// - Returns: `nil` when the URL cannot be parsed or a response parameter is repeated.
     @objc public convenience init?(callbackURL: URL) {
-        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
+        guard var components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
             return nil
         }
+        // Decode form spaces before percent escapes so %2B stays a literal plus.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%20")
         let items = components.queryItems ?? []
         for name in ["code", "state", "iss", "error", "error_description"] {
             guard items.filter({ $0.name == name }).count <= 1 else { return nil }

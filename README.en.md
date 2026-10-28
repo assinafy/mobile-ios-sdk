@@ -3,7 +3,7 @@
 *[Leia em português](README.md) · English*
 
 Native Swift and Objective-C access to the [Assinafy v1 API](https://api.assinafy.com.br/v1/docs):
-documents, signers, assignments, fields, tags, templates, workspaces, webhooks, and
+documents, signers, assignments, fields, tags, templates, contracts, workspaces, webhooks, and
 authentication.
 
 The SDK covers every operation in the published v1 OpenAPI document. Requests are
@@ -22,6 +22,7 @@ typed models, and failures surface as four distinct Swift error types that bridg
 - [Signer verification methods](#signer-verification-methods)
 - [The signer's side of the flow](#the-signers-side-of-the-flow)
 - [Templates](#templates)
+- [Contract management](#contract-management)
 - [Tags, fields, and untyped JSON](#tags-fields-and-untyped-json)
 - [Workspaces and webhooks](#workspaces-and-webhooks)
 - [Pagination](#pagination)
@@ -55,7 +56,7 @@ Add the package and product to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.11.1"
+        from: "1.12.0"
     ),
 ],
 targets: [
@@ -599,6 +600,8 @@ Open the hosted capture link and read the state again on return. `canStart` perm
 only before the first session or after `Expired`. `Declined` and `Abandoned` require a new
 document and assignment. Never persist the capture link in browser storage. `InReview`
 permits data confirmation and signing; `pending_identity_review` holds certification.
+OAuth apps with `documents:read` can read the review summary. Images and decisions require
+a direct workspace credential; those two operations return `403` for OAuth.
 The workspace reviewer reads evidence and images, then decides:
 
 ```swift
@@ -619,6 +622,9 @@ private to the workspace/provider. Subscribe to `signerIdentityVerified`,
 and `signerIdentityReviewRejected`. [Full reference and payloads](docs/API_REFERENCE.md#identity-document-and-face-verification).
 
 ## The signer's side of the flow
+
+Use the signer access code from the invitation. A workspace `signingUrls` link may be a
+public document landing page; its document ID is not a signer access code.
 
 A signer arrives with an access code from their invitation. The full sequence is: read the
 document, accept the terms, confirm identity data, then sign.
@@ -723,6 +729,70 @@ management — `templates.create(name:pdfData:)`, `get`, `update`, and `delete` 
 the live API but is not in the published OpenAPI document; confirm availability for your
 environment before depending on it.
 
+A role can also create or reuse a signer by email through
+`TemplateSigner(roleId:email:name:whatsappPhoneNumber:verificationMethod:notificationMethods:step:)`.
+Use the existing `id` initializer when the signer is already known.
+
+## Contract management
+
+Upload the document first, then attach terms through `client.contracts`. This is a separate
+write: if it fails, the uploaded document remains available. Send it for signature through
+the usual assignment flow. Contract terms can also be attached to an existing document.
+Reads need `documents:read`; writes need `documents:write` and a plan with contract tracking.
+
+```swift
+let uploaded = try await client.documents.upload(pdfData)
+let saved = try await client.contracts.update(
+    documentId: uploaded.id,
+    payload: UpdateContractPayload(
+        status: "active", value: NSDecimalNumber(string: "1200.50"), currency: "BRL",
+        startDate: "2026-11-01", endDate: "2027-10-31", autoRenew: NSNumber(value: false)
+    )
+)
+let filters = ContractListParams()
+filters.status = "active,expired"
+filters.endingWithinDays = 45
+filters.expand = "document"
+let page = try await client.contracts.list(params: filters)
+
+if let contract = saved.contract {
+    let renewed = try await client.contracts.renew(
+        documentId: uploaded.id,
+        payload: RenewContractPayload(term: contract.term, updatedAt: contract.updatedAt)
+    )
+    _ = try await client.contracts.terminate(
+        documentId: uploaded.id,
+        payload: TerminateContractPayload(reason: "Contract closed", updatedAt: renewed.updatedAt)
+    )
+}
+```
+
+The example shows direct renewal and termination as separate actions. Pass the last-read
+`updatedAt` to protect concurrent edits; a `409` means read again and let the user reconcile.
+Renew with the current `term` or an explicit later `endDate`; keep that original request
+when resolving an uncertain result so a retry cannot renew twice.
+
+Nil update properties leave terms unchanged. `clearFields: ["counterparty_name"]` sends
+JSON null. `externalReferences` replaces the whole list; an empty list clears it. Monetary
+values use `NSDecimalNumber`. Dates follow the API's Brasília calendar. `hasContract` on a
+document is nullable: nil means the API did not resolve the flag, not that terms are absent.
+
+For a signed amendment, upload its document and set its terms with `parentDocumentId`,
+`relationType: "amendment"`, `"renewal"`, or `"termination"`, and the fields it changes.
+`contracts.get` returns either `ContractDetails.contract` or `.amendment`;
+`contracts.related` reads the root and its instruments from either document. Pending
+instruments apply in certification order; inspect `applyError` when a signed one waits.
+Applied instruments are read-only. Clearing `parent_document_id` unlinks a pending one;
+on a pending instrument, a null term removes it from the delta.
+
+The hourly lifecycle sends owner notifications, expires contracts, or advances automatic
+renewals. The four `ContractRenewalNotice`, `ContractExpiring`, `ContractExpired`, and
+`ContractRenewed` preferences control those emails. Subscribe to `document_contract_*`
+webhooks and recover missed updates by paging contracts in `-updated_at` order. Activities
+are paginated through `documents.activities(documentId:params:)`. Reads remain available
+when a plan lapses; lifecycle work resumes when contract tracking returns.
+See [all fields, methods, and payloads](docs/API_REFERENCE.md#contract-management).
+
 ## Tags, fields, and untyped JSON
 
 ```swift
@@ -795,15 +865,18 @@ try await client.webhooks.retryDispatch(dispatchId: attempts.data[0].id)
 
 `register`, `get`, and `inactivate` act on the oldest endpoint. Creating one past the plan limit
 returns `403`; reusing another endpoint's URL returns `400`. Filter delivery history for one
-endpoint with `WebhookDispatchListParams.endpointId`.
+endpoint with `WebhookDispatchListParams.endpointId`. Read the limit from
+`workspaces.get(workspaceId:).limits?.webhookEndpoints`. `isHeld` and `heldSince` expose
+suspended delivery; `webhookId`, `attempt`, `kind`, and `willRetry` describe each attempt.
+New or changed endpoint URLs require HTTPS and a public address.
 
 ### Signed deliveries
 
 With `signingEnabled`, every delivery carries the [Standard Webhooks](https://www.standardwebhooks.com)
 headers `webhook-id`, `webhook-timestamp`, and `webhook-signature`. Save `endpoint.secret`
-securely on your receiving server when creating a signed endpoint: creation returns it once.
-OAuth apps cannot retrieve or rotate it later; if lost, recreate their endpoint. API-key callers
-can also retrieve or rotate it:
+securely on your receiving server when creating an endpoint or enabling signing: a new secret
+is returned once. OAuth apps with `webhooks:write` can rotate it, but cannot read the
+existing secret. API-key callers can read or rotate it:
 
 ```swift
 let secret  = try await client.webhooks.signingSecret(endpointId: endpoint.id)
@@ -934,6 +1007,7 @@ if (scope != nil) {
 | `client.auth` | Login, social login and linking, two-factor authentication, password operations, API-key management, current user, notification preferences, user statistics |
 | `client.oauth` | Discovery, PKCE authorization URL, code exchange, refresh, revocation, userinfo |
 | `client.workspaces` | Account CRUD, theme, statistics, logo upload/download/delete |
+| `client.contracts` | Contract terms, amendments, filters, renewal, termination, and update conflicts |
 | `client.documents` | Upload, list/search/get/rename/delete, processing status, pages, thumbnails, activities, artifacts, verification, template document creation, public token flow |
 | `client.signers` | Workspace signer CRUD, signer self-service, terms, OTP and biometric verification, signature images, signer documents, batch sign and decline |
 | `client.assignments` | List, create, estimate, sign, decline, resend, expiration, WhatsApp notifications, identity review and evidence |

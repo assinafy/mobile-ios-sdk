@@ -9,9 +9,9 @@ public final class CostEstimateBreakdownItem: NSObject {
     public let name: String
     /// Total cost for this line item.
     public let cost: Double
-    /// Number of units charged.
+    /// Number of units charged, or zero when a reminder estimate omits it.
     public let quantity: Int
-    /// Cost of one unit.
+    /// Cost of one unit, or zero when a reminder estimate omits it.
     public let unitCost: Double
 
     init(code: String, name: String, cost: Double, quantity: Int, unitCost: Double) {
@@ -41,7 +41,7 @@ extension CostEstimateBreakdownItem: @unchecked Sendable {}
 /// available for source compatibility and forwards-compatible inspection.
 @objcMembers
 public final class CostEstimate: NSObject, Decodable {
-    /// The current credit balance available on the account.
+    /// Available credits; zero when absent or null. Reminder estimates use null for unlimited credits; inspect ``raw``.
     public let creditBalance: Double
     /// The current document balance available on the account.
     public let documentBalance: Double
@@ -61,9 +61,9 @@ public final class CostEstimate: NSObject, Decodable {
     public let extraDocumentCost: Double
     /// Total credits required by the operation.
     public let totalCredits: Double
-    /// Itemized notification and extra-document charges.
+    /// Itemized notification, certificate-signature, and identity-verification charges; excludes the extra document.
     public let breakdown: [CostEstimateBreakdownItem]
-    /// Canonical API flag indicating whether the account has sufficient documents/credits.
+    /// Whether the account has sufficient resources, including `has_sufficient_credits` on reminders.
     public let hasSufficientResources: Bool
     /// Blocking reason returned by the API, when the operation cannot proceed.
     public let blockingReason: String?
@@ -96,11 +96,12 @@ public final class CostEstimate: NSObject, Decodable {
     }
 
     private convenience init(raw: [String: Any]) throws {
-        let totalCredits = try Self.double(raw, "total_credits")
+        let totalCredits = try Self.double(raw, raw["total_credits"] == nil ? "total" : "total_credits")
         let credits = try Self.double(raw, "credits")
         let estimated = try Self.double(raw, "estimated_cost")
         let legacyTotal = try Self.double(raw, "total")
         let hasResources = try Self.bool(raw, "has_sufficient_resources")
+            ?? Self.bool(raw, "has_sufficient_credits")
             ?? Self.bool(raw, "has_sufficient_balance")
             ?? false
         let breakdownValues: [[String: Any]]
@@ -162,7 +163,7 @@ public final class CostEstimate: NSObject, Decodable {
         let knownKeys: Set<String> = [
             "documents", "credits", "needs_extra_document", "extra_document_cost",
             "total_credits", "breakdown", "document_balance", "credit_balance",
-            "has_sufficient_resources", "blocking_reason", "message",
+            "has_sufficient_resources", "has_sufficient_credits", "blocking_reason", "message",
             // Compatibility keys returned by earlier estimate endpoints.
             "estimated_cost", "has_sufficient_balance", "total",
         ]

@@ -150,6 +150,12 @@ final class CredentialScopeTests: XCTestCase {
         )
         assertNoCredential("/signature")
 
+        stubEmpty()
+        try await signers.uploadSignature(
+            signerAccessCode: "code", type: .signature, imageData: png, reusePreference: false
+        )
+        assertNoCredential("/signature")
+
         mock.stub(response: APIResponse(data: png, headers: [:], statusCode: 200))
         _ = try await signers.downloadSignature(signerAccessCode: "code", type: .signature)
         assertNoCredential("/signature/signature")

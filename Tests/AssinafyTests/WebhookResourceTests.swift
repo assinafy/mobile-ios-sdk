@@ -15,6 +15,8 @@ final class WebhookResourceTests: XCTestCase {
         [
             "events": ["document_ready"],
             "is_active": true,
+            "is_held": true,
+            "held_since": 1_790_000_000,
             "url": "https://example.invalid/hook",
             "email": "test@example.invalid",
             "updated_at": "2024-01-01T00:00:00Z",
@@ -29,6 +31,10 @@ final class WebhookResourceTests: XCTestCase {
             "activity_id": 1,
             "payload": ["document": ["id": "doc1"], "attempt": 1],
             "delivered": true,
+            "webhook_id": "delivery-1",
+            "attempt": 2,
+            "kind": "manual",
+            "will_retry": false,
             "http_status": 200,
             "created_at": "2026-07-20T19:03:13Z",
             "updated_at": "2026-07-20T19:03:13Z",
@@ -44,9 +50,11 @@ final class WebhookResourceTests: XCTestCase {
 
     func testGetUsesCorrectEndpoint() async throws {
         mock.stubEnvelope(subscriptionDict())
-        _ = try await resource.get()
+        let subscription = try await resource.get()
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/test-account/webhooks/subscriptions")
         XCTAssertEqual(mock.lastRequest?.method, .get)
+        XCTAssertTrue(subscription.isHeld)
+        XCTAssertEqual(subscription.heldSince?.intValue, 1_790_000_000)
     }
 
     @available(*, deprecated, message: "Exercises the deprecated source-compatible alias.")
@@ -67,6 +75,10 @@ final class WebhookResourceTests: XCTestCase {
         XCTAssertEqual(dispatch.resource, "activity_dispatching_history")
         XCTAssertEqual(dispatch.payload?["attempt"] as? Int, 1)
         XCTAssertEqual((dispatch.payload?["document"] as? [String: Any])?["id"] as? String, "doc1")
+        XCTAssertEqual(dispatch.webhookId, "delivery-1")
+        XCTAssertEqual(dispatch.attempt?.intValue, 2)
+        XCTAssertEqual(dispatch.kind, "manual")
+        XCTAssertFalse(dispatch.willRetry)
     }
 
     func testInactivateHitsDocumentedEndpoint() async throws {
@@ -93,6 +105,41 @@ final class WebhookResourceTests: XCTestCase {
         mock.stubEnvelope(dispatch)
         let result = try await resource.retryDispatch(dispatchId: "d1")
         XCTAssertNil(result.httpStatusCode)
+    }
+
+    func testDispatchRetryMetadataPreservesNullAndFutureKinds() throws {
+        var response = dispatchDict()
+        response["webhook_id"] = NSNull()
+        response["attempt"] = NSNull()
+        response["kind"] = "future-kind"
+        response["will_retry"] = true
+        let retrying = try JSONDecoder.assinafy.decode(
+            WebhookDispatch.self, from: JSONSerialization.data(withJSONObject: response))
+        XCTAssertNil(retrying.webhookId)
+        XCTAssertNil(retrying.attempt)
+        XCTAssertEqual(retrying.kind, "future-kind")
+        XCTAssertTrue(retrying.willRetry)
+
+        for key in ["webhook_id", "attempt", "kind", "will_retry"] { response.removeValue(forKey: key) }
+        let legacy = try JSONDecoder.assinafy.decode(
+            WebhookDispatch.self, from: JSONSerialization.data(withJSONObject: response))
+        XCTAssertNil(legacy.webhookId)
+        XCTAssertNil(legacy.attempt)
+        XCTAssertNil(legacy.kind)
+        XCTAssertFalse(legacy.willRetry)
+    }
+
+    func testContractWebhookEventNames() {
+        XCTAssertEqual([
+            WebhookEventType.documentContractUpdated, WebhookEventType.documentContractRenewalNotice,
+            WebhookEventType.documentContractExpiring, WebhookEventType.documentContractExpired,
+            WebhookEventType.documentContractRenewed, WebhookEventType.documentContractTerminated,
+            WebhookEventType.documentContractAmended, WebhookEventType.documentContractAmendmentUpdated,
+        ], [
+            "document_contract_updated", "document_contract_renewal_notice", "document_contract_expiring",
+            "document_contract_expired", "document_contract_renewed", "document_contract_terminated",
+            "document_contract_amended", "document_contract_amendment_updated",
+        ])
     }
 
     func testListEventTypesCallsGlobalEndpoint() async throws {

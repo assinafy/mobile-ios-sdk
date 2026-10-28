@@ -15,6 +15,7 @@ final class WebhookEndpointTests: XCTestCase {
         "id": "ep1", "name": "ERP", "url": "https://example.invalid/hook",
         "email": "ops@example.invalid", "events": ["document_ready"],
         "is_active": true, "signing_enabled": true,
+        "is_held": true, "held_since": 1_790_000_000,
         "created_at": "2026-10-01T12:00:00Z", "updated_at": "2026-10-01T12:00:00Z",
     ]
 
@@ -33,6 +34,8 @@ final class WebhookEndpointTests: XCTestCase {
         XCTAssertEqual(endpoint.events, ["document_ready"])
         XCTAssertTrue(endpoint.isActive)
         XCTAssertTrue(endpoint.signingEnabled)
+        XCTAssertTrue(endpoint.isHeld)
+        XCTAssertEqual(endpoint.heldSince?.intValue, 1_790_000_000)
         XCTAssertEqual(endpoint.createdAt, "2026-10-01T12:00:00Z")
     }
 
@@ -102,13 +105,16 @@ final class WebhookEndpointTests: XCTestCase {
     }
 
     func testUpdateEndpointSendsOnlySetFields() async throws {
-        mock.stubEnvelope(endpointJSON)
-        _ = try await webhooks.updateEndpoint(id: "ep1", UpdateWebhookEndpointPayload(isActive: false, signingEnabled: true))
+        var response = endpointJSON
+        response["secret"] = "whsec_generated_by_update"
+        mock.stubEnvelope(response)
+        let updated = try await webhooks.updateEndpoint(id: "ep1", UpdateWebhookEndpointPayload(isActive: false, signingEnabled: true))
         XCTAssertEqual(mock.lastRequest?.method, .put)
         XCTAssertEqual(mock.lastRequest?.path, "/accounts/acc/webhooks/endpoints/ep1")
         let json = try body()
         XCTAssertEqual(Set(json.keys), ["is_active", "signing_enabled"])
         XCTAssertEqual(json["is_active"] as? Bool, false)
+        XCTAssertEqual(updated.secret, "whsec_generated_by_update")
     }
 
     func testUpdateEndpointRejectsEmptyPayload() async {
@@ -153,6 +159,23 @@ final class WebhookEndpointTests: XCTestCase {
         } catch {
             XCTAssertTrue(error is ValidationError)
         }
+    }
+
+    func testEndpointHoldMetadataAllowsNullAndLegacyResponses() throws {
+        var response = endpointJSON
+        response["is_held"] = false
+        response["held_since"] = NSNull()
+        let running = try JSONDecoder.assinafy.decode(
+            WebhookEndpoint.self, from: JSONSerialization.data(withJSONObject: response))
+        XCTAssertFalse(running.isHeld)
+        XCTAssertNil(running.heldSince)
+
+        response.removeValue(forKey: "is_held")
+        response.removeValue(forKey: "held_since")
+        let legacy = try JSONDecoder.assinafy.decode(
+            WebhookEndpoint.self, from: JSONSerialization.data(withJSONObject: response))
+        XCTAssertFalse(legacy.isHeld)
+        XCTAssertNil(legacy.heldSince)
     }
 
     func testDispatchCarriesEndpointIdAndFilterSendsIt() async throws {

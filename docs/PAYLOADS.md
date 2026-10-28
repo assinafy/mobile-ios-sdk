@@ -35,7 +35,7 @@ methods validate status and discard any returned data.
 | `POST /v1/documents/{documentId}/assignments` | [JSON](#request-4) | [Assignment](#assignment) |
 | `POST /v1/documents/{documentId}/assignments/estimate-cost` | [JSON](#request-5) | [CostEstimate](#costestimate) |
 | `PUT /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/resend` | No body | [JSON](#response-2) |
-| `POST /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/estimate-resend-cost` | No body | [CostEstimate](#costestimate) |
+| `POST /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/estimate-resend-cost` | No body | [ResendCostEstimate](#resendcostestimate) |
 | `PUT /v1/documents/{documentId}/assignments/{assignmentId}/reset-expiration` | [JSON](#request-6) | [Assignment](#assignment) |
 | `POST /v1/login` | [JSON](#request-7) | [AuthSession](#authsession) |
 | `PUT /v1/authentication/request-password-reset` | [JSON](#request-8) | [JSON](#response-3) |
@@ -127,6 +127,12 @@ methods validate status and discard any returned data.
 | `DELETE /v1/users/self/mfa/{customId}` | [JSON](#request-43) | [JSON](#response-19) |
 | `GET /.well-known/oauth-protected-resource` | No body | Flat [JSON](#response-18) |
 | `GET /v1/documents/{documentId}/assignments/{assignmentId}/whatsapp-notifications` | No body | Array of [WhatsappNotification](#whatsappnotification) |
+| `GET /v1/signers/identity-verification` | No body; signer access code query | [IdentityVerificationState](#identityverificationstate) |
+| `POST /v1/signers/identity-verification` | [Consent JSON](#startidentityverificationpayload); signer access code query | [IdentityVerificationSession](#identityverificationsession) |
+| `GET /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification` | No body | [SignerIdentityReview](#signeridentityreview) |
+| `GET /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/images/{name}` | No body | JPEG, PNG or PDF bytes |
+| `POST /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/review` | [Decision JSON](#reviewidentityverificationpayload) | [SignerIdentityReview](#signeridentityreview) |
+| `DELETE /v1/accounts/{accountId}/webhooks/endpoints` | No body; exact `url` query | Envelope with `data: []` |
 
 OAuth token, revocation, authorization-server discovery and userinfo payloads are
 [documented separately](API_REFERENCE.md#oauth-21), including their flat responses
@@ -135,12 +141,16 @@ and form encoding. Template create/get/update/delete use
 `name` and `file`; updates encode `name`, `document_name`, and `message`;
 get/create/update return the `Template` data object; deletion returns an envelope.
 
-| `GET /v1/signers/identity-verification` | No body; signer access code query | [IdentityVerificationState](#identityverificationstate) |
-| `POST /v1/signers/identity-verification` | [Consent JSON](#startidentityverificationpayload); signer access code query | [IdentityVerificationSession](#identityverificationsession) |
-| `GET /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification` | No body | [SignerIdentityReview](#signeridentityreview) |
-| `GET /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/images/{name}` | No body | JPEG, PNG or PDF bytes |
-| `POST /v1/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification/review` | [Decision JSON](#reviewidentityverificationpayload) | [SignerIdentityReview](#signeridentityreview) |
-| `DELETE /v1/accounts/{accountId}/webhooks/endpoints` | No body; exact `url` query | Envelope with `data: []` |
+
+
+Query parameters carry the signer access code only on signer-scoped routes; account
+credentials are withheld there. Signature upload also takes `type=signature|initial`
+and optional `reuse=true|false`: omit reuse to preserve the previous preference.
+Assignment listing takes camelCase `accountId` from the argument or client default
+on every host; API-key/session callers supply it, while OAuth may derive the account.
+Activity listing accepts `page`, `per-page`, and `sort=id|-id`; document search accepts
+`page`, `per-page`, and `sort=name|updated_at` with `-` for descending.
+Literal `+` query values are encoded as `%2B`.
 
 ## Request bodies
 
@@ -390,7 +400,11 @@ get/create/update return the `Template` data object; deletion returns an envelop
   "DocumentExpirationReset": true,
   "DocumentProcessingFailed": true,
   "TemplateProcessingFailed": true,
-  "SignerWhatsappFailed": true
+  "SignerWhatsappFailed": true,
+  "ContractRenewalNotice": true,
+  "ContractExpiring": true,
+  "ContractExpired": true,
+  "ContractRenewed": true
 }
 ```
 
@@ -595,6 +609,17 @@ Encode these fields as `application/x-www-form-urlencoded`.
         "Email"
       ],
       "step": 1
+    },
+    {
+      "role_id": "role_id_example_002",
+      "email": "new-signer@example.invalid",
+      "name": "Example Signer",
+      "whatsapp_phone_number": "+5511000000000",
+      "verification_method": "Email",
+      "notification_methods": [
+        "Email"
+      ],
+      "step": 2
     }
   ],
   "editor_fields": [
@@ -611,6 +636,11 @@ Encode these fields as `application/x-www-form-urlencoded`.
   ]
 }
 ```
+
+Each signer uses an existing `id` or an `email` for lookup/creation. `name` and
+`whatsapp_phone_number` apply only when creating a signer. The response initially
+has `status: "uploaded"` and may have `assignment: null`; wait for processing before
+reading signing links. Cost estimation omits ID, email, name, phone and step.
 
 ### request-35
 
@@ -647,7 +677,7 @@ Encode these fields as `application/x-www-form-urlencoded`.
 ```json
 {
   "events": [
-    "example"
+    "document_ready"
   ],
   "is_active": true,
   "url": "https://app.example.invalid/resource",
@@ -1202,7 +1232,9 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
         "signer_id": "signer_id_example_001",
         "url": "https://app.example.invalid/resource"
       }
-    ]
+    ],
+    "document_id": "id_example_001",
+    "created_at": "2099-01-01T12:00:00Z"
   },
   "pages": [
     {
@@ -1214,9 +1246,40 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
     }
   ],
   "created_at": "2099-01-01T12:00:00Z",
-  "updated_at": "2099-01-01T12:00:00Z"
+  "updated_at": "2099-01-01T12:00:00Z",
+  "verification_code": "verification_example_001",
+  "verification_url": "https://app.example.invalid/verify/verification_example_001",
+  "has_contract": false,
+  "current_signer": {
+    "resource": "signer",
+    "id": "id_example_001",
+    "full_name": "example",
+    "email": "signer@example.invalid",
+    "whatsapp_phone_number": null,
+    "has_accepted_terms": true,
+    "verification_method": "Email",
+    "notification_methods": [
+      "Email"
+    ],
+    "step": 1,
+    "notified": true,
+    "completed": true,
+    "notification_history": [
+      {
+        "event": "example",
+        "status": "sent",
+        "error_code": "example",
+        "error_message": "example",
+        "sent_at": "2099-01-01T12:00:00Z",
+        "failed_at": "2099-01-01T12:00:00Z"
+      }
+    ]
+  }
 }
 ```
+
+`current_signer` is returned by signer-facing document routes. Verification details
+and `has_contract` can be absent or null; the SDK preserves that distinction.
 
 ### Account
 
@@ -1232,7 +1295,10 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
     "example"
   ],
   "is_delete_allowed": true,
-  "created_at": "2099-01-01T12:00:00Z"
+  "created_at": "2099-01-01T12:00:00Z",
+  "limits": {
+    "webhook_endpoints": 3
+  }
 }
 ```
 
@@ -1479,7 +1545,9 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
       "signer_id": "signer_id_example_001",
       "url": "https://app.example.invalid/resource"
     }
-  ]
+  ],
+  "document_id": "document_example_001",
+  "created_at": "2099-01-01T12:00:00Z"
 }
 ```
 
@@ -1518,6 +1586,28 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
   "has_sufficient_resources": true,
   "blocking_reason": null,
   "message": "Success"
+}
+```
+
+### ResendCostEstimate
+
+Reminder costs use a separate wire shape decoded by `CostEstimate`. `totalCredits`
+reads `total`, and both sufficiency properties read `has_sufficient_credits`.
+A null `credit_balance` means unlimited credits; it remains null in `raw` while
+the numeric compatibility property is zero. A reminder consumes no document.
+
+```json
+{
+  "total": 0.45,
+  "breakdown": [
+    {
+      "code": "NotificationWhatsappResend",
+      "name": "WhatsApp reminder",
+      "cost": 0.45
+    }
+  ],
+  "credit_balance": null,
+  "has_sufficient_credits": true
 }
 ```
 
@@ -1631,12 +1721,14 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
 ```json
 {
   "events": [
-    "example"
+    "document_ready"
   ],
   "is_active": true,
   "url": "https://app.example.invalid/resource",
   "email": "signer@example.invalid",
-  "updated_at": "2099-01-01T12:00:00Z"
+  "updated_at": "2099-01-01T12:00:00Z",
+  "is_held": false,
+  "held_since": null
 }
 ```
 
@@ -1644,19 +1736,23 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
 
 ```json
 {
-  "resource": "webhookdispatch",
+  "resource": "activity_dispatching_history",
   "id": "id_example_001",
-  "event": "example",
+  "event": "document_ready",
   "activity_id": 1,
-  "endpoint": "example",
+  "endpoint": "https://app.example.invalid/webhooks/assinafy",
   "endpoint_id": "endpoint_id_example_001",
   "payload": {},
   "delivered": true,
-  "http_status": 1,
-  "response_body": "example",
-  "error": "example",
+  "http_status": 200,
+  "response_body": "OK",
+  "error": null,
   "created_at": "2099-01-01T12:00:00Z",
-  "updated_at": "2099-01-01T12:00:00Z"
+  "updated_at": "2099-01-01T12:00:00Z",
+  "webhook_id": "delivery_example_001",
+  "attempt": 2,
+  "kind": "scheduled",
+  "will_retry": false
 }
 ```
 
@@ -1675,7 +1771,9 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
   "is_active": true,
   "signing_enabled": true,
   "created_at": "2099-01-01T12:00:00Z",
-  "updated_at": "2099-01-01T12:00:00Z"
+  "updated_at": "2099-01-01T12:00:00Z",
+  "is_held": false,
+  "held_since": null
 }
 ```
 
@@ -1828,7 +1926,7 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
 
 ```json
 {
-  "sent_at": 1,
+  "sent_at": "2099-01-01T12:00:00Z",
   "header": "example",
   "body": "example",
   "buttons": [
@@ -1904,7 +2002,11 @@ with two-factor authentication. The SDK throws `MFARequiredError` with the token
   "DocumentExpirationReset": true,
   "DocumentProcessingFailed": true,
   "TemplateProcessingFailed": true,
-  "SignerWhatsappFailed": true
+  "SignerWhatsappFailed": true,
+  "ContractRenewalNotice": true,
+  "ContractExpiring": true,
+  "ContractExpired": true,
+  "ContractRenewed": true
 }
 ```
 
@@ -2026,7 +2128,9 @@ The URL must match the registered URL exactly and is percent-encoded as one quer
 
 `POST /v1/accounts/{accountId}/webhooks/endpoints` with `signing_enabled: true`
 returns the following in `data`. Save `secret` securely on your webhook server;
-list and view responses omit it. OAuth applications cannot retrieve or rotate it later.
+list and view responses omit it. Enabling signing through `PUT` can also return a
+newly generated secret once. OAuth applications cannot retrieve an existing secret;
+`webhooks:write` permits rotation, which immediately invalidates the previous secret.
 
 ```json
 {
@@ -2034,11 +2138,610 @@ list and view responses omit it. OAuth applications cannot retrieve or rotate it
   "name": "Marketplace",
   "url": "https://app.example.invalid/hooks/assinafy",
   "email": "ops@example.invalid",
-  "events": ["signer_identity_review_required", "signer_identity_review_approved"],
+  "events": [
+    "signer_identity_review_required",
+    "signer_identity_review_approved"
+  ],
   "is_active": true,
   "signing_enabled": true,
   "secret": "whsec_c3ludGhldGljLWtleS1mb3ItZG9jdW1lbnRhdGlvbg==",
   "created_at": "2099-01-01T12:00:00Z",
-  "updated_at": "2099-01-01T12:00:00Z"
+  "updated_at": "2099-01-01T12:00:00Z",
+  "is_held": false,
+  "held_since": null
+}
+```
+
+## Contract management
+
+These examples use synthetic document/member/reference IDs and reserved
+`example.invalid` URLs. Taxpayer identifiers are null: applications supply the
+counterparty's valid CPF/CNPJ when required. Dates illustrate the contract and
+are not instructions to submit those dates unchanged.
+
+The operation table uses full `/v1` paths. Successful response examples below
+show the complete **data object**, which the API wraps in
+`{"status":200,"message":"","data":...}`; the list wraps contract objects in an
+array. The error examples show their complete envelopes. Optional expansions
+are included in the main contract example and omitted from responses that do
+not request or supply them.
+
+| Operation | Request | Response data |
+| --- | --- | --- |
+| `GET /v1/accounts/{accountId}/contracts` | No body; 12 optional [filters](API_REFERENCE.md#listing-and-synchronization) | Array of [DocumentContract](#documentcontract), pagination in headers |
+| `GET /v1/accounts/{accountId}/documents/{documentId}/contract` | No body | [DocumentContract](#documentcontract) or [DocumentContractAmendment](#documentcontractamendment) |
+| `PUT /v1/accounts/{accountId}/documents/{documentId}/contract` | [Root update](#updatecontractpayload), [instrument link](#contractamendmentlink), or [explicit nulls](#contractclearfields) | Root terms or amendment link, exposed as `ContractDetails` |
+| `GET /v1/accounts/{accountId}/documents/{documentId}/contract/related` | No body | Root [DocumentContract](#documentcontract) with its family |
+| `POST /v1/accounts/{accountId}/documents/{documentId}/contract/renew` | [RenewContractPayload](#renewcontractpayload) | [Renewed contract](#documentcontractrenewed) |
+| `POST /v1/accounts/{accountId}/documents/{documentId}/contract/terminate` | [TerminateContractPayload](#terminatecontractpayload), or `{}` | [Terminated contract](#documentcontractterminated) |
+
+All routes use workspace credentials. OAuth reads require `documents:read`;
+writes require `documents:write` and contract tracking in the workspace's plan.
+
+An illustrative list query containing every supported filter is:
+
+```text
+?status=active,expired&counterparty=Example&search=Contract&end_date_from=2026-11-01&end_date_to=2027-10-31&ending_within_days=30&external_system=crm&external_id=deal-1&sort=end_date&expand=document&page=1&per-page=25
+```
+
+Each filter narrows the list. `ending_within_days=0` means today in Brasília
+time. A list's header metadata may be:
+
+```text
+X-Pagination-Current-Page: 1
+X-Pagination-Per-Page: 25
+X-Pagination-Total-Count: 42
+X-Pagination-Page-Count: 2
+```
+
+### UpdateContractPayload
+
+All root-term fields, for an existing contract. `counterparty_taxpayer_id: null`
+uses `clearFields: ["counterparty_taxpayer_id"]`; an ordinary nil property is
+omitted. For initial creation omit `updated_at`, since no prior terms exist.
+`parent_document_id` and `relation_type` appear in the instrument examples below
+and are not root-term attributes. Together these examples cover all 16 API
+update fields.
+
+```json
+{
+  "status": "active",
+  "counterparty_name": "Example Company",
+  "counterparty_taxpayer_id": null,
+  "value": 1200.5,
+  "currency": "BRL",
+  "start_date": "2026-11-01",
+  "end_date": "2027-10-31",
+  "auto_renew": true,
+  "renewal_term_months": 12,
+  "notice_period_days": 30,
+  "owner_id": "member-1",
+  "metadata": {
+    "crm_stage": "won"
+  },
+  "external_references": [
+    {
+      "system": "crm",
+      "id": "deal-1"
+    }
+  ],
+  "updated_at": "2026-10-23T12:00:00Z"
+}
+```
+
+### ContractAmendmentLink
+
+Sent to the amendment document's own PUT route. This includes every term an
+`amendment` may change. The explicit null drops the taxpayer-ID delta key and
+leaves the parent's taxpayer ID unchanged. For a first link, omit `updated_at`.
+For later edits, add the **link's** last-read `updated_at`; omitted delta fields
+are retained. Root-only `status`, `owner_id`, and `external_references` do not
+belong in an instrument delta.
+
+```json
+{
+  "parent_document_id": "doc-contract-1",
+  "relation_type": "amendment",
+  "counterparty_name": "Example Company Updated",
+  "counterparty_taxpayer_id": null,
+  "value": 1300,
+  "currency": "BRL",
+  "start_date": "2027-05-01",
+  "end_date": "2028-06-30",
+  "auto_renew": false,
+  "renewal_term_months": 6,
+  "notice_period_days": 45,
+  "metadata": {
+    "crm_stage": "amended"
+  }
+}
+```
+
+### ContractRenewalLink
+
+A signed renewal instrument changes only `end_date` and `value`. It applies on
+certification, according to the instrument ordering rules.
+
+```json
+{
+  "parent_document_id": "doc-contract-1",
+  "relation_type": "renewal",
+  "end_date": "2029-06-30",
+  "value": 1350
+}
+```
+
+### ContractTerminationLink
+
+A signed termination instrument changes only its effective `end_date`. Omitting
+the date uses the signing day. This link is separate from directly calling the
+contract termination endpoint.
+
+```json
+{
+  "parent_document_id": "doc-contract-1",
+  "relation_type": "termination",
+  "end_date": "2028-01-31"
+}
+```
+
+### ContractClearFields
+
+Wire representation of `UpdateContractPayload(clearFields: [...])` naming these
+nullable root fields. The API still applies the contract's state/date rules;
+not every set of cleared terms is valid for every contract. `status` and
+`relation_type` cannot be cleared. Clearing `auto_renew` resets it to false;
+clearing `currency` restores BRL if a monetary value remains. Clearing
+`updated_at` disables the concurrency precondition. To leave a field unchanged,
+omit it instead of clearing it. Setting a value and clearing the same key is a
+local `ValidationError`.
+
+```json
+{
+  "counterparty_name": null,
+  "counterparty_taxpayer_id": null,
+  "value": null,
+  "currency": null,
+  "start_date": null,
+  "end_date": null,
+  "auto_renew": null,
+  "renewal_term_months": null,
+  "notice_period_days": null,
+  "owner_id": null,
+  "metadata": null,
+  "external_references": null,
+  "updated_at": null
+}
+```
+
+### ContractPartialUpdate
+
+Changes the notice period and clears the name; all other fields remain unchanged.
+Use `noticePeriodDays: 60`, `updatedAt: ...`, and
+`clearFields: ["counterparty_name"]`.
+
+```json
+{
+  "notice_period_days": 60,
+  "counterparty_name": null,
+  "updated_at": "2026-10-23T12:00:00Z"
+}
+```
+
+### ContractExternalReferencesReplacement
+
+Each `ContractExternalReference(system:id:)` has both required strings. This
+replaces the whole list; `[]` or explicit null clears it. Sending only the new
+item does not append to existing references.
+
+```json
+{
+  "external_references": [
+    {
+      "system": "crm",
+      "id": "deal-1"
+    },
+    {
+      "system": "erp",
+      "id": "contract-1042"
+    }
+  ]
+}
+```
+
+### ContractUnlinkPayload
+
+`UpdateContractPayload(updatedAt: ..., clearFields: ["parent_document_id"])`
+requests removal of a pending link. The timestamp belongs to the link. Applied
+instruments are read-only; a document without an amendment link returns `404`.
+A null term on a pending link drops that term from the delta rather than
+clearing it on the parent.
+
+```json
+{
+  "parent_document_id": null,
+  "updated_at": "2027-05-10T15:00:00Z"
+}
+```
+
+### RenewContractPayload
+
+Renews from the current `term` using the configured renewal interval; omitted
+`end_date` uses that interval until the next end date is in the future. Omit
+`value` to retain the amount. `updated_at` is optional but preserves concurrent
+changes. The current term or an explicit new end date is required.
+
+```json
+{
+  "term": 2,
+  "value": 1260,
+  "updated_at": "2027-05-12T18:20:00Z"
+}
+```
+
+### ContractRenewExplicit
+
+All renewal wire fields. `RenewContractPayload(term: 2, endDate: "2029-06-30",
+clearsValue: true, updatedAt: ...)` encodes this body. The term may be omitted
+when a nonblank end date is supplied. A repeated request cannot renew twice:
+the current term or end date no longer matches the request's precondition.
+
+```json
+{
+  "term": 2,
+  "end_date": "2029-06-30",
+  "value": null,
+  "updated_at": "2027-05-12T18:20:00Z"
+}
+```
+
+### TerminateContractPayload
+
+Both properties are optional. The default `TerminateContractPayload()` sends
+`{}`. The reason is recorded in the termination activity, with HTML stripped;
+the SDK rejects more than 500 characters before I/O.
+
+```json
+{
+  "reason": "Supplier replaced",
+  "updated_at": "2026-10-23T12:00:00Z"
+}
+```
+
+### DocumentContract
+
+Complete contract fields, including the optional expanded document and amendment
+family. `document` is included with `expand=document`; `amendments` is included
+by single-contract and family reads. The embedded document uses the normal
+[Document](#document) shape; its own assignment/page expansion is server-controlled.
+`has_contract` is omitted here because it is provided by the workspace's direct
+document-detail route, not the contract list expansion.
+
+```json
+{
+  "resource": "document_contract",
+  "document_id": "doc-contract-1",
+  "status": "active",
+  "counterparty_name": "Example Company",
+  "counterparty_taxpayer_id": null,
+  "value": 1300,
+  "currency": "BRL",
+  "start_date": "2026-11-01",
+  "end_date": "2028-06-30",
+  "auto_renew": false,
+  "renewal_term_months": 6,
+  "notice_period_days": 45,
+  "term": 2,
+  "owner_id": "member-1",
+  "metadata": {
+    "crm_stage": "amended"
+  },
+  "external_references": [
+    {
+      "system": "crm",
+      "id": "deal-1"
+    }
+  ],
+  "created_at": "2026-10-23T12:00:00Z",
+  "updated_at": "2027-05-12T18:20:00Z",
+  "document": {
+    "resource": "document",
+    "id": "doc-contract-1",
+    "account_id": "account-1",
+    "template_id": null,
+    "name": "Service Contract.pdf",
+    "status": "certificated",
+    "artifacts": {
+      "original": "https://example.invalid/documents/doc-contract-1/original.pdf",
+      "thumbnail": "https://example.invalid/documents/doc-contract-1/thumbnail.png",
+      "certificated": "https://example.invalid/documents/doc-contract-1/certificated.pdf",
+      "certificate-page": "https://example.invalid/documents/doc-contract-1/certificate.pdf",
+      "bundle": "https://example.invalid/documents/doc-contract-1/bundle.zip"
+    },
+    "is_closed": true,
+    "signing_url": "https://example.invalid/sign/doc-contract-1",
+    "verification_code": "verification-example-1",
+    "verification_url": "https://example.invalid/verify/verification-example-1",
+    "decline_reason": null,
+    "declined_by": null,
+    "tags": [],
+    "created_at": "2026-10-20T14:00:00Z",
+    "updated_at": "2026-10-22T09:00:00Z"
+  },
+  "amendments": [
+    {
+      "resource": "document_contract_amendment",
+      "document_id": "doc-amendment-1",
+      "document_name": "Amendment 1.pdf",
+      "parent_document_id": "doc-contract-1",
+      "relation_type": "amendment",
+      "number": 1,
+      "status": "applied",
+      "document_status": "certificated",
+      "apply_error": null,
+      "currency": "BRL",
+      "terms": {
+        "value": 1300,
+        "end_date": "2028-06-30"
+      },
+      "changes": {
+        "value": {
+          "from": 1200.5,
+          "to": 1300
+        },
+        "end_date": {
+          "from": "2027-10-31",
+          "to": "2028-06-30"
+        },
+        "term": {
+          "from": 1,
+          "to": 2
+        }
+      },
+      "applied_at": "2027-05-12T18:20:00Z",
+      "created_at": "2027-05-10T15:00:00Z",
+      "updated_at": "2027-05-12T18:20:00Z"
+    }
+  ]
+}
+```
+
+### DocumentContractAmendment
+
+A pending instrument, with every amendment response field. `changes` previews
+what applying the delta would change. The GET/PUT result is decoded as
+`ContractDetails.amendment`; `ContractDetails.contract` is nil. `terms` and
+`changes` may themselves be null when the instrument moves no terms. A signed
+instrument waiting for an earlier instrument or another condition carries the
+reason in `apply_error`.
+
+```json
+{
+  "resource": "document_contract_amendment",
+  "document_id": "doc-amendment-2",
+  "document_name": "Amendment 2.pdf",
+  "parent_document_id": "doc-contract-1",
+  "relation_type": "amendment",
+  "number": null,
+  "status": "pending",
+  "document_status": "pending_signature",
+  "apply_error": null,
+  "currency": "BRL",
+  "terms": {
+    "value": 1350,
+    "end_date": "2029-06-30"
+  },
+  "changes": {
+    "value": {
+      "from": 1300,
+      "to": 1350
+    },
+    "end_date": {
+      "from": "2028-06-30",
+      "to": "2029-06-30"
+    },
+    "term": {
+      "from": 2,
+      "to": 3
+    }
+  },
+  "applied_at": null,
+  "created_at": "2028-05-10T15:00:00Z",
+  "updated_at": "2028-05-10T15:00:00Z"
+}
+```
+
+### DocumentContractAmendmentApplied
+
+An applied instrument retains its numbered change record and currency. It
+cannot be edited or unlinked. These fields also appear inside a root contract's
+`amendments` array.
+
+```json
+{
+  "resource": "document_contract_amendment",
+  "document_id": "doc-amendment-1",
+  "document_name": "Amendment 1.pdf",
+  "parent_document_id": "doc-contract-1",
+  "relation_type": "amendment",
+  "number": 1,
+  "status": "applied",
+  "document_status": "certificated",
+  "apply_error": null,
+  "currency": "BRL",
+  "terms": {
+    "value": 1300,
+    "end_date": "2028-06-30"
+  },
+  "changes": {
+    "value": {
+      "from": 1200.5,
+      "to": 1300
+    },
+    "end_date": {
+      "from": "2027-10-31",
+      "to": "2028-06-30"
+    },
+    "term": {
+      "from": 1,
+      "to": 2
+    }
+  },
+  "applied_at": "2027-05-12T18:20:00Z",
+  "created_at": "2027-05-10T15:00:00Z",
+  "updated_at": "2027-05-12T18:20:00Z"
+}
+```
+
+### DocumentContractRenewed
+
+The renewal response uses `DocumentContract`. Unrequested document and amendment
+expansions are absent. An expired contract becomes active; a terminated contract
+cannot be renewed.
+
+```json
+{
+  "resource": "document_contract",
+  "document_id": "doc-contract-1",
+  "status": "active",
+  "counterparty_name": "Example Company",
+  "counterparty_taxpayer_id": null,
+  "value": 1260,
+  "currency": "BRL",
+  "start_date": "2026-11-01",
+  "end_date": "2028-12-30",
+  "auto_renew": false,
+  "renewal_term_months": 6,
+  "notice_period_days": 45,
+  "term": 3,
+  "owner_id": "member-1",
+  "metadata": {
+    "crm_stage": "amended"
+  },
+  "external_references": [
+    {
+      "system": "crm",
+      "id": "deal-1"
+    }
+  ],
+  "created_at": "2026-10-23T12:00:00Z",
+  "updated_at": "2028-06-15T09:30:00Z"
+}
+```
+
+### DocumentContractTerminated
+
+The termination response uses `DocumentContract`. Its underlying document remains
+a separate signed artifact; terminating tracking does not cancel that document.
+
+```json
+{
+  "resource": "document_contract",
+  "document_id": "doc-contract-1",
+  "status": "terminated",
+  "counterparty_name": "Example Company",
+  "counterparty_taxpayer_id": null,
+  "value": 1300,
+  "currency": "BRL",
+  "start_date": "2026-11-01",
+  "end_date": "2028-06-30",
+  "auto_renew": false,
+  "renewal_term_months": 6,
+  "notice_period_days": 45,
+  "term": 2,
+  "owner_id": "member-1",
+  "metadata": {
+    "crm_stage": "amended"
+  },
+  "external_references": [
+    {
+      "system": "crm",
+      "id": "deal-1"
+    }
+  ],
+  "created_at": "2026-10-23T12:00:00Z",
+  "updated_at": "2028-01-31T14:00:00Z"
+}
+```
+
+The dedicated `value` fields use `NSDecimalNumber` and Foundation `Decimal` for
+exact monetary encoding/decoding. Construct inputs with `NSDecimalNumber(string:)`.
+Opaque amendment `termsJSON` and `changesJSON` use the existing `JSONValue`:
+integers remain integers, fractional numbers use `Double`, and explicit null is
+retained. Their Objective-C `terms` and `changes` views use Foundation values and
+`NSNull`. Use the root's decimal `value` for exact monetary calculations.
+
+`ContractDetails` is an SDK wrapper, not an extra JSON envelope: the wire `data`
+object is the contract or amendment itself.
+
+### ContractInputError
+
+Complete `400` response. `APIError.responseData` retains the `errors` array.
+Each stable code belongs to the named field; the top-level message is the first
+problem's message. Invalid JSON can return `400` without this array.
+
+```json
+{
+  "status": 400,
+  "message": "value must be no less than 0.",
+  "errors": [
+    {
+      "field": "value",
+      "code": "TooSmall",
+      "message": "value must be no less than 0."
+    },
+    {
+      "field": "currency",
+      "code": "Invalid",
+      "message": "currency is invalid."
+    }
+  ]
+}
+```
+
+### ContractRenewalConditionError
+
+A repeated term-based renewal. Other whole-request rules may use `field: null`,
+for example `AlreadyTerminated`, `ContractTerminated`, or `AmendmentApplied`.
+Messages are localized by the platform; branch on status and stable codes.
+
+```json
+{
+  "status": 400,
+  "message": "The contract is no longer in the requested term.",
+  "errors": [
+    {
+      "field": "term",
+      "code": "TermMismatch",
+      "message": "The contract is no longer in the requested term."
+    }
+  ]
+}
+```
+
+### ContractChanged
+
+Complete optimistic-concurrency failure. Nothing was written. Read the root or
+link again and reconcile the intended change before using its new `updated_at`.
+The SDK does not retry this response.
+
+```json
+{
+  "status": 409,
+  "message": "The contract changed after it was read; read it again and resend the change.",
+  "code": "ContractChanged"
+}
+```
+
+### NoContractTerms
+
+The document exists in the workspace but has no readable terms. A missing or
+out-of-workspace document also returns `404`, without this code.
+
+```json
+{
+  "status": 404,
+  "message": "This document has no contract terms.",
+  "code": "NoContractTerms"
 }
 ```

@@ -146,9 +146,7 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertEqual(json["whatsapp_phone_number"] as? String, "+5548999990000")
     }
 
-    func testCreateOmitsUnsupportedCPFField() async throws {
-        // The live API silently ignores `cpf`/`government_id` on signer create,
-        // so the payload must not send them.
+    func testCreateOmitsGovernmentIDWhenNotProvided() async throws {
         mock.stubEnvelopeList([])
         mock.stubEnvelope(signerDict(id: "123"))
         _ = try await resource.create(
@@ -368,6 +366,7 @@ final class SignerResourceTests: XCTestCase {
     func testGetCurrentDocumentUsesSignerEndpoint() async throws {
         mock.stubEnvelope([
             "id": "doc1",
+            "current_signer": ["id": "s1", "full_name": "Signer", "verification_method": "IdDocumentFaceMatchBasic", "completed": true],
             "account_id": "acc1",
             "name": "test.pdf",
             "status": "metadata_ready",
@@ -375,7 +374,10 @@ final class SignerResourceTests: XCTestCase {
             "created_at": "2024-01-01",
             "updated_at": "2024-01-01",
         ])
-        _ = try await resource.getCurrentDocument(signerId: "s1", signerAccessCode: "code")
+        let document = try await resource.getCurrentDocument(signerId: "s1", signerAccessCode: "code")
+        XCTAssertEqual(document.currentSigner?.id, "s1")
+        XCTAssertEqual(document.currentSigner?.verificationMethod, "IdDocumentFaceMatchBasic")
+        XCTAssertEqual(document.currentSigner?.completed, true)
         XCTAssertEqual(mock.lastRequest?.path, "/signers/s1/document")
         XCTAssertEqual(mock.lastRequest?.queryItems?.first?.name, "signer-access-code")
         XCTAssertEqual(mock.lastRequest?.queryItems?.first?.value, "code")
@@ -492,6 +494,23 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertTrue(mock.allRequests.isEmpty)
     }
 
+    func testSignatureReusePreferenceCanOptOutOrPreserveExistingChoice() async throws {
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        for preference: Bool? in [true, false, nil] {
+            mock.stubJSON(["status": 200])
+            try await resource.uploadSignature(signerAccessCode: "code", type: .signature, imageData: png, reusePreference: preference)
+            XCTAssertEqual(mock.lastRequest?.path, "/signature")
+            XCTAssertEqual(mock.lastRequest?.method, .post)
+            XCTAssertEqual(mock.lastRequest?.body, png)
+            XCTAssertEqual(mock.lastRequest?.contentType, "image/png")
+            XCTAssertEqual(mock.lastRequest?.credential, .withheld)
+            XCTAssertEqual(mock.lastRequest?.queryItems?.first { $0.name == "reuse" }?.value, preference.map { $0 ? "true" : "false" })
+        }
+        mock.stubJSON(["status": 200])
+        try await resource.uploadSignature(signerAccessCode: "code", type: .signature, imageData: png)
+        XCTAssertNil(mock.lastRequest?.queryItems?.first { $0.name == "reuse" })
+    }
+
     func testAcceptTermsWithoutResponseUsesBareEnvelope() async throws {
         mock.stubJSON(["status": 200, "message": "Accepted"])
         try await resource.acceptTermsWithoutResponse(signerAccessCode: "code")
@@ -529,6 +548,7 @@ final class SignerResourceTests: XCTestCase {
     func testGetSigningDocumentUsesGenericSignEndpoint() async throws {
         mock.stubEnvelope([
             "id": "doc1",
+            "current_signer": ["id": "s1", "full_name": "Signer", "verification_method": "IdDocumentFaceMatchBasic", "completed": true],
             "account_id": "acc1",
             "name": "test.pdf",
             "status": "pending_signature",
@@ -536,7 +556,10 @@ final class SignerResourceTests: XCTestCase {
             "created_at": "2024-01-01",
             "updated_at": "2024-01-01",
         ])
-        _ = try await resource.getSigningDocument(signerAccessCode: "code", hasAcceptedTerms: true)
+        let document = try await resource.getSigningDocument(signerAccessCode: "code", hasAcceptedTerms: true)
+        XCTAssertEqual(document.currentSigner?.id, "s1")
+        XCTAssertEqual(document.currentSigner?.verificationMethod, "IdDocumentFaceMatchBasic")
+        XCTAssertEqual(document.currentSigner?.completed, true)
         XCTAssertEqual(mock.lastRequest?.path, "/sign")
         let pairs = (mock.lastRequest?.queryItems ?? []).reduce(into: [String: String]()) { acc, item in
             acc[item.name] = item.value

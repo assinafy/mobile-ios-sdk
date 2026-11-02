@@ -164,7 +164,7 @@ public final class CostEstimate: NSObject, Decodable {
             "documents", "credits", "needs_extra_document", "extra_document_cost",
             "total_credits", "breakdown", "document_balance", "credit_balance",
             "has_sufficient_resources", "has_sufficient_credits", "blocking_reason", "message",
-            // Compatibility keys returned by earlier estimate endpoints.
+            // Alternate estimate keys accepted by this shared decoder.
             "estimated_cost", "has_sufficient_balance", "total",
         ]
         guard values.keys.contains(where: knownKeys.contains) else {

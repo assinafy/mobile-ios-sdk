@@ -115,7 +115,8 @@ extension OAuthPKCE: @unchecked Sendable {}
 ///
 /// Hand the URL from ``authorizationURL(endpoint:)`` to
 /// `ASWebAuthenticationSession`, then match the callback's `state` against
-/// ``state`` before exchanging the code.
+/// ``state`` before exchanging the code. If an `id_token` is requested, also
+/// validate its `nonce` claim against ``nonce``.
 @objcMembers
 public final class OAuthAuthorizationRequest: NSObject {
     /// The client identifier issued when the integration was registered.
@@ -131,6 +132,9 @@ public final class OAuthAuthorizationRequest: NSObject {
     /// An unguessable single-use value echoed back on the callback, which
     /// defends the redirect against cross-site request forgery.
     public let state: String
+    /// An unguessable single-use value echoed in an OpenID Connect `id_token`.
+    /// Validate the token's `nonce` claim before trusting its identity claims.
+    public let nonce: String
     /// Optional RFC 8707 resource indicator. When sent, it must equal
     /// ``OAuthProtectedResourceMetadata/resource`` and must be repeated
     /// identically at the token endpoint, or the exchange fails `invalid_target`.
@@ -145,6 +149,8 @@ public final class OAuthAuthorizationRequest: NSObject {
     ///   - pkce: A PKCE pair; a fresh one is generated when omitted.
     ///   - state: A CSRF token; a fresh one is generated when omitted.
     ///   - resource: Optional RFC 8707 resource indicator.
+    ///
+    /// A fresh OpenID Connect nonce is generated for every request.
     public init(
         clientId: String,
         redirectURI: String,
@@ -158,6 +164,29 @@ public final class OAuthAuthorizationRequest: NSObject {
         self.scopes = scopes.map(\.rawValue)
         self.pkce = pkce
         self.state = state
+        self.nonce = OAuthPKCE.randomURLSafeToken()
+        self.resource = resource
+    }
+
+    /// Creates an authorization request with a caller-retained OpenID Connect nonce.
+    ///
+    /// Use this overload when reconstructing an in-flight request after app
+    /// restoration; otherwise the standard initializer generates the nonce.
+    public init(
+        clientId: String,
+        redirectURI: String,
+        scopes: [OAuthScope],
+        pkce: OAuthPKCE = OAuthPKCE(),
+        state: String = OAuthPKCE.randomURLSafeToken(),
+        resource: String? = nil,
+        nonce: String
+    ) {
+        self.clientId = clientId
+        self.redirectURI = redirectURI
+        self.scopes = scopes.map(\.rawValue)
+        self.pkce = pkce
+        self.state = state
+        self.nonce = nonce
         self.resource = resource
     }
 
@@ -177,6 +206,27 @@ public final class OAuthAuthorizationRequest: NSObject {
         self.scopes = scopeStrings
         self.pkce = pkce
         self.state = state
+        self.nonce = OAuthPKCE.randomURLSafeToken()
+        self.resource = resource
+    }
+
+    /// Creates a raw-scope authorization request with an explicit nonce.
+    @objc(initWithClientId:redirectURI:scopeStrings:pkce:state:resource:nonce:)
+    public init(
+        clientId: String,
+        redirectURI: String,
+        scopeStrings: [String],
+        pkce: OAuthPKCE,
+        state: String,
+        resource: String?,
+        nonce: String
+    ) {
+        self.clientId = clientId
+        self.redirectURI = redirectURI
+        self.scopes = scopeStrings
+        self.pkce = pkce
+        self.state = state
+        self.nonce = nonce
         self.resource = resource
     }
 
@@ -189,7 +239,7 @@ public final class OAuthAuthorizationRequest: NSObject {
     ///   `endpoint` or the redirect URI is not an absolute HTTPS URL, or the
     ///   redirect URI contains credentials or a fragment.
     @objc public func authorizationURL(endpoint: String) -> URL? {
-        guard !clientId.isBlank, Self.isValidRedirectURI(redirectURI), !state.isBlank,
+        guard !clientId.isBlank, Self.isValidRedirectURI(redirectURI), !state.isBlank, !nonce.isBlank,
               OAuthPKCE.isValidVerifier(pkce.codeVerifier),
               let base = AssinafyClientConfiguration.normalisedBaseURL(endpoint),
               var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
@@ -200,6 +250,7 @@ public final class OAuthAuthorizationRequest: NSObject {
             URLQueryItem(name: "client_id", value: clientId),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "nonce", value: nonce),
             URLQueryItem(name: "code_challenge", value: pkce.codeChallenge),
             URLQueryItem(name: "code_challenge_method", value: pkce.codeChallengeMethod),
         ]
@@ -569,7 +620,8 @@ public final class OAuthTokenResponse: NSObject, Decodable {
     ///
     /// The SDK does not validate it. Before trusting its claims, verify the
     /// signature with the key matching its `kid` from the issuer's JWKS, and
-    /// that `iss` is the issuer, `aud` your client ID, and `exp` in the future;
+    /// that `iss` is the issuer, `aud` your client ID, `exp` is in the future,
+    /// and `nonce` matches the originating ``OAuthAuthorizationRequest/nonce``;
     /// or read the claims from ``OAuthResource/userInfo()``.
     public let idToken: String?
     /// When this response was decoded, which is the clock the SDK has closest
@@ -748,6 +800,10 @@ public final class OAuthAuthorizationServerMetadata: NSObject, Decodable {
     public let userinfoEndpoint: String?
     /// Where to fetch the keys that sign `id_token`s.
     public let jwksURI: String?
+    /// Confidential-client token introspection endpoint. Public mobile clients cannot use it.
+    public let introspectionEndpoint: String?
+    /// Client authentication methods accepted by the introspection endpoint.
+    public let introspectionEndpointAuthMethodsSupported: [String]
     /// Every scope the server can issue, `offline_access` included.
     public let scopesSupported: [String]
     /// Supported `response_type` values; `code` only.
@@ -761,6 +817,8 @@ public final class OAuthAuthorizationServerMetadata: NSObject, Decodable {
     public let tokenEndpointAuthMethodsSupported: [String]
     /// Whether the server returns the RFC 9207 `iss` parameter on the callback.
     public let authorizationResponseISSParameterSupported: Bool
+    /// Whether the server accepts OAuth client metadata documents.
+    public let clientIdMetadataDocumentSupported: Bool
 
     init(
         issuer: String,
@@ -769,12 +827,15 @@ public final class OAuthAuthorizationServerMetadata: NSObject, Decodable {
         revocationEndpoint: String?,
         userinfoEndpoint: String?,
         jwksURI: String?,
+        introspectionEndpoint: String?,
+        introspectionEndpointAuthMethodsSupported: [String],
         scopesSupported: [String],
         responseTypesSupported: [String],
         grantTypesSupported: [String],
         codeChallengeMethodsSupported: [String],
         tokenEndpointAuthMethodsSupported: [String],
-        authorizationResponseISSParameterSupported: Bool
+        authorizationResponseISSParameterSupported: Bool,
+        clientIdMetadataDocumentSupported: Bool
     ) {
         self.issuer = issuer
         self.authorizationEndpoint = authorizationEndpoint
@@ -782,12 +843,15 @@ public final class OAuthAuthorizationServerMetadata: NSObject, Decodable {
         self.revocationEndpoint = revocationEndpoint
         self.userinfoEndpoint = userinfoEndpoint
         self.jwksURI = jwksURI
+        self.introspectionEndpoint = introspectionEndpoint
+        self.introspectionEndpointAuthMethodsSupported = introspectionEndpointAuthMethodsSupported
         self.scopesSupported = scopesSupported
         self.responseTypesSupported = responseTypesSupported
         self.grantTypesSupported = grantTypesSupported
         self.codeChallengeMethodsSupported = codeChallengeMethodsSupported
         self.tokenEndpointAuthMethodsSupported = tokenEndpointAuthMethodsSupported
         self.authorizationResponseISSParameterSupported = authorizationResponseISSParameterSupported
+        self.clientIdMetadataDocumentSupported = clientIdMetadataDocumentSupported
     }
 
     enum CodingKeys: String, CodingKey {
@@ -797,12 +861,15 @@ public final class OAuthAuthorizationServerMetadata: NSObject, Decodable {
         case revocationEndpoint = "revocation_endpoint"
         case userinfoEndpoint = "userinfo_endpoint"
         case jwksURI = "jwks_uri"
+        case introspectionEndpoint = "introspection_endpoint"
+        case introspectionEndpointAuthMethodsSupported = "introspection_endpoint_auth_methods_supported"
         case scopesSupported = "scopes_supported"
         case responseTypesSupported = "response_types_supported"
         case grantTypesSupported = "grant_types_supported"
         case codeChallengeMethodsSupported = "code_challenge_methods_supported"
         case tokenEndpointAuthMethodsSupported = "token_endpoint_auth_methods_supported"
         case authorizationResponseISSParameterSupported = "authorization_response_iss_parameter_supported"
+        case clientIdMetadataDocumentSupported = "client_id_metadata_document_supported"
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -814,6 +881,10 @@ public final class OAuthAuthorizationServerMetadata: NSObject, Decodable {
             revocationEndpoint: try c.decodeIfPresent(String.self, forKey: .revocationEndpoint),
             userinfoEndpoint: try c.decodeIfPresent(String.self, forKey: .userinfoEndpoint),
             jwksURI: try c.decodeIfPresent(String.self, forKey: .jwksURI),
+            introspectionEndpoint: try c.decodeIfPresent(String.self, forKey: .introspectionEndpoint),
+            introspectionEndpointAuthMethodsSupported: try c.decodeIfPresent(
+                [String].self, forKey: .introspectionEndpointAuthMethodsSupported
+            ) ?? [],
             scopesSupported: try c.decodeIfPresent([String].self, forKey: .scopesSupported) ?? [],
             responseTypesSupported: try c.decodeIfPresent([String].self, forKey: .responseTypesSupported) ?? [],
             grantTypesSupported: try c.decodeIfPresent([String].self, forKey: .grantTypesSupported) ?? [],
@@ -825,6 +896,9 @@ public final class OAuthAuthorizationServerMetadata: NSObject, Decodable {
             ) ?? [],
             authorizationResponseISSParameterSupported: try c.decodeIfPresent(
                 Bool.self, forKey: .authorizationResponseISSParameterSupported
+            ) ?? false,
+            clientIdMetadataDocumentSupported: try c.decodeIfPresent(
+                Bool.self, forKey: .clientIdMetadataDocumentSupported
             ) ?? false
         )
     }

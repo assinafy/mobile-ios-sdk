@@ -190,12 +190,22 @@ endpoint (`https://auth.assinafy.com.br/oauth/authorize`):
 | `client_id` | The registered client identifier |
 | `redirect_uri` | The registered `https://` redirect URI, matched exactly |
 | `state` | 43 BASE64URL characters of CSPRNG output, single-use |
+| `nonce` | 43 BASE64URL characters of CSPRNG output, single-use; validate it against the `id_token` claim |
 | `code_challenge` | BASE64URL(SHA256(`code_verifier`)) |
 | `code_challenge_method` | Always `S256` |
 | `scope` | Space-separated scopes; omitted when empty |
 | `resource` | RFC 8707 resource indicator; omitted when `nil` |
 
-The `code_verifier` is **never** sent here. `OAuthCallback.validate(against:issuer:)`
+Swift callers use `init(clientId:redirectURI:scopes:pkce:state:resource:)` or
+its trailing `nonce:` overload. Raw and Objective-C scopes use
+`initWithClientId:redirectURI:scopeStrings:pkce:state:resource:` or
+`initWithClientId:redirectURI:scopeStrings:pkce:state:resource:nonce:`. Both
+forms expose `clientId`, `redirectURI`, `scopes`, `pkce`,
+`state`, `nonce`, and `resource` as immutable properties.
+
+The standard initializer generates a fresh nonce. The explicit-`nonce` overload
+restores a retained in-flight request. The `code_verifier` is **never** sent here.
+`OAuthCallback.validate(against:issuer:)`
 then checks the callback, `state` and `iss` first on approvals and error
 redirects alike: it throws `ValidationError` on a `state` mismatch (compared in
 constant time) on duplicate security parameters or conflicting `code`/`error`, or on a missing `iss` or one other than the expected issuer
@@ -246,8 +256,10 @@ rejected as `ValidationError`.
 ```
 
 `refresh_token` is present only when `offline_access` was requested **and**
-consented. `id_token` is present only when `openid` was granted; the SDK does
-not validate it. `scope` lists the access token's scopes and never contains
+consented. `id_token` is present only when `openid` was granted. Before using
+its identity claims, validate its signature, issuer, audience, expiry, and
+`nonce` against the originating authorization request; the SDK does not parse
+or validate it. `scope` lists the access token's scopes and never contains
 `offline_access`, which is a request-time signal rather than a permission, so
 whether a refresh token was issued is read from `refresh_token`, never `scope`.
 `OAuthTokenResponse` adds `issuedAt` (decode time), `expiresAt`, `scopes`, and
@@ -318,16 +330,24 @@ The authorization server's own document does list it.
   "revocation_endpoint": "https://api.assinafy.com.br/v1/oauth/revoke",
   "userinfo_endpoint": "https://api.assinafy.com.br/v1/oauth/userinfo",
   "jwks_uri": "https://auth.assinafy.com.br/.well-known/jwks.json",
+  "introspection_endpoint": "https://api.assinafy.com.br/v1/oauth/introspect",
+  "introspection_endpoint_auth_methods_supported": ["client_secret_post"],
   "scopes_supported": ["documents:read", "documents:write", "templates:read",
                        "templates:write", "account:read", "webhooks:write", "openid", "profile",
                        "email", "offline_access"],
   "response_types_supported": ["code"],
-  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "grant_types_supported": ["authorization_code", "refresh_token",
+                            "urn:ietf:params:oauth:grant-type:token-exchange"],
   "code_challenge_methods_supported": ["S256"],
   "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
-  "authorization_response_iss_parameter_supported": true
+  "authorization_response_iss_parameter_supported": true,
+  "client_id_metadata_document_supported": true
 }
 ```
+
+`OAuthAuthorizationServerMetadata` exposes every field above. Introspection and
+token exchange require confidential server credentials and are not operations
+of this public mobile SDK.
 
 ### Scopes
 

@@ -106,10 +106,37 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertEqual(items["client_id"], "client-123")
         XCTAssertEqual(items["redirect_uri"], "https://app.example.invalid/oauth/callback")
         XCTAssertEqual(items["state"], request.state)
+        XCTAssertEqual(items["nonce"], request.nonce)
         XCTAssertEqual(items["code_challenge"], request.pkce.codeChallenge)
         XCTAssertEqual(items["code_challenge_method"], "S256")
         XCTAssertEqual(items["scope"], "documents:read webhooks:write offline_access")
         XCTAssertEqual(items["resource"], "https://api.assinafy.com.br")
+    }
+
+    func testAuthorizationNoncesAreDistinctAndCanBeRestored() throws {
+        let first = makeRequest()
+        let second = makeRequest()
+        XCTAssertNotEqual(first.nonce, second.nonce)
+        XCTAssertEqual(first.nonce.utf8.count, 43)
+
+        let restored = OAuthAuthorizationRequest(
+            clientId: "client-123",
+            redirectURI: "https://app.example.invalid/oauth/callback",
+            scopes: [.openID],
+            nonce: "retained-nonce"
+        )
+        let url = try XCTUnwrap(restored.authorizationURL(endpoint: OAuthResource.defaultAuthorizationEndpoint))
+        let nonce = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "nonce" })?.value
+        XCTAssertEqual(nonce, "retained-nonce")
+
+        let invalid = OAuthAuthorizationRequest(
+            clientId: "client-123",
+            redirectURI: "https://app.example.invalid/oauth/callback",
+            scopes: [.openID],
+            nonce: " "
+        )
+        XCTAssertNil(invalid.authorizationURL(endpoint: OAuthResource.defaultAuthorizationEndpoint))
     }
 
     func testAuthorizationURLNeverLeaksTheCodeVerifier() throws {
@@ -576,12 +603,17 @@ final class OAuthResourceTests: XCTestCase {
             "revocation_endpoint": "https://api.assinafy.com.br/v1/oauth/revoke",
             "userinfo_endpoint": "https://api.assinafy.com.br/v1/oauth/userinfo",
             "jwks_uri": "https://auth.assinafy.com.br/.well-known/jwks.json",
+            "introspection_endpoint": "https://api.assinafy.com.br/v1/oauth/introspect",
+            "introspection_endpoint_auth_methods_supported": ["client_secret_post"],
             "scopes_supported": ["documents:read", "offline_access"],
             "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "grant_types_supported": [
+                "authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:token-exchange",
+            ],
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
             "authorization_response_iss_parameter_supported": true,
+            "client_id_metadata_document_supported": true,
         ])
         let metadata = try await oauth.authorizationServerMetadata()
         XCTAssertEqual(
@@ -592,6 +624,9 @@ final class OAuthResourceTests: XCTestCase {
         XCTAssertEqual(metadata.issuer, "https://auth.assinafy.com.br")
         XCTAssertEqual(metadata.codeChallengeMethodsSupported, ["S256"])
         XCTAssertTrue(metadata.authorizationResponseISSParameterSupported)
+        XCTAssertEqual(metadata.introspectionEndpoint, "https://api.assinafy.com.br/v1/oauth/introspect")
+        XCTAssertEqual(metadata.introspectionEndpointAuthMethodsSupported, ["client_secret_post"])
+        XCTAssertTrue(metadata.clientIdMetadataDocumentSupported)
         XCTAssertEqual(
             metadata.authorizationEndpoint,
             OAuthResource.defaultAuthorizationEndpoint,

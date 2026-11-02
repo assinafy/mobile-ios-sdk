@@ -50,6 +50,7 @@ final class PayloadDocumentationTests: XCTestCase {
         try decode("response-9", as: OAuthTokenResponse.self)
         try decode("response-10", as: OAuthUserInfo.self)
         try decode("response-18", as: OAuthProtectedResourceMetadata.self)
+        try decode("OAuthAuthorizationServerMetadata", as: OAuthAuthorizationServerMetadata.self)
         try decode("AuthUser", as: User.self)
         try decode("AuthAccount", as: Account.self)
         try decode("AuthSession", as: LoginResponse.self)

@@ -275,8 +275,7 @@ extension Assignment: Decodable {
         // The collect-assignment create response documents `"method": null`,
         // so decode defensively and default to the documented `virtual` value.
         let methodString = (try c.decodeIfPresent(String.self, forKey: .method)) ?? "virtual"
-        // The live API returns `expires_at`; the published docs examples use
-        // `expiration`. Accept either so the value is never silently dropped.
+        // Assignment payloads may use `expires_at` or `expiration`.
         let expiresAt = try decodeFlexibleOptionalString(from: c, forKey: .expiresAt)
             ?? decodeFlexibleOptionalString(from: c, forKey: .expiration)
         self.init(

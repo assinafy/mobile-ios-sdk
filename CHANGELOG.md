@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.13.0] - 2026-11-02
+
+### Added
+
+- OAuth authorization requests generate, expose, and send a single-use OpenID Connect nonce, with an overload for restoring an in-flight request.
+- Authorization-server metadata exposes the introspection endpoint, its authentication methods, and client metadata-document support.
+
+### Changed
+
+- The application guides provide compact end-to-end marketplace, signing, biometric, certificate, contract, and webhook flows.
+
 ## [1.12.0] - 2026-10-28
 
 ### Added

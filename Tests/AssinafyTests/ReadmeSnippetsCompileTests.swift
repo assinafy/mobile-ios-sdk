@@ -352,6 +352,7 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
             scopes: [.documentsRead, .documentsWrite, .offlineAccess],
             resource: resource.resource
         )
+        _ = request.nonce
         _ = request.authorizationURL(endpoint: server.authorizationEndpoint)!
         _ = client.oauth.authorizationURL(for: request)
 

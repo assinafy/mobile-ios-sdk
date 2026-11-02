@@ -447,7 +447,7 @@ Encode these fields as `application/x-www-form-urlencoded`.
 ```json
 {
   "channel": "email",
-  "recipient": "signer@example.com"
+  "recipient": "signer@example.invalid"
 }
 ```
 
@@ -952,6 +952,46 @@ Send the password, a live authenticator code, or a recovery code; one is enough.
   ]
 }
 ```
+
+### OAuthAuthorizationServerMetadata
+
+`GET https://auth.assinafy.com.br/.well-known/oauth-authorization-server`
+
+```json
+{
+  "issuer": "https://auth.assinafy.com.br",
+  "authorization_endpoint": "https://auth.assinafy.com.br/oauth/authorize",
+  "token_endpoint": "https://api.assinafy.com.br/v1/oauth/token",
+  "revocation_endpoint": "https://api.assinafy.com.br/v1/oauth/revoke",
+  "userinfo_endpoint": "https://api.assinafy.com.br/v1/oauth/userinfo",
+  "jwks_uri": "https://auth.assinafy.com.br/.well-known/jwks.json",
+  "introspection_endpoint": "https://api.assinafy.com.br/v1/oauth/introspect",
+  "introspection_endpoint_auth_methods_supported": [
+    "client_secret_post"
+  ],
+  "scopes_supported": [
+    "documents:read", "documents:write", "templates:read", "templates:write",
+    "account:read", "webhooks:write", "openid", "profile", "email", "offline_access"
+  ],
+  "response_types_supported": [
+    "code"
+  ],
+  "grant_types_supported": [
+    "authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:token-exchange"
+  ],
+  "code_challenge_methods_supported": [
+    "S256"
+  ],
+  "token_endpoint_auth_methods_supported": [
+    "client_secret_post", "none"
+  ],
+  "authorization_response_iss_parameter_supported": true,
+  "client_id_metadata_document_supported": true
+}
+```
+
+The introspection and token-exchange capabilities require confidential server
+credentials and are not called by a public mobile application.
 
 ### response-19
 
@@ -1884,7 +1924,7 @@ the numeric compatibility property is zero. A reminder consumes no document.
     "created_by": "Example Workspace"
   },
   "channel": "email",
-  "recipient": "signer@example.com"
+  "recipient": "signer@example.invalid"
 }
 ```
 

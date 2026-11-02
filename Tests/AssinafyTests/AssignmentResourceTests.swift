@@ -484,8 +484,7 @@ final class AssignmentResourceTests: XCTestCase {
         XCTAssertEqual(assignment.methodString, "virtual")
     }
 
-    /// The published docs examples use the `expiration` key while the live API
-    /// uses `expires_at`; both must populate ``Assignment/expiresAt``.
+    /// The alternate `expiration` key must populate ``Assignment/expiresAt``.
     func testAssignmentDecodesExpirationKeyFallback() async throws {
         mock.stubEnvelope([
             "id": "a1",
@@ -500,7 +499,7 @@ final class AssignmentResourceTests: XCTestCase {
         XCTAssertEqual(assignment.expiresAt, "2026-01-01T00:00:00Z")
     }
 
-    /// `expires_at` (live API) takes precedence and is decoded as-is.
+    /// `expires_at` takes precedence and is decoded as-is.
     func testAssignmentDecodesExpiresAtKey() async throws {
         mock.stubEnvelope([
             "id": "a1",

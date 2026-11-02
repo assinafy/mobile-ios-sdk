@@ -1,1090 +1,158 @@
-# SDK iOS da Assinafy
+# Assinafy SDK para iOS
 
-*Português · [Read in English](README.en.md)*
+SDK Swift 6 sem dependências externas para a API Assinafy v1. Compatível com iOS 16+ e macOS 12+, com APIs `async/await` e adaptadores Objective-C que retornam na fila principal.
 
-Acesso nativo em Swift e Objective-C à [API Assinafy v1](https://api.assinafy.com.br/v1/docs) —
-plataforma brasileira de assinatura eletrônica: documentos, signatários, assignments, campos, tags,
-templates, contratos, workspaces, webhooks e autenticação.
-
-O SDK cobre todas as operações do documento OpenAPI v1 publicado. As requisições são
-`async`/`await` primeiro, com wrappers de completion handler para Objective-C. As respostas
-decodificam em modelos tipados, e as falhas aparecem como quatro tipos distintos de erro Swift que
-fazem bridge limpo para `NSError`.
-
-Sem dependências de terceiros: apenas Foundation e CryptoKit.
-
-## Sumário
-
-1. [Requisitos](#requisitos)
-2. [Instalação](#instalação)
-3. [Início rápido](#início-rápido)
-4. [Configurando o cliente](#configurando-o-cliente)
-5. [As quatro formas de autenticar](#as-quatro-formas-de-autenticar)
-6. [OAuth 2.1 com PKCE](#oauth-21-com-pkce)
-7. [Como as credenciais são enviadas](#como-as-credenciais-são-enviadas)
-8. [O ciclo de vida da assinatura](#o-ciclo-de-vida-da-assinatura)
-9. [Métodos de verificação do signatário](#métodos-de-verificação-do-signatário)
-10. [O lado do signatário](#o-lado-do-signatário)
-11. [Templates](#templates)
-12. [Tags, campos e JSON não tipado](#tags-campos-e-json-não-tipado)
-13. [Workspaces e webhooks](#workspaces-e-webhooks)
-14. [Paginação](#paginação)
-15. [Tratamento de erros](#tratamento-de-erros)
-16. [Transporte e segurança de rede](#transporte-e-segurança-de-rede)
-17. [Objective-C](#objective-c)
-18. [Mapa de recursos](#mapa-de-recursos)
-19. [Ambientes](#ambientes)
-20. [Testes](#testes)
-21. [Gestão de contratos](#gestão-de-contratos)
-22. [Versionamento](#versionamento)
-
-## Requisitos
-
-| | |
-| --- | --- |
-| iOS | 16.0+ |
-| macOS | 12.0+ |
-| Swift | 6.3+ (modo de linguagem 6) |
-| Xcode | 26.6+ |
-| TLS | 1.2+ (o SDK recusa TLS 1.0 e 1.1) |
-
-Swift e Xcode não têm canal de release LTS. O pacote mantém Swift 6.3 como versão mínima
-e usa o modo de linguagem 6. As versões suportadas de Swift e Xcode são validadas
-com concorrência estrita e avisos tratados como erros.
+[English](README.en.md) · [Referência completa](docs/API_REFERENCE.md) · [Payloads JSON](docs/PAYLOADS.md) · [API Assinafy](https://api.assinafy.com.br/v1/docs)
 
 ## Instalação
 
-Adicione o pacote e o produto ao `Package.swift`:
+No Xcode, adicione este repositório como Swift Package, ou declare:
 
 ```swift
-dependencies: [
-    .package(
-        url: "https://github.com/assinafy/mobile-ios-sdk.git",
-        from: "1.12.0"
-    ),
-],
-targets: [
-    .target(
-        name: "SeuApp",
-        dependencies: [
-            .product(name: "Assinafy", package: "mobile-ios-sdk"),
-        ]
-    ),
-]
+.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.13.0")
 ```
 
-No Xcode, escolha **File → Add Package Dependencies…** e informe a URL do repositório.
+O produto é `Assinafy`. Importe-o com `import Assinafy`.
 
-## Início rápido
+## Autenticação
 
-Enviar um PDF para um signatário:
+Use uma credencial por cliente. Nunca distribua uma API key em um aplicativo de terceiros.
 
 ```swift
-import Assinafy
-
-let client = AssinafyClient(token: bearerToken, defaultAccountId: accountId)
-
-let enviado = try await client.documents.upload(pdfData)
-let documento = try await client.documents.waitUntilReady(documentId: enviado.id)
-
-let signatario = try await client.signers.create(
-    CreateSignerPayload(fullName: "Ana Souza", email: "ana@exemplo.invalid")
+let workspaceClient = AssinafyClient(
+    apiKey: apiKey,
+    defaultAccountId: accountId
 )
 
-let assignment = try await client.assignments.create(
-    documentId: documento.id,
-    payload: .withSignerIds([signatario.id], method: .virtual, message: "Por favor, revise e assine.")
+let userClient = AssinafyClient(
+    token: accessToken,
+    defaultAccountId: selectedAccountId
 )
 ```
 
-## Configurando o cliente
-
-Crie **um** cliente e mantenha uma referência forte a ele. `AssinafyClient` é thread-safe e seus
-objetos de recurso são visões sem estado sobre um transporte compartilhado.
-
-```swift
-import Assinafy
-
-let configuration = AssinafyClientConfiguration(
-    token: bearerToken,        // ou apiKey:, nunca os dois
-    baseURL: AssinafyClientConfiguration.productionBaseURL,
-    defaultAccountId: accountId,
-    timeout: 30,
-    logger: NoopLogger()
-)
-try configuration.validate()
-let client = AssinafyClient(configuration: configuration)
-```
-
-`defaultAccountId` é aplicado a toda chamada com escopo de conta. Qualquer método que receba um
-argumento `accountId` o sobrescreve naquela chamada.
-
-A configuração **falha fechada**. `validate()` rejeita credenciais conflitantes ou malformadas,
-timeout não positivo ou não finito, identificador inseguro, e qualquer URL base que não seja uma
-URL HTTPS absoluta livre de informação de usuário, query e fragmento. As mesmas checagens rodam em
-toda requisição, então um cliente construído sem chamar `validate()` lança `ValidationError` antes
-de fazer I/O de rede, em vez de enviar uma requisição malformada.
-
-Algumas operações não precisam de credencial alguma. Deixe as duas de fora para login, redefinição
-de senha, as rotas públicas de documento e a troca de tokens OAuth:
-
-```swift
-let publicClient = AssinafyClient(configuration: AssinafyClientConfiguration())
-
-let session: LoginResponse
-do {
-    session = try await publicClient.auth.login(LoginPayload(email: email, password: password))
-} catch let desafio as MFARequiredError {
-    // Autenticação em dois fatores: peça o código do app autenticador (ou um código de recuperação).
-    session = try await publicClient.auth.verifyMFA(
-        VerifyMFAPayload(mfaToken: desafio.mfaToken, code: codigo)
-    )
-}
-```
-
-O `mfaToken` vale uma vez e expira cinco minutos após o login. Com o usuário autenticado,
-`auth.enrollTOTP(label:)` devolve o segredo e a `provisioningURI` (mostre como QR code),
-`auth.confirmTOTP(_:)` ativa o método e devolve os códigos de recuperação — ambos aparecem uma única
-vez. `auth.mfaStatus()`, `auth.regenerateRecoveryCodes(_:)` e `auth.removeMFAMethod(id:_:)` completam
-a gestão; as duas últimas exigem senha ou código atual em `MFAReauthPayload`.
-
-## As quatro formas de autenticar
-
-| Forma | Quem é autenticado | Onde usar |
-| --- | --- | --- |
-| **Chave de API** (`X-Api-Key`) | O workspace, permanentemente | Back-end confiável |
-| **Token bearer** (`Authorization`) | O usuário que fez login | App móvel distribuído |
-| **OAuth 2.1** (`Authorization`) | Um app agindo **em nome de** um usuário, com escopos que ele aprovou | Integrações de terceiros, assistentes de IA |
-| **Código de acesso do signatário** | Um signatário, para um documento | O lado de quem assina |
-
-> **Escolha a credencial que combina com onde o código roda.** Uma chave de API permanente concede
-> acesso permanente a todo o workspace e pertence a um back-end confiável — **nunca** a um bundle
-> de app, de onde pode ser extraída. Tokens bearer e tokens OAuth pertencem a apps móveis.
-
-OAuth é a escolha certa quando o código **não é** o dono do workspace: o usuário aprova um conjunto
-nomeado de permissões numa tela de consentimento da Assinafy, e o token resultante fica limitado a
-elas e a um único workspace. Independentemente dos escopos, um token OAuth nunca alcança cobrança,
-ciclo de vida da conta, gestão de credenciais ou superfícies administrativas.
+O transporte exige HTTPS/TLS 1.2+, não segue redirecionamentos de token ou revogação e nunca repete uma requisição automaticamente.
 
 ## OAuth 2.1 com PKCE
 
-Fluxo de authorization code com **PKCE S256 obrigatório**. Um app móvel é um *cliente público*:
-autentica-se por PKCE e nunca recebe um client secret — um segredo embarcado no bundle pode ser
-extraído dele.
-
-> **Disponível apenas em produção.** O host de sandbox ainda não expõe os endpoints OAuth.
-
-### Cadastre e conecte o aplicativo
-
-No painel Assinafy, abra **Integrações → Aplicações OAuth**, cadastre uma aplicação
-**pública**, seu nome, o callback HTTPS e os escopos necessários. Guarde o `client_id`;
-o aplicativo iOS não recebe nem armazena `client_secret`. Use um domínio de callback
-que você controla e configure os domínios associados e a entrega do retorno no app.
-
-Para desenvolvimento, um servidor de callback local pode receber o retorno por um
-túnel HTTPS temporário do Cloudflare. Cadastre a URL exata do túnel antes da autorização;
-se a URL mudar, atualize o cadastro. A descoberta, o login e o consentimento usam os
-hosts de produção. O usuário seleciona um workspace e aprova os escopos.
-
-Depois do callback, valide estado e emissor, troque o código uma vez, identifique o
-workspace escolhido e crie o cliente com esse `defaultAccountId`. Guarde tokens no
-Keychain, separados por conexão e workspace. Não registre códigos, verificadores,
-access tokens ou refresh tokens. Serializar refreshes e persistir a rotação é
-responsabilidade do app. Ao desconectar, revogue o último refresh token e remova os
-tokens locais; para conectar novamente, crie um novo pedido PKCE e `state`.
-
-### Escopos
-
-| Escopo | Concede |
-| --- | --- |
-| `documents:read` | Ler documentos, páginas, tags, signatários, assignments e atividades |
-| `documents:write` | Criar, atualizar e excluir documentos e gerenciar seus signatários e assignments |
-| `templates:read` | Ler templates, suas páginas, papéis, campos e tags |
-| `templates:write` | Criar, atualizar e excluir templates e seu conteúdo |
-| `account:read` | Ler o perfil, o tema e o logo do workspace |
-| `webhooks:write` | Configurar e desativar a assinatura de webhooks do workspace |
-| `openid` | Identificar o usuário autenticado e habilitar `/oauth/userinfo` |
-| `profile` | Incluir o nome do usuário nas claims |
-| `email` | Incluir o e-mail e seu status de verificação nas claims |
-| `offline_access` | Receber um refresh token, para continuar funcionando sem novo consentimento |
-
-Passe `OAuthScope.webhooksWrite` pelo inicializador `scopeStrings` de `OAuthAuthorizationRequest` ao solicitar acesso a webhooks.
-
-O usuário aprova tudo o que foi pedido ou nada: peça o mínimo e leia `scope` na resposta do token
-para saber o que foi concedido. Uma chamada sem o escopo que exige responde `403` com
-`WWW-Authenticate: Bearer error="insufficient_scope", scope="…"`, e `APIError.insufficientScope`
-devolve esse escopo: peça ao usuário para conectar de novo incluindo-o, porque repetir a chamada não
-resolve. Um `403` sem esse desafio indica outro workspace, o papel do próprio usuário ou uma área que
-tokens OAuth nunca alcançam.
-
-### 1. Descubra o servidor de autorização
+Apps de marketplace são clientes públicos: callback HTTPS exato, PKCE S256, sem `client_secret`. OAuth está disponível somente em produção.
 
 ```swift
-let recurso = try await client.oauth.protectedResourceMetadata()
-let servidor = try await client.oauth.authorizationServerMetadata(
-    issuer: recurso.authorizationServers[0]
+let publicClient = AssinafyClient(configuration: AssinafyClientConfiguration())
+let resource = try await publicClient.oauth.protectedResourceMetadata()
+let server = try await publicClient.oauth.authorizationServerMetadata(
+    issuer: resource.authorizationServers[0]
 )
-```
-
-A descoberta é opcional — `OAuthResource.defaultAuthorizationEndpoint` e `defaultIssuer` trazem os
-valores de produção — mas os metadados publicados são a fonte autoritativa, e ambas as rotas são
-públicas e não carregam credencial alguma.
-
-### 2. Monte a URL de autorização
-
-```swift
-let pedido = OAuthAuthorizationRequest(
+let request = OAuthAuthorizationRequest(
     clientId: clientId,
-    redirectURI: "https://meuapp.exemplo.invalid/oauth/callback",
+    redirectURI: "https://app.example.invalid/oauth/callback",
     scopes: [.documentsRead, .documentsWrite, .offlineAccess],
-    resource: recurso.resource
+    resource: resource.resource
 )
-
-let url = pedido.authorizationURL(endpoint: servidor.authorizationEndpoint)!
+let authorizationURL = request.authorizationURL(endpoint: server.authorizationEndpoint)!
 ```
 
-`OAuthAuthorizationRequest` já gera o par PKCE e um `state` imprevisível. **Guarde `pedido` em
-memória** até a troca do código: ele carrega o `codeVerifier`, que nunca vai para a URL, para o
-disco ou para um log.
-
-O `redirectURI` precisa ser um endereço `https://` cadastrado na aplicação, idêntico caractere a
-caractere: a Assinafy não aceita esquema próprio (`meuapp://`) nem `http://localhost`. Abra `url`
-numa `ASWebAuthenticationSession`; no iOS 17.4+ e no macOS 14.4+, `callback: .https(host:path:)`
-recebe o retorno num host dos domínios associados do app. Em versões anteriores, a página `https://`
-cadastrada pode repassar o retorno inteiro para o esquema próprio do app.
-
-### 3. Verifique o retorno
+Abra `authorizationURL` com `ASWebAuthenticationSession` e mantenha `request` até o retorno. O SDK gera PKCE, `state` e `nonce` novos. Valide `state` e `iss` antes de trocar o código:
 
 ```swift
-let codigo = try OAuthCallback(callbackURL: callbackURL)!
-    .validate(against: pedido, issuer: servidor.issuer)
-```
-
-`validate(against:issuer:)` confere antes de tudo o `state`, em tempo constante, e o parâmetro `iss`
-(RFC 9207) — tanto na aprovação quanto num retorno de erro. Um `state` ou `iss` divergente significa
-que o redirect não veio do fluxo que este app iniciou, e nada nele é usado. Só então o método lança o
-erro relatado pelo servidor (`access_denied`, `invalid_scope`, …) ou devolve o código. Sem `issuer:`,
-o `iss` é comparado com `OAuthResource.defaultIssuer`.
-
-### 4. Troque o código por um token
-
-```swift
-let token = try await client.oauth.exchangeAuthorizationCode(
+let code = try OAuthCallback(callbackURL: callbackURL)!
+    .validate(against: request, issuer: server.issuer)
+let token = try await publicClient.oauth.exchangeAuthorizationCode(
     .authorizationCode(
-        code: codigo,
-        redirectURI: pedido.redirectURI,
-        codeVerifier: pedido.pkce.codeVerifier,
+        code: code,
+        redirectURI: request.redirectURI,
+        codeVerifier: request.pkce.codeVerifier,
         clientId: clientId,
-        resource: recurso.resource
+        resource: resource.resource
     )
 )
-
-var clienteDoUsuario = AssinafyClient(token: token.accessToken)
-let workspaceId = try await clienteDoUsuario.workspaces.list().data[0].id
 ```
 
-O código vale uma única vez e expira 60 segundos depois da aprovação: troque-o na hora e, se a troca
-falhar, comece uma nova autorização — o SDK nunca repete a requisição. Com um token OAuth,
-`workspaces.list()` devolve exatamente o workspace que o usuário escolheu. Guarde `workspaceId` junto
-dos tokens e use-o como `defaultAccountId` ou `accountId:`: uma conexão vale para um único
-workspace, e qualquer outro responde `403`, mesmo que o usuário pertença a ele.
+Se usar `id_token`, valide assinatura, `iss`, `aud`, `exp` e o `nonce` de `request`. Como alternativa, leia identidade com `oauth.userInfo()`. O endpoint de introspecção publicado exige credencial confidencial e não pertence ao app móvel.
 
-### 5. Renove e revogue
+Depois da troca:
+
+1. Salve tokens no Keychain.
+2. Liste `userClient.workspaces.list()` e escolha um workspace; configure seu ID como `defaultAccountId`.
+3. Renove uma vez por conexão, sem concorrência. Cada renovação gira o refresh token: persista o novo antes de usar o access token.
+4. Se o resultado da renovação for incerto, não reutilize o token enviado; reconecte o usuário.
+5. Ao desconectar, revogue o refresh token mais recente uma única vez e apague o armazenamento local.
+
+Tokens OAuth respeitam escopos e não acessam cobrança, ciclo de vida da conta, administração ou API keys.
+
+## Fluxo completo de assinatura
+
+O fluxo é: upload → processamento → signatários → estimativa → atribuição → confirmação/verificação → assinatura → certificação e download.
 
 ```swift
-// Grave os tokens assim que chegarem, junto de `workspaceId`.
-try gravarTokens(token)
-
-// Quando o access token expirar, ou uma chamada responder 401: envie o último refresh token gravado.
-let enviado = try refreshTokenGravado()
-let novo = try await client.oauth.refreshAccessToken(
-    .refreshToken(enviado, clientId: clientId)
-)
-try gravarTokens(novo)   // antes de tudo: `enviado` já está aposentado
-clienteDoUsuario = AssinafyClient(token: novo.accessToken, defaultAccountId: workspaceId)
-
-// Quando o usuário desconectar: revogue o último refresh token gravado e apague os tokens.
-let ultimo = try refreshTokenGravado()
-try await client.oauth.revoke(OAuthRevokePayload(token: ultimo, clientId: clientId))
-try apagarTokens()
-```
-
-`gravarTokens`, `refreshTokenGravado` e `apagarTokens` representam o armazenamento do próprio app
-no Keychain. Um cliente guarda o token com que foi criado, então crie um novo a cada access token
-renovado.
-
-`refreshToken` só existe quando `offline_access` foi pedido **e** consentido; sem ele, conduza o
-usuário pelo fluxo de autorização novamente quando o access token expirar, e revogue o access token
-quando ele desconectar.
-
-Cada renovação devolve um **novo** `refreshToken` e aposenta o enviado, e reutilizar um refresh
-token aposentado encerra a conexão inteira: todos os tokens param de funcionar e o usuário precisa
-conectar de novo. Por isso, grave os novos tokens antes de fazer qualquer outra coisa com a
-resposta, envie sempre o último refresh token gravado e faça uma renovação por vez em cada conexão.
-Uma resposta de sucesso sem um novo refresh token lança `AssinafySDKError`. O SDK envia cada
-requisição de token uma única vez e não segue redirects: um `3xx` chega como `APIError`.
-
-**Quando uma renovação falha sem um erro OAuth** — timeout, conexão perdida, cancelamento, `3xx` ou
-`5xx`, resposta sem novo refresh token —, o servidor pode já ter aposentado o token enviado, porque
-uma resposta perdida é indistinguível de uma requisição que nunca chegou. Releia o refresh token
-gravado e só continue se um token *diferente* tiver sido gravado desde então. Se ainda for o token
-enviado, nunca o envie de novo: peça ao usuário para conectar de novo. Só podem ser repetidas as
-falhas que comprovadamente aconteceram antes de a requisição sair: um `NetworkError` cujo
-`underlyingError` é um `URLError` com código `.cannotFindHost`, `.dnsLookupFailed`,
-`.cannotConnectToHost`, `.secureConnectionFailed` ou um dos códigos `.serverCertificate…`.
-
-Um refresh token vale **30 dias**, e cada renovação devolve um novo com mais 30 dias: a conexão só
-expira se o app passar 30 dias sem renovar. Um `401` da API significa token expirado ou revogado:
-renove uma vez e, se falhar, peça ao usuário para conectar de novo. `invalid_grant` na renovação
-significa que a conexão acabou (token já usado ou expirado, acesso revogado, ou nova aprovação com
-outras permissões) — peça para conectar de novo em vez de repetir.
-
-Ao desconectar, revogue o último refresh token gravado (ou o access token, quando não houver um):
-todos os anteriores já estão aposentados. A revogação sempre responde `200` para qualquer desfecho
-de token — inclusive um token inexistente, já revogado ou malformado — de modo que o endpoint não
-possa ser usado para descobrir se um token existe.
-
-### Quem é o usuário
-
-```swift
-let claims = try await clienteDoUsuario.oauth.userInfo()
-print(claims.sub, claims.name as Any, claims.email as Any)
-```
-
-Exige `openid`; `name` exige `profile` e `email` exige `email`.
-
-### Falhas
-
-Erros OAuth chegam como `APIError` com um `oauthError` tipado:
-
-```swift
-do {
-    _ = try await client.oauth.exchangeAuthorizationCode(payload)
-} catch let error as APIError {
-    switch error.oauthError?.code {
-    case "invalid_grant":  break // código expirado, reutilizado, ou verifier errado
-    case "invalid_client": break // client_id desconhecido ou desabilitado
-    case "invalid_target": break // `resource` divergente do autorizado
-    default: break
-    }
-}
-```
-
-## Como as credenciais são enviadas
-
-A API v1 coloca cada operação em uma de três classes de autenticação, e o SDK **impõe** essa
-separação em vez de anexar credenciais indiscriminadamente.
-
-| Classe | Como a API autentica | O que o SDK envia |
-| --- | --- | --- |
-| **Conta** | `Authorization: Bearer {token}` ou `X-Api-Key: {chave}` | O header da credencial configurada |
-| **Signatário** | O parâmetro de query exato `signer-access-code={código}` | Apenas o parâmetro de query |
-| **Público** | Nada | Nada |
-
-Um cliente configurado com token bearer ou chave de API **não** o transmite a uma operação de
-Signatário ou Pública. Isso significa que um mesmo cliente pode servir os dois lados de um fluxo: a
-mesma instância pode gerenciar documentos com uma credencial de conta e conduzir um signatário por
-`assignments.sign(…)` sem que aquela credencial saia das rotas que a aceitam.
-
-A regra vale também por origem: uma requisição cuja URL não compartilha a origem da URL base — como
-a descoberta OAuth no servidor de autorização — perde os headers de credencial no transporte,
-qualquer que seja a configuração do cliente.
-
-Códigos de acesso são segredos. Trate um `signerAccessCode` exatamente como trataria uma senha:
-nunca registre em log, nunca persista além da sessão de assinatura, e nunca o coloque em uma URL
-que você compartilhe.
-
-## O ciclo de vida da assinatura
-
-Um pedido de assinatura passa por cinco etapas. Cada uma tem uma chamada dedicada.
-
-```
-enviar ──▶ aguardar processamento ──▶ criar signatários ──▶ estimar ──▶ criar assignment
-```
-
-### 1. Envie o documento
-
-```swift
-let enviado = try await client.documents.upload(
-    pdfData,
-    options: DocumentUploadOptions(accountId: accountId)
-)
-```
-
-O SDK confere os magic bytes do PDF e o limite de 25 MB da plataforma localmente, então um arquivo
-inválido falha imediatamente com `ValidationError` em vez de gastar uma ida ao servidor.
-
-### 2. Aguarde o processamento
-
-Um documento recém-enviado pode estar em `uploaded` ou `metadata_processing`. Assignments
-virtuais podem ser criados nesses estados e aguardam o processamento; assignments `collect`
-precisam de páginas prontas. Aguarde o processamento antes de excluir:
-
-```swift
-let documento = try await client.documents.waitUntilReady(
-    documentId: enviado.id,
-    options: WaitUntilReadyOptions(maxWaitSeconds: 60, pollIntervalSeconds: 2)
-)
-```
-
-`waitUntilReady` retorna assim que o documento alcança `metadataReady`, `pendingSignature`, `pending_identity_review`,
-`certificating` ou `certificated`. Lança `AssinafySDKError` num status terminal (`failed`,
-`expired`, `rejectedBySigner`, `rejectedByUser`) ou quando o prazo expira, e honra cancelamento de
-tarefa do início ao fim.
-
-### 3. Crie os signatários
-
-```swift
-let signatario = try await client.signers.create(
-    CreateSignerPayload(fullName: "Ana Souza", email: "ana@exemplo.invalid")
-)
-```
-
-A criação é idempotente por e-mail: o SDK procura um signatário existente com o mesmo endereço e o
-devolve em vez de criar um duplicado, e se recupera da mesma forma de um `409`. Signatários também
-podem ser criados apenas com o nome completo.
-
-### 4. Estime o custo
-
-Pedidos de assinatura consomem documentos e créditos. Confira antes de se comprometer:
-
-```swift
-let pedido = CreateAssignmentPayload.withSignerIds(
-    [signatario.id],
-    method: .virtual,
-    message: "Por favor, revise e assine."
-)
-
-let estimativa = try await client.assignments.estimateCost(
-    documentId: documento.id,
-    payload: pedido
-)
-guard estimativa.hasSufficientResources else {
-    throw AssinafySDKError(estimativa.blockingReason ?? "Recursos insuficientes na conta")
-}
-```
-
-`CostEstimate` traz o `breakdown` tipado, os saldos `documentBalance` e `creditBalance`, e um
-`blockingReason` entre `PendingPayment`, `InsufficientDocuments` e `InsufficientCredits`.
-
-### 5. Crie o assignment
-
-```swift
-let assignment = try await client.assignments.create(
-    documentId: documento.id,
-    payload: pedido
-)
-```
-
-Use `.virtual` para assinatura remota por notificação, e `.collect` para coleta presencial de
-campos, que exige também as posições dos campos nas páginas. Para assinatura ordenada, construa os
-signatários com `SignerReference.signer(id:verification:notifications:step:)` e dê a cada um o seu
-`step`.
-
-### Acompanhe e recupere o resultado
-
-```swift
-let progresso = try await client.documents.getSigningProgress(documentId: documento.id)
-let concluido = try await client.documents.isFullySigned(documentId: documento.id)
-let historico = try await client.documents.activities(documentId: documento.id)
-
-let pdfAssinado = try await client.documents.downloadArtifact(
-    documentId: documento.id,
-    artifact: .certificated
-)
-```
-
-As atividades devolvem todos os eventos registrados, cada um com um snapshot do `payload` do evento
-e a `origin` da requisição (`ip`, `user-agent`).
-
-| Artefato | Conteúdo |
-| --- | --- |
-| `original` | O PDF enviado, como recebido |
-| `certificated` | O documento assinado, com a certificação da plataforma |
-| `certificate-page` | Apenas a página de certificação |
-| `pades` | Assinaturas ICP-Brasil dos signatários + caixa de certificação — só existe em documentos que tiveram signatários por certificado digital |
-| `bundle` | Zip com `original`, `certificated` e `certificate-page`, mais o `pades` quando houver |
-
-Miniaturas e páginas isoladas têm métodos próprios. Quem tiver o hash da assinatura confere um
-documento finalizado sem autenticação alguma:
-
-```swift
-let verificacao = try await client.documents.verifyDetails(signatureHash: hash)
-```
-
-### Tudo numa chamada só
-
-`uploadAndRequestSignatures` executa a mesma orquestração do lado do dono:
-
-```swift
-let opcoes = AssinafyClient.UploadOptions(signers: [
-    AssinafyClient.SignerInput(name: "Ana Souza", email: "ana@exemplo.invalid"),
+let options = AssinafyClient.UploadOptions(signers: [
+    .init(name: "Pessoa Exemplo", email: "signer@example.invalid")
 ])
-opcoes.message = "Por favor, revise e assine."
-
-let (documento, assignment) = try await client.uploadAndRequestSignatures(
+let result = try await workspaceClient.uploadAndRequestSignatures(
     documentData: pdfData,
-    options: opcoes
+    options: options
 )
 ```
 
-Valida cada signatário — nomes não vazios, endereços bem formados, nenhum e-mail duplicado
-ignorando maiúsculas — antes de enviar o arquivo, de modo que entrada inválida não deixe um
-documento órfão para trás. As etapas remotas não são transacionais: se uma etapa posterior falhar,
-o documento e os signatários já criados continuam disponíveis para nova tentativa ou limpeza
-explícita.
+O helper cria uma atribuição virtual por email. Para controle completo, use `documents.upload`, `documents.waitUntilReady`, `signers.create`, `assignments.estimateCost` e `assignments.create`. Uma falha depois do upload não desfaz recursos já criados. Criação idempotente de signatário pode reutilizar um email sem atualizar seus dados; atualize-o explicitamente.
 
-## Métodos de verificação do signatário
+### Métodos de verificação e notificação
 
-Definidos por signatário ao criar o assignment. O método de verificação e o de notificação são
-**acoplados**: envie um, os dois ou nenhum — o lado que faltar é inferido. Sem nenhum dos dois,
-ambos assumem `Email`.
-
-| Método | Como funciona | Custo por signatário |
+| Verificação | Requisitos | Experiência |
 | --- | --- | --- |
-| `.email` *(padrão)* | Código de uso único (OTP) por e-mail, exigido antes de assinar | Gratuito |
-| `.whatsapp` | Código de uso único (OTP) por WhatsApp | Verificação gratuita; notificação 0,45 crédito, só em planos pagos |
-| `.digitalCertificate` | O signatário assina com o **próprio certificado ICP-Brasil (A1/A3)**, pela extensão de navegador Web PKI, gerando uma assinatura **PAdES qualificada** | 0,5 crédito mais notificação |
+| `Email` | Notificação Email ou Whatsapp | OTP validado por `signers.verifyEmail` antes da assinatura nativa |
+| `Whatsapp` | Plano pago e telefone | OTP pelo canal Whatsapp |
+| `IdDocumentFaceMatchBasic` | Recurso habilitado, CPF e Email ou Whatsapp | Consentimento explícito, documento e selfie; pode exigir revisão do workspace |
+| `DigitalCertificate` | Recurso habilitado, CPF/CNPJ, atribuição virtual e signatário sozinho na etapa | Certificado ICP-Brasil A1 ou A3 via página web e Web PKI |
+
+Faça `assignments.estimateCost` antes de criar a atribuição. Whatsapp, biometria e certificado podem consumir créditos. A1/A3 nunca envia chave privada ao SDK: abra a URL de assinatura no navegador.
+
+No fluxo biométrico, o signatário consulta `signers.identityVerification` e só chama `startIdentityVerification` após consentimento e `canStart`. Preserve o fragmento da URL e trate-a como segredo. `pending_identity_review` permite assinar, mas retém a certificação. O workspace consulta `assignments.identityReview`; imagem e decisão exigem credencial direta do workspace.
+
+O signatário confirma dados e termos, verifica o OTP quando aplicável, assina e baixa os artefatos pelas rotas com `signer-access-code`. Essas chamadas nunca recebem a credencial do workspace. As formas exatas estão na [referência](docs/API_REFERENCE.md#signers) e no [catálogo de payloads](docs/PAYLOADS.md).
+
+## Templates, contratos e campos
+
+- `templates` cria documentos por papéis e posiciona campos de coleta por página.
+- `fields` cria, atualiza e valida definições; `tags` organiza documentos.
+- `contracts` gerencia termos, renovações, encerramentos e instrumentos de alteração. Envie `updated_at` para controle otimista e preserve a requisição após resultado incerto.
+- `documents` expõe atividades paginadas e artefatos `original`, `certificated`, `certificate-page`, `pades` e `bundle`.
+
+## Webhooks assinados
+
+Crie endpoints com `webhooks.createEndpoint`. Quando `signing_enabled` estiver ativo, salve o `secret` retornado uma única vez no servidor receptor. Verifique `webhook-id`, `webhook-timestamp` e `webhook-signature` sobre o corpo bruto:
 
 ```swift
-let pedido = CreateAssignmentPayload(
-    method: .virtual,
-    signers: [
-        .signer(id: primeiro.id, verification: .email, step: 1),
-        .signer(id: segundo.id, verification: .digitalCertificate, step: 2),
-    ]
+try WebhookSignature.verify(
+    payload: rawBody,
+    headers: headers,
+    secret: secret
 )
 ```
 
-Combinações permitidas: `.email` → notifica por `.email`; `.whatsapp` → notifica por `.whatsapp`;
-`.digitalCertificate` → notifica por `.email` **ou** `.whatsapp`. Apenas um método de notificação
-por signatário.
+A verificação usa HMAC-SHA256 e janela de 300 segundos. Deduplicate entregas já verificadas por `webhook-id`. Rotacionar o segredo invalida o anterior imediatamente. Apps OAuth podem rotacionar com `webhooks:write`, mas não ler um segredo existente.
 
-**A1 e A3** são os dois formatos de certificado ICP-Brasil: A1 é um arquivo de software guardado na
-máquina do signatário, A3 vive num cartão inteligente ou token USB. Ambos são apresentados pela
-mesma extensão Web PKI, então a escolha entre eles é do signatário e não exige nada da integração.
+## Objective-C, erros e limites
 
-O certificado digital exige o recurso habilitado na conta (planos Standard e Pro), CPF ou CNPJ em
-`government_id`, que o signatário esteja **sozinho no seu passo** e um assignment `.virtual`. Um
-assignment collect — ou um template com qualquer campo de signatário posicionado — não pode usar
-`.digitalCertificate`. Um CPF exige o certificado daquela pessoa — um e-CPF, ou um e-CNPJ que a
-nomeie como representante legal; um CNPJ exige um e-CNPJ daquela empresa, de qualquer um de seus
-representantes.
+Todos os métodos públicos assíncronos têm uma forma explícita com completion handler entregue na fila principal. Tipos Swift sem representação Objective-C oferecem overloads por string ou JSON.
 
-> Como a assinatura por certificado acontece por um handshake com a extensão de navegador Web PKI,
-> ela não é concluída pelo fluxo de assinatura nativo deste SDK — encaminhe o signatário à página
-> web de assinatura.
+Erros são `ValidationError`, `APIError`, `NetworkError`, `MFARequiredError` ou `AssinafySDKError`. `APIError` preserva `X-Rate-Limit-Limit`, `X-Rate-Limit-Remaining`, `X-Rate-Limit-Reset`, `Retry-After`, erros OAuth e o escopo insuficiente. O SDK nunca decide quando repetir: respeite o contexto da operação.
 
-Ao ler um signatário de volta, `signatario.verification` e `signatario.notifications` devolvem os
-valores tipados, e `nil` ou uma lista reduzida quando o servidor manda algo que esta versão do SDK
-não conhece.
+## Ambientes e validação
 
-## Verificação biométrica de identidade
-
-Use `verificationMethod: "IdDocumentFaceMatchBasic"` em `SignerReference.descriptor` ou
-`TemplateSigner` para
-verificação de documento com reconhecimento facial. O workspace precisa do recurso
-**ID Document + Face Match** e o signatário de CPF válido em `government_id`.
-`CreateSignerPayload(..., governmentId: cpf)` envia esse dado; se `create` reutilizar um
-signatário pelo email, atualize-o com `UpdateSignerPayload(..., governmentId: cpf)`.
-Escolha uma notificação, `.email` ou `.whatsapp`, e consulte `assignments.estimateCost`
-antes de criar: a taxa biométrica é cobrada uma vez por signatário.
-
-Após consentimento explícito do signatário:
-
-```swift
-let state = try await client.signers.identityVerification(signerAccessCode: accessCode)
-if state.canStart {
-    let session = try await client.signers.startIdentityVerification(
-        signerAccessCode: accessCode,
-        payload: StartIdentityVerificationPayload(consent: consentFromSigner)
-    )
-    // Abra session.url sem alterar seu fragmento #t=; não registre o link em logs.
-}
-```
-
-Abra o link de captura hospedada e consulte o estado novamente ao retornar. `canStart`
-só permite começar antes da primeira sessão ou após `Expired`. `Declined` e `Abandoned`
-exigem outro documento e assignment. Não persista esse link no navegador. `InReview`
-permite confirmar dados e assinar; `pending_identity_review` mantém a certificação pendente.
-Apps OAuth com `documents:read` podem consultar o resumo da revisão. Imagens e decisões
-exigem uma credencial direta do workspace; OAuth recebe `403` nessas duas operações.
-O revisor do workspace consulta evidências, imagens e decide:
-
-```swift
-let review = try await client.assignments.identityReview(
-    documentId: documentId, assignmentId: assignmentId, signerId: signerId
-)
-_ = try await client.assignments.reviewIdentityVerification(
-    documentId: documentId, assignmentId: assignmentId, signerId: signerId,
-    payload: ReviewIdentityVerificationPayload(decision: decisionFromReviewer, note: reviewerNote)
-)
-```
-
-`review.images` lista os nomes aceitos por `downloadIdentityReviewImage`; imagens só existem
-durante `InReview`. `Approved` libera a certificação quando todos terminaram; `Rejected`
-cancela o documento e notifica signatários e destinatários de cópia. A nota, até 2.000 caracteres,
-é privada para workspace/provedor. Assine os eventos `signerIdentityVerified`,
-`signerIdentityVerificationFailed`, `signerIdentityReviewRequired`, `signerIdentityReviewApproved`
-e `signerIdentityReviewRejected`. [Referência e payloads completos](docs/API_REFERENCE.md#identity-document-and-face-verification).
-
-## O lado do signatário
-
-Use o código de acesso da mensagem de convite. Um link de `signingUrls` do workspace pode
-apontar para a página pública do documento; o ID desse documento não é o código do signatário.
-
-Um signatário chega com um código de acesso vindo do convite. A sequência completa é: ler o
-documento, verificar o OTP recebido por email ou WhatsApp, aceitar os termos, confirmar os dados
-de identidade e então assinar. `verifyEmail` verifica o código de ambos os canais.
-
-```swift
-func assinarAssignmentVirtual(
-    client: AssinafyClient,
-    documentId: String,
-    assignmentId: String,
-    accessCode: String,
-    nomeCompleto: String,
-    email: String,
-    verificationCode: String
-) async throws {
-    _ = try await client.signers.getSelf(signerAccessCode: accessCode)
-    try await client.signers.verifyEmail(payload: VerifyEmailPayload(
-        verificationCode: verificationCode, signerAccessCode: accessCode
-    ))
-    try await client.signers.acceptTermsWithoutResponse(signerAccessCode: accessCode)
-    _ = try await client.documents.confirmSignerDataAndReturnSigner(
-        documentId: documentId,
-        signerAccessCode: accessCode,
-        payload: ConfirmSignerDataPayload(
-            fullName: nomeCompleto,
-            email: email,
-            hasAcceptedTerms: true
-        )
-    )
-    try await client.assignments.sign(
-        documentId: documentId,
-        assignmentId: assignmentId,
-        signerAccessCode: accessCode
-    )
-}
-```
-
-Confirmar os dados do signatário é obrigatório em assignments virtuais; assinar sem isso devolve
-`400`. O signatário pode, em vez disso, recusar:
-
-```swift
-try await client.assignments.decline(
-    documentId: documentId,
-    assignmentId: assignmentId,
-    signerAccessCode: accessCode,
-    reason: "Destinatário incorreto"
-)
-```
-
-Signatários com vários documentos podem agir sobre todos de uma vez com
-`signers.signMultipleDocuments(…)` e `signers.declineMultipleDocuments(…)`, e listar os próprios
-documentos com `signers.listSignerDocuments(…)` e `signers.searchSignerDocuments(…)`. Esses enviam
-apenas o código de acesso; um backend do workspace lista os documentos de um signatário com
-`signers.listDocumentsAsWorkspace(signerId:)` e `signers.searchDocumentsAsWorkspace(signerId:search:)`.
-
-Imagens de assinatura e rubrica são PNG:
-
-```swift
-try await client.signers.uploadSignature(
-    signerAccessCode: accessCode,
-    type: .signature,
-    imageData: pngData,
-    reuse: true
-)
-```
-
-Quando o link de assinatura carrega apenas um código de acesso e nenhum ID de signatário, use
-`signers.getSigningDocument(signerAccessCode:)`.
-
-Antes de o signatário verificar seu código, um app pode mostrar um resumo público e enviar o token
-de seis dígitos por email (o `send-token` entrega apenas por email):
-
-```swift
-let info = try await client.documents.getPublicInfo(documentId: documentId)
-
-try await client.documents.sendPublicSignToken(
-    documentId: documentId,
-    email: "signer@example.com"
-)
-```
-
-## Templates
-
-Crie documentos a partir de um template reutilizável mapeando papéis para signatários:
-
-```swift
-let templates = try await client.templates.list(
-    params: TemplateListParams(search: "Contratação")
-)
-
-let documento = try await client.documents.createFromTemplate(
-    templateId: templateId,
-    signers: [TemplateSigner(roleId: roleId, id: signatario.id)],
-    options: CreateDocumentFromTemplateOptions(name: "Carta proposta")
-)
-```
-
-`documents.estimateCostFromTemplate(…)` precifica o mesmo pedido antes.
-
-`TemplateSigner` também aceita métodos tipados:
-
-```swift
-TemplateSigner(roleId: roleId, id: signatario.id, verification: .whatsapp)
-```
-
-A listagem de templates e a criação de documentos a partir deles são operações v1. A gestão da
-definição de templates — `templates.create(name:pdfData:)`, `get`, `update` e `delete` — existe na
-API ao vivo mas não consta do documento OpenAPI publicado; confirme a disponibilidade no seu
-ambiente antes de depender dela.
-
-Também é possível mapear uma função por email com
-`TemplateSigner(roleId:email:name:whatsappPhoneNumber:verificationMethod:notificationMethods:step:)`;
-use `id` para reutilizar um signatário já conhecido.
-
-## Gestão de contratos
-
-Envie o documento primeiro e associe os termos com `client.contracts`. É uma gravação
-separada: se falhar, o documento continua disponível. Solicite assinaturas pelo fluxo normal
-de assignments. Também é possível associar termos a um documento existente. Leituras exigem
-`documents:read`; gravações exigem `documents:write` e um plano com gestão de contratos.
-
-```swift
-let uploaded = try await client.documents.upload(pdfData)
-let saved = try await client.contracts.update(
-    documentId: uploaded.id,
-    payload: UpdateContractPayload(
-        status: "active", value: NSDecimalNumber(string: "1200.50"), currency: "BRL",
-        startDate: "2026-11-01", endDate: "2027-10-31", autoRenew: NSNumber(value: false)
-    )
-)
-let filters = ContractListParams()
-filters.status = "active,expired"
-filters.endingWithinDays = 45
-filters.expand = "document"
-let page = try await client.contracts.list(params: filters)
-
-if let contract = saved.contract {
-    let renewed = try await client.contracts.renew(
-        documentId: uploaded.id,
-        payload: RenewContractPayload(term: contract.term, updatedAt: contract.updatedAt)
-    )
-    _ = try await client.contracts.terminate(
-        documentId: uploaded.id,
-        payload: TerminateContractPayload(reason: "Contract closed", updatedAt: renewed.updatedAt)
-    )
-}
-```
-
-O exemplo mostra renovação e encerramento como ações separadas. Envie o último `updatedAt`
-lido para proteger alterações simultâneas; em um `409`, leia novamente e peça ao usuário
-para resolver o conflito. Renove com o `term` atual ou um `endDate` posterior explícito.
-Em resultado incerto, mantenha a requisição original para impedir uma renovação duplicada.
-
-Propriedades nil deixam os termos intactos. `clearFields: ["counterparty_name"]` envia
-JSON null. `externalReferences` substitui a lista inteira; uma lista vazia a limpa. Valores
-monetários usam `NSDecimalNumber`. Datas seguem o calendário de Brasília. `hasContract`
-no documento é anulável: nil significa que a API não resolveu o indicador.
-
-Para um aditivo assinado, envie seu documento e grave `parentDocumentId`,
-`relationType: "amendment"`, `"renewal"` ou `"termination"` e os termos que ele modifica.
-`contracts.get` retorna `ContractDetails.contract` ou `.amendment`; `contracts.related`
-retorna a raiz e seus instrumentos a partir de qualquer documento da família. Instrumentos
-pendentes são aplicados na ordem de certificação; consulte `applyError` quando houver espera.
-Um instrumento aplicado é somente leitura. Limpar `parent_document_id` desvincula um
-instrumento pendente; nele, um termo null remove a alteração do conjunto pendente.
-
-O processamento horário envia avisos ao responsável, expira contratos ou executa renovações
-automáticas. As preferências `ContractRenewalNotice`, `ContractExpiring`, `ContractExpired`
-e `ContractRenewed` controlam esses emails. Assine eventos `document_contract_*` e recupere
-atualizações perdidas paginando contratos por `-updated_at`. As atividades são paginadas
-por `documents.activities(documentId:params:)`. Leituras continuam disponíveis sem o plano;
-o ciclo de vida retoma quando o recurso volta.
-Veja [campos, métodos e payloads completos](docs/API_REFERENCE.md#contract-management).
-
-## Tags, campos e JSON não tipado
-
-```swift
-let tag = try await client.tags.create(
-    CreateTagPayload(name: "Contratos", color: "ff8800")
-)
-_ = try await client.tags.appendDocumentTags(documentId: documentId, tagIds: [tag.id])
-```
-
-`tags.appendDocumentTags` acrescenta às tags de um documento; `tags.replaceDocumentTags` define
-exatamente o conjunto, e passar um array vazio limpa todas.
-
-Definições de campo descrevem valores coletados dos signatários. A validação aceita uma `String`
-simples, ou um `JSONValue` quando o campo recebe outro tipo JSON:
-
-```swift
-let resultado = try await client.fields.validate(
-    fieldId: fieldId,
-    value: JSONValue(.integer(42))
-)
-
-let lote = try await client.fields.validateMultiple(items: [
-    FieldValidateMultipleItem(fieldId: fieldId, value: "2026-08-27"),
-])
-```
-
-Campos de resposta cujo schema aceita qualquer tipo JSON expõem um `JSONValue` sem perdas ao lado
-da visão legada em string:
-
-- `DocumentActivity.originJSON` e `payloadJSON`
-- `AssignmentItem.valueJSON`
-- `TemplateFieldPlacement.displaySettingsJSON`
-- `WebhookDispatch.payloadJSON`
-
-## Workspaces e webhooks
-
-`client.workspaces` mapeia os endpoints de conta: criar, ler, atualizar, excluir, tema de marca,
-estatísticas do funil de documentos e o logo da conta.
-
-```swift
-let tema = try await client.workspaces.theme()
-try await client.workspaces.uploadLogo(pngData)
-```
-
-`theme()` é a fonte canônica das cores de marca de uma conta.
-
-Webhooks entregam eventos do ciclo de vida do documento. Um workspace tem um endpoint, ou até três
-nos planos pagos; cada um recebe os eventos que assina:
-
-```swift
-let endpoint = try await client.webhooks.createEndpoint(
-    CreateWebhookEndpointPayload(
-        url: "https://exemplo.invalid/hooks/assinafy",
-        email: "ops@exemplo.invalid",
-        events: [WebhookEventType.documentReady, WebhookEventType.signerSignedDocument],
-        name: "ERP",
-        signingEnabled: true
-    )
-)
-let endpoints = try await client.webhooks.listEndpoints()
-_ = try await client.webhooks.updateEndpoint(
-    id: endpoint.id, UpdateWebhookEndpointPayload(isActive: false)
-)
-try await client.webhooks.deleteEndpoint(id: endpoint.id)
-
-let tipos      = try await client.webhooks.listEventTypes()
-let tentativas = try await client.webhooks.listDispatches()
-try await client.webhooks.retryDispatch(dispatchId: tentativas.data[0].id)
-```
-
-`register`, `get` e `inactivate` continuam atuando sobre o endpoint mais antigo. Mais de um endpoint
-além do limite do plano retorna `403`; duas URLs iguais no mesmo workspace retornam `400`. Filtre o
-histórico de um endpoint com `WebhookDispatchListParams.endpointId`. Consulte o limite em
-`workspaces.get(workspaceId:).limits?.webhookEndpoints`. `isHeld` e `heldSince` indicam
-entregas suspensas; `webhookId`, `attempt`, `kind` e `willRetry` descrevem cada tentativa.
-URLs novas ou alteradas precisam de HTTPS e endereço público.
-
-### Assinatura das entregas
-
-Com `signingEnabled`, cada entrega leva os cabeçalhos `webhook-id`, `webhook-timestamp` e
-`webhook-signature` no padrão [Standard Webhooks](https://www.standardwebhooks.com). Guarde
-`endpoint.secret` no servidor receptor na criação ou ao ativar a assinatura: o novo segredo
-é retornado uma única vez. Apps OAuth com `webhooks:write` podem rotacioná-lo, mas não
-consultar o segredo existente. Chaves de API permitem a consulta e a rotação:
-
-```swift
-let segredo = try await client.webhooks.signingSecret(endpointId: endpoint.id)
-let novo    = try await client.webhooks.rotateSigningSecret(endpointId: endpoint.id) // o antigo para na hora
-```
-
-No servidor que recebe o webhook, verifique o corpo **bruto**, exatamente como chegou:
-
-```swift
-let valida = WebhookSignature.verify(
-    body: corpoBruto,
-    id: cabecalhos["webhook-id"] ?? "",
-    timestamp: cabecalhos["webhook-timestamp"] ?? "",
-    signatureHeader: cabecalhos["webhook-signature"] ?? "",
-    secret: segredo
-)
-```
-
-`verify` compara em tempo constante e recusa carimbos de tempo a mais de cinco minutos do relógio
-local. Após verificar, deduplique pelo `webhook-id`, que permanece igual nos reenvios;
-uma assinatura válida pode chegar mais de uma vez dentro dessa janela.
-
-A API não tem exclusão destrutiva da assinatura legada. Interrompa a entrega com
-`webhooks.inactivate()`; `webhooks.delete()` está descontinuado e encaminha para ele.
-
-## Paginação
-
-Operações de listagem devolvem `PaginatedResult<T>`. `data` traz a página; `meta` é montado a
-partir dos headers `X-Pagination-*` e é `nil` quando o servidor os omite.
-
-```swift
-var pagina = 1
-var todos: [DocumentListItem] = []
-repeat {
-    let resultado = try await client.documents.list(params: ListParams(page: pagina, perPage: 100))
-    todos += resultado.data
-    guard let meta = resultado.meta, pagina < meta.lastPage else { break }
-    pagina += 1
-} while true
-```
-
-## Tratamento de erros
-
-O SDK lança exatamente quatro tipos, mais `CancellationError`:
-
-| Tipo | Significado | Detalhe principal |
-| --- | --- | --- |
-| `APIError` | A API devolveu um status fora do 2xx | `statusCode`, `message`, `responseData`, `oauthError` |
-| `ValidationError` | Validação local falhou antes de qualquer requisição | mapa `errors` por campo |
-| `NetworkError` | Falha de transporte — DNS, TLS, timeout | `underlyingError` como `URLError` |
-| `AssinafySDKError` | Violação de contrato do SDK | `context`, `underlyingError` |
-
-```swift
-do {
-    _ = try await client.documents.get(documentId: documentId)
-} catch let error as APIError {
-    print(error.statusCode, error.message, error.responseData as Any)
-    for restricao in error.workspaceDeletionRestrictions {
-        print(restricao.code, restricao.accountIds)
-    }
-} catch let error as ValidationError {
-    print(error.message, error.errors)
-} catch let error as NetworkError {
-    print(error.message, error.underlyingError as Any)
-} catch is CancellationError {
-    // O cancelamento de tarefa é preservado, não convertido.
-}
-```
-
-Um `429 Too Many Requests` traz `error.retryAfter`, os segundos a esperar antes de tentar de novo,
-junto com `rateLimitLimit`, `rateLimitRemaining` e `rateLimitReset` dos cabeçalhos `X-Rate-Limit-*`.
-
-## Transporte e segurança de rede
-
-As requisições passam por uma `URLSession` efêmera com cookies e cache de URL desligados, de modo
-que o SDK não grava credencial nem resposta em disco.
-
-Redirects são restritos. `POST /oauth/token` e `POST /oauth/revoke` não seguem nenhum: o corpo
-carrega um código ou token, então um `3xx` chega como `APIError` em vez de enviá-lo de novo. Os
-demais redirects de mesma origem são seguidos sem alteração. Um redirect para outra origem só é
-aceito quando é HTTPS, o método é `GET` ou `HEAD` e não há corpo — o que cobre downloads de
-artefatos servidos por outro host. Nesse redirect sobrevivem apenas `Accept`,
-`Accept-Encoding`, `Accept-Language`, `Range`, `If-Range` e `User-Agent`; `Authorization`,
-`X-Api-Key`, `Cookie` e todo header desconhecido são removidos. Downgrades para HTTP, URLs de
-destino com informação de usuário e redirects para outra origem carregando corpo são recusados de
-saída.
-
-## Objective-C
-
-Os métodos explícitos de completion para Objective-C documentados abaixo entregam na **main
-queue**. O header gerado é a fonte da verdade dos seletores; nem todo auxiliar de concorrência
-Swift tem um wrapper de completion.
-
-```objc
-ASFAssinafyClient *client = [[ASFAssinafyClient alloc]
-    initWithToken:bearerToken
-    defaultAccountId:accountId];
-
-[client.signers getSignerWithId:@"signer-id"
-                       accountId:nil
-                      completion:^(Signer *signer, NSError *error) {
-    if (error != nil) {
-        NSLog(@"A requisição falhou: %@", error.localizedDescription);
-        return;
-    }
-    NSLog(@"ID do signatário: %@", signer.id);
-}];
-```
-
-Erros Swift fazem bridge para `NSError` sob os domínios de `ASFErrorDomain`. `code` carrega o
-status HTTP em `APIError`, `422` em `ValidationError`, o código de `URLError` em `NetworkError` e
-`-1` em `AssinafySDKError`; os detalhes chegam em `userInfo` sob `responseData`, `errors` e
-`NSUnderlyingErrorKey`. Um `APIError` também traz o desafio `WWW-Authenticate` bruto sob
-`wwwAuthenticate` e, num `403` `insufficient_scope`, o escopo que falta sob `insufficientScope`:
-
-```objc
-NSString *escopo = error.userInfo[@"insufficientScope"];
-if (escopo != nil) {
-    // Peça ao usuário para conectar de novo, solicitando também `escopo`.
-}
-```
-
-## Mapa de recursos
-
-| Recurso | Cobertura |
-| --- | --- |
-| `client.auth` | Login, login social e vínculo, autenticação em dois fatores, operações de senha, gestão de chave de API, usuário atual, preferências de notificação, estatísticas |
-| `client.oauth` | Descoberta, URL de autorização com PKCE, troca de código, renovação, revogação, userinfo |
-| `client.workspaces` | CRUD de conta, tema, estatísticas, upload/download/exclusão de logo |
-| `client.contracts` | Termos contratuais, aditivos, filtros, renovação, encerramento e conflitos de atualização |
-| `client.documents` | Envio, listar/buscar/obter/renomear/excluir, status de processamento, páginas, miniaturas, atividades, artefatos, verificação, criação a partir de template, fluxo público de token |
-| `client.signers` | CRUD de signatários do workspace, autoatendimento, termos, verificação, imagens de assinatura, documentos do signatário, assinatura e recusa em lote |
-| `client.assignments` | Listar, criar, estimar, assinar, recusar, reenviar, expiração, notificações WhatsApp |
-| `client.fields` | Definições, tipos de campo, validação simples e em lote |
-| `client.tags` | Tags do workspace e vínculos com documentos |
-| `client.templates` | Listagem de templates e gestão de definições |
-| `client.webhooks` | Endpoints (até três), assinatura e rotação de segredo, assinatura legada, tipos de evento, histórico de entrega, reenvio |
-
-[`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) documenta, para cada método, a classe de
-autenticação, o caminho HTTP exato, o payload de requisição, o payload de resposta, o
-comportamento de compatibilidade e o modelo de erro.
-
-## Ambientes
-
-| | |
-| --- | --- |
-| Produção | `AssinafyClientConfiguration.productionBaseURL` |
-| Sandbox | `https://sandbox.assinafy.com.br/v1` |
-
-Os endpoints OAuth existem apenas em produção.
-
-
-[`docs/PAYLOADS.md`](docs/PAYLOADS.md) traz exemplos JSON completos de requisições
-e respostas, junto da referência de cada método.
-
-## Testes
-
-Rode a suíte com concorrência Swift 6 e warnings como erro, depois um build de release:
+- Produção: `https://api.assinafy.com.br/v1`
+- Sandbox: `https://sandbox.assinafy.com.br/v1`
+- OAuth, MFA e biometria podem existir somente em produção; consulte a referência antes de planejar testes.
 
 ```bash
 swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
-swift build -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+swift build -c release -Xswiftc -warnings-as-errors
 ```
 
-A CI roda ainda o XCTest num simulador iOS 26.5 / iPhone 17 Pro sob Xcode 26.6, compila a DocC com
-warnings como erro, verifica compatibilidade da API pública contra a tag anterior mais próxima, e
-confere que a tag de release, `sdkVersion`, o changelog e este arquivo concordam.
+Testes locais não acessam a rede. Testes ao vivo exigem variáveis de ambiente e ficam restritos ao sandbox; descoberta OAuth pública tem uma flag separada. Nunca grave credenciais, callbacks privados ou destinatários reais no repositório.
 
-Os testes ao vivo leem credenciais apenas do ambiente e recusam qualquer host que não seja o
-sandbox:
+## Documentação
 
-```bash
-ASSINAFY_API_KEY="..." \
-ASSINAFY_ACCOUNT_ID="..." \
-ASSINAFY_BASE_URL="https://sandbox.assinafy.com.br/v1" \
-swift test --filter AssinafyTests.AssinafyLiveTests
-```
-
-Testes que criam recursos no sandbox ou enviam notificações exigem opt-in explícito e dois
-destinatários distintos informados em tempo de execução:
-
-```bash
-ASSINAFY_RUN_LIVE_MUTATIONS=1 \
-ASSINAFY_TEST_EMAIL_A="destinatario-a@exemplo.invalid" \
-ASSINAFY_TEST_EMAIL_B="destinatario-b@exemplo.invalid" \
-swift test --filter AssinafyTests.AssinafyLiveTests
-```
-
-Nunca versione credenciais, códigos de acesso, senhas ou endereços de destinatários.
-
-## Versionamento
-
-O pacote segue versionamento semântico. Versões liberadas são marcadas como `vMAJOR.MINOR.PATCH`, e
-cada uma é registrada em [CHANGELOG.md](CHANGELOG.md).
-
-## Licença
-
-Distribuído sob a licença [MIT](LICENSE).
+- [API_REFERENCE.md](docs/API_REFERENCE.md): todos os métodos, parâmetros, modelos, seletores Objective-C e regras de credencial.
+- [PAYLOADS.md](docs/PAYLOADS.md): corpos completos e exemplos sintéticos de resposta.
+- [CHANGELOG.md](CHANGELOG.md): histórico de versões.
+- [Documentação oficial](https://api.assinafy.com.br/v1/docs): contrato online da API.

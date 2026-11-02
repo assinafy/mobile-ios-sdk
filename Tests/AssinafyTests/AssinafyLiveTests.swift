@@ -886,6 +886,12 @@ final class AssinafyLiveTests: XCTestCase {
         )
         XCTAssertTrue(server.grantTypesSupported.contains("authorization_code"))
         XCTAssertTrue(server.grantTypesSupported.contains("refresh_token"))
+        XCTAssertEqual(
+            server.introspectionEndpoint,
+            "https://api.assinafy.com.br/v1/oauth/introspect"
+        )
+        XCTAssertEqual(server.introspectionEndpointAuthMethodsSupported, ["client_secret_post"])
+        XCTAssertTrue(server.clientIdMetadataDocumentSupported)
         XCTAssertTrue(
             server.tokenEndpointAuthMethodsSupported.contains("none"),
             "a public mobile client needs the `none` auth method"

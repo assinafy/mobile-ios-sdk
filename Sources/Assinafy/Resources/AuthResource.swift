@@ -9,6 +9,27 @@ import Foundation
 @objcMembers
 public final class AuthResource: BaseResource, @unchecked Sendable {
 
+    /// Mirrors `GET /users/self/push-preferences`. Personal settings; unavailable to third-party OAuth apps.
+    public func getPushPreferences() async throws -> [String: Bool] {
+        try await call("Failed to fetch push preferences", request: .get("/users/self/push-preferences"))
+    }
+
+    /// Delivers the result on the main queue.
+    public func getPushPreferences(completion: @escaping ([String: Bool]?, Error?) -> Void) {
+        withCompletion({ try await self.getPushPreferences() }, completion: completion)
+    }
+
+    /// Mirrors `PUT /users/self/push-preferences`. Merges supplied keys; email preferences remain independent.
+    public func updatePushPreferences(preferences: [String: Bool]) async throws -> [String: Bool] {
+        guard !preferences.isEmpty else { throw ValidationError("At least one push preference is required") }
+        return try await call("Failed to update push preferences", request: .put("/users/self/push-preferences", body: preferences))
+    }
+
+    /// Delivers the result on the main queue.
+    public func updatePushPreferences(preferences: [String: Bool], completion: @escaping ([String: Bool]?, Error?) -> Void) {
+        withCompletion({ try await self.updatePushPreferences(preferences: preferences) }, completion: completion)
+    }
+
     // MARK: - Swift async API
 
     /// Logs in with email and password and returns an access token plus user accounts.

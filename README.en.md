@@ -1,6 +1,6 @@
 # Assinafy SDK for iOS
 
-A dependency-free Swift 6 SDK for the Assinafy v1 API. It supports iOS 16+ and macOS 12+, with `async/await` APIs and Objective-C adapters that return on the main queue.
+A dependency-free Swift 6.3+ SDK (language mode 6) for the Assinafy v1 API. It supports iOS 16+ and macOS 12+, with `async/await` APIs and Objective-C adapters that return on the main queue.
 
 [Português](README.md) · [Complete reference](docs/API_REFERENCE.md) · [JSON payloads](docs/PAYLOADS.md) · [Assinafy API](https://api.assinafy.com.br/v1/docs)
 
@@ -9,7 +9,7 @@ A dependency-free Swift 6 SDK for the Assinafy v1 API. It supports iOS 16+ and m
 Add this repository as a Swift Package in Xcode, or declare:
 
 ```swift
-.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.13.0")
+.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.14.0")
 ```
 
 The product is `Assinafy`. Import it with `import Assinafy`.
@@ -45,7 +45,7 @@ let server = try await publicClient.oauth.authorizationServerMetadata(
 let request = OAuthAuthorizationRequest(
     clientId: clientId,
     redirectURI: "https://app.example.invalid/oauth/callback",
-    scopes: [.documentsRead, .documentsWrite, .offlineAccess],
+    scopes: [.documentsRead, .documentsWrite, .accountRead, .openID, .offlineAccess],
     resource: resource.resource
 )
 let authorizationURL = request.authorizationURL(endpoint: server.authorizationEndpoint)!
@@ -99,8 +99,8 @@ The helper creates a virtual email assignment. For full control, call `documents
 
 | Verification | Requirements | Experience |
 | --- | --- | --- |
-| `Email` | Email or Whatsapp notification | OTP checked by `signers.verifyEmail` before native signing |
-| `Whatsapp` | Paid plan and phone number | OTP through Whatsapp |
+| `Email` | Exactly one Email notification | OTP checked by `signers.verifyEmail` before native signing |
+| `Whatsapp` | Enabled feature, phone, and one Whatsapp notification | OTP through Whatsapp |
 | `IdDocumentFaceMatchBasic` | Enabled feature, CPF, and Email or Whatsapp | Explicit consent, ID capture, and selfie; workspace review may be required |
 | `DigitalCertificate` | Enabled feature, CPF/CNPJ, virtual assignment, and signer alone in the step | ICP-Brasil A1 or A3 certificate through the web page and Web PKI |
 
@@ -109,6 +109,18 @@ Call `assignments.estimateCost` before creating the assignment. Whatsapp, biomet
 In the biometric flow, the signer reads `signers.identityVerification` and calls `startIdentityVerification` only after consent and `canStart`. Preserve the URL fragment and treat the URL as a secret. `pending_identity_review` permits signing but holds certification. The workspace reads `assignments.identityReview`; evidence images and review decisions require a direct workspace credential.
 
 The signer confirms data and terms, verifies the OTP when required, signs, and downloads artifacts through `signer-access-code` routes. Those calls never carry the workspace credential. Exact calls are in the [reference](docs/API_REFERENCE.md#signers) and [payload catalog](docs/PAYLOADS.md).
+
+## Envelopes and embedded signing
+
+Group 1–20 processed documents with `envelopes.estimateCost` and `envelopes.create`. Each document keeps its own assignment, status, and certification; each signer receives one group invitation. Envelopes have no ordered signing steps. `envelopes.update` changes the name, message, or order; `addDocument`, `removeDocument`, `cancel`, and `delete` manage the lifecycle. Removal cancels the document; deletion requires all documents closed and preserves them.
+
+For envelopes and templates, persist the `Idempotency-Key` with the payload before sending and reuse both after an uncertain result. `maxTotalCredits` caps spending on assignments, envelopes, added documents, and templates; exceeding the ceiling rejects the operation.
+
+For an embedded signer, set their ID in `embeddedSignerIds` (or `TemplateSigner.embedded`), register the HTTPS origin with `workspaces.addEmbedOrigin`, and call `assignments.createEmbedSession`. Open its single-use URL in an iframe on that origin within five minutes; keep credentials on the backend. Do not treat `signing_urls` as access codes: email invitations request access, while Whatsapp/embedded entries may have `url: null`.
+
+Use `getSigningDocument(..., expand: ["envelope"], documentId: ...)` to navigate the group and `signMultipleDocuments` to sign together. When `isSignerAccessClosed` is true, show only status and `certifiedCopy`; `resendCertifiedCopy` sends to the original contact. `downloadCertifiedCopy` takes the new link's token; expired links raise error 302. Signer-code downloads provide only `original`; certified copies use a download token.
+
+`workspaces.notificationPolicy` controls team events; `auth.getPushPreferences` and email preferences control the user. Workspace policy takes precedence. `workspaces.get(..., expand: ["signing_features"])` reports enabled features; `usage` requires a direct credential and refuses OAuth.
 
 ## Templates, contracts, and fields
 
@@ -122,11 +134,13 @@ The signer confirms data and terms, verifies the OTP when required, signs, and d
 Create endpoints with `webhooks.createEndpoint`. When `signing_enabled` is enabled, save the one-time `secret` on the receiving server. Verify `webhook-id`, `webhook-timestamp`, and `webhook-signature` over the raw body:
 
 ```swift
-try WebhookSignature.verify(
-    payload: rawBody,
-    headers: headers,
+guard WebhookSignature.verify(
+    body: rawBody,
+    id: headers["webhook-id"] ?? "",
+    timestamp: headers["webhook-timestamp"] ?? "",
+    signatureHeader: headers["webhook-signature"] ?? "",
     secret: secret
-)
+) else { throw AssinafySDKError("Invalid webhook signature") }
 ```
 
 Verification uses HMAC-SHA256 and a 300-second window. Deduplicate verified deliveries by `webhook-id`. Rotation invalidates the old secret immediately. OAuth apps can rotate with `webhooks:write`, but cannot read an existing secret.

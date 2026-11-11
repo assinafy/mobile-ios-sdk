@@ -51,6 +51,11 @@ Paths below are relative to the SDK's default production base URL,
 
 ## Client configuration
 
+The package requires Swift tools 6.3 or later, uses Swift language mode 6, and
+supports iOS 16+ and macOS 12+. Swift 6.4 is supported without raising the minimum
+toolchain. Foundation and CryptoKit provide networking and cryptography; there
+are no third-party package dependencies.
+
 `AssinafyClientConfiguration` is the complete configuration surface:
 
 ```swift
@@ -72,7 +77,7 @@ let client = AssinafyClient(configuration: configuration)
 | `init(apiKey:token:baseURL:defaultAccountId:timeout:logger:)` | Full Swift initializer. Both credentials may be `nil` for public operations, but they may not both be non-`nil`. |
 | `init(apiKey:token:baseURL:defaultAccountId:timeout:)` | Objective-C-compatible initializer using `NoopLogger`. |
 | `validate()` | Validates configuration immediately. The client also retains any validation failure and throws it before every request. |
-| `AssinafyClient(configuration:)` | Designated client initializer. Exposes `auth`, `workspaces`, `signers`, `documents`, `assignments`, `templates`, `tags`, `fields`, `webhooks`, `oauth`, and `contracts`. |
+| `AssinafyClient(configuration:)` | Designated client initializer. Exposes `auth`, `workspaces`, `signers`, `documents`, `assignments`, `templates`, `tags`, `fields`, `webhooks`, `oauth`, `contracts`, and `envelopes`. |
 | `AssinafyClient(apiKey:defaultAccountId:baseURL:)` | API-key convenience initializer, including a custom base URL. API keys are intended for trusted backend or controlled tooling, not distributed apps. |
 | `AssinafyClient(token:defaultAccountId:)` | Bearer-token convenience initializer using the production base URL. Use the full configuration initializer when a bearer token must target another host. |
 | `AssinafyClient.sdkVersion` | SDK version included as `assinafy-ios-sdk/{version}` in `User-Agent`. |
@@ -441,8 +446,8 @@ signer code exactly where shown.
 | `searchSignerDocuments(signerId:signerAccessCode:search:status:)` | Signer | `GET /signers/{signerId}/documents/search?signer-access-code={code}`; v1 defines optional `search`; the SDK also forwards compatibility `status` | `PaginatedResult<DocumentDetails>` |
 | `signMultipleDocuments(signerAccessCode:documentIds:)` | Signer | `PUT /signers/documents/sign-multiple?signer-access-code={code}`; JSON `document_ids: [string]`, nonempty | Bare envelope; returns `Void` |
 | `declineMultipleDocuments(signerAccessCode:documentIds:reason:)` | Signer | `PUT /signers/documents/decline-multiple?signer-access-code={code}`; JSON `document_ids: [string]`, `decline_reason: string` | Bare envelope; returns `Void` |
-| `downloadSignerDocumentArtifact(signerId:documentId:artifact:)` | Public | `GET /signers/{signerId}/documents/{documentId}/download/{artifact}` | Raw PDF `Data` |
-| `downloadSignerDocumentArtifact(signerId:documentId:artifact:signerAccessCode:)` | Public | Compatibility overload of the preceding operation; the supplied code is intentionally not sent | Raw PDF `Data` |
+| `downloadSignerDocumentArtifact(signerId:documentId:artifact:)` | Public | Legacy code-free request; retained for source compatibility | Current production redirects to expired-link HTML; SDK throws `APIError` 302 |
+| `downloadSignerDocumentArtifact(signerId:documentId:artifact:signerAccessCode:)` | Signer | `GET /signers/{signerId}/documents/{documentId}/download/{artifact}?signer-access-code={code}` | Original PDF `Data`; certified artifacts require a download token and otherwise return 403 |
 | `getSigningDocument(signerAccessCode:hasAcceptedTerms:)` | Signer | `GET /sign?signer-access-code={code}`; optional `has_accepted_terms=true\|false` | `DocumentDetails` |
 
 Signer document and account document artifact path values are `original`,
@@ -1064,11 +1069,11 @@ null contract state remains unknown rather than becoming false.
   `valueJSON`; `value` is its compatibility string view.
 - `AssignmentSummary`: `signer_count: integer`, `completed_count: integer`,
   `signers: [Signer-compatible object]`.
-- `SigningUrl`: `signer_id: string`, `url: URL string`.
+- `SigningUrl`: `signer_id: string`, `url: URL string|null`, optional `embedded: boolean`. Use the optional Swift `signingURL`; legacy `url` is empty when null.
 - `DisplaySettings`: required numeric `left`, `top`, `width`, `height`,
   `fontSize`; optional string `fontFamily`, `backgroundColor`.
 - `ResendNotificationResponse`: `is_sent: boolean`, `document_id: string`,
-  `signer_id: string`.
+  `signer_id: string`, optional `envelope_id: string` for group reminders.
 - `WhatsappNotification`: `sent_at: date-time`, `header: string`, `body: string`,
   `buttons: [{text: string}]`, `phone_number: string`, `signer_id: string`.
   `sentAtString: String?` retains the ISO-8601 value; the compatibility `sentAt: Int`
@@ -1895,3 +1900,218 @@ Objective-C; the raw `JSONValue` properties remain Swift-only with dictionary vi
 | `relatedContractWithDocumentId:accountId:completion:` | `DocumentContract?`, error |
 | `renewContractWithDocumentId:payload:accountId:completion:` | `DocumentContract?`, error |
 | `terminateContractWithDocumentId:payload:accountId:completion:` | `DocumentContract?`, error |
+
+## Envelopes
+
+Access through `client.envelopes`. Every operation uses the workspace credential;
+reads require OAuth `documents:read`, writes `documents:write`. An omitted
+`accountId` uses `defaultAccountId`. Creation, addition and estimation require
+Envelopes in `workspaces.get(workspaceId:expand: ["signing_features"])`.
+
+Let `E` below mean `/accounts/{accountId}/envelopes` and `/{id}` the envelope ID.
+All JSON results are wrapped in `{status, message, data}`. Complete bodies and
+response objects are in [the envelope payloads](PAYLOADS.md#envelopes).
+
+| Async method | Request | Response |
+| --- | --- | --- |
+| `list(params:status:accountId:)` | `GET E`; `ListParams` defaults empty, `status: String? = nil` accepts `open` or `closed`; `search`, `page`, `per-page` | `PaginatedResult<DocumentEnvelope>` |
+| `get(envelopeId:accountId:)` | `GET E/{id}`; no body | `DocumentEnvelope` |
+| `create(payload:idempotencyKey:accountId:)` | `POST E`; `CreateEnvelopePayload`; optional `Idempotency-Key` header | `DocumentEnvelope`; one invitation per signer |
+| `estimateCost(payload:accountId:)` | `POST E/estimate-cost`; same `CreateEnvelopePayload` | `CostEstimate`; creates, charges and sends nothing |
+| `update(envelopeId:payload:accountId:)` | `PATCH E/{id}`; `UpdateEnvelopePayload` | `DocumentEnvelope`; sends no notification |
+| `delete(envelopeId:accountId:)` | `DELETE E/{id}`; no body | Empty data; `Void`; all documents must be closed |
+| `cancel(envelopeId:accountId:)` | `PUT E/{id}/cancel`; no body | `[EnvelopeCancellation]`; repeatable, notifies each recipient once for the cancellation |
+| `resendNotification(envelopeId:signerId:accountId:)` | `PUT E/{id}/signers/{signerId}/resend`; no body | `ResendNotificationResponse`; `envelopeId` identifies the group |
+| `addDocument(envelopeId:payload:accountId:)` | `POST E/{id}/documents`; `EnvelopeDocumentPayload` | `DocumentEnvelope`; sends the invitation again to that document's existing envelope signers |
+| `removeDocument(envelopeId:documentId:accountId:)` | `DELETE E/{id}/documents/{documentId}`; no body | `DocumentEnvelope`; cancels the removed open document and notifies its recipients |
+| `activities(envelopeId:params:accountId:)` | `GET E/{id}/activities`; `ListParams` defaults empty; `page`, `per-page` | `PaginatedResult<DocumentActivity>`; includes `documentId`, `documentName` |
+| `download(envelopeId:artifact:accountId:)` | `GET E/{id}/download/{artifact}`; default `.original`; also `.certificated`, `.certificatePage`, `.pades`, `.bundle` | ZIP `Data`; certified files include only completed documents, bundle uses a folder per document |
+
+`CreateEnvelopePayload(name:signers:documents:)` has mutable `message: String?`,
+`embeddedSignerIds: [String] = []`, `maxTotalCredits: Decimal?`. Its full body is
+`{name, message?, signers: [{id, verification_method?, notification_methods?, embedded?}], documents: [EnvelopeDocumentPayload], max_total_credits?}`.
+The SDK rejects blank or over-255-character names, `<`, duplicate IDs, unused or
+unknown signers, ordered steps, or counts outside 1–20. Every document must be
+processed and have no assignment. Certificate signers must be alone on each of
+their documents and use `virtual`. The server enforces 2,000 total fields and
+100 copy receivers, including later additions, and checks plan resources.
+
+`EnvelopeDocumentPayload(id:signerIds:)` has `method: AssignmentMethod = .virtual`,
+`entries: [AssignmentEntry]?`, `expiresAt: String?` (ISO-8601),
+`copyReceiverIds: [String]?`, `maxTotalCredits: Decimal?`. Wire keys are `id`,
+`signer_ids`, `method`, `entries`, `expires_at`, `copy_receiver_ids`,
+`max_total_credits`. Collect entries use the assignment page/field geometry;
+all field signers must be in that document. Creation uses the envelope ceiling;
+the document ceiling is for `addDocument`. Negative or NaN ceilings are rejected.
+
+`UpdateEnvelopePayload()` has `name: String?`, `message: String?`,
+`clearMessage: Bool = false`, `documentIds: [String]?`. Nil omits a field;
+`clearMessage` emits `message: null` and cannot accompany a new message.
+`document_ids` is the complete new order, without omissions or duplicates.
+Removing a document cancels it; deleting the group leaves its documents available.
+`409/EnvelopeOpen` prevents premature group or document deletion;
+`409/EnvelopeClosed` prevents adding after every document closes.
+
+The response models expose all documented fields:
+
+- `DocumentEnvelope`: `id`, `name`, optional `message`, ordered `documents`, optional status `counts`, `signingUrls`, `createdAt`.
+- `EnvelopeDocument`: `id`, `position`, `name`, `status`, `artifacts: [String: String]`, `signers`.
+- `EnvelopeSigner`: `id`, `fullName`, optional `email`, `whatsappPhoneNumber`, `signedAt`, and `completed`.
+- `EnvelopeCancellation`: `id`, `status`, `cancelled` (true only when this call cancelled it).
+- `EnvelopeSummary`: `id`, `name`; exposed as `DocumentDetails.envelope` by expansion.
+
+Every operation has an explicit main-queue completion form. Creation and
+estimation take `payloadJSON: Data` instead of the Swift value type; addition
+also takes `payloadJSON`. Both payload types offer throwing `init(jsonData:)`.
+List and activities take `query: [String: String]` and return arrays to Objective-C.
+Other parameters retain their Swift names. Selectors are:
+
+```text
+listWithQuery:status:accountId:completion:
+getWithEnvelopeId:accountId:completion:
+createWithPayloadJSON:idempotencyKey:accountId:completion:
+estimateCostWithPayloadJSON:accountId:completion:
+updateWithEnvelopeId:payload:accountId:completion:
+deleteWithEnvelopeId:accountId:completion:
+cancelWithEnvelopeId:accountId:completion:
+resendNotificationWithEnvelopeId:signerId:accountId:completion:
+addDocumentWithEnvelopeId:payloadJSON:accountId:completion:
+removeDocumentWithEnvelopeId:documentId:accountId:completion:
+activitiesWithEnvelopeId:query:accountId:completion:
+downloadWithEnvelopeId:artifact:accountId:completion:
+```
+
+## Embedded signing, notification policy, and usage
+
+These methods use workspace credentials. Origin management, notification policy,
+push preferences and usage are unavailable to third-party OAuth applications.
+Minting an embed session requires `documents:write` for OAuth and an Embed-enabled
+workspace; configure origins separately with a direct credential.
+
+| Resource and async method | Request | Response |
+| --- | --- | --- |
+| `workspaces.get(workspaceId:expand:)` | `GET /accounts/{workspaceId}?expand=signing_features`; `expand: [String]` comma-joined | `WorkspaceResponse` with optional `signingFeatures: [String: Bool]` |
+| `workspaces.usage(accountId:)` | `GET /accounts/{accountId}/usage`; no body | `WorkspaceUsage` |
+| `workspaces.notificationPolicy(accountId:)` | `GET /accounts/{accountId}/notification-policy`; no body | `NotificationPolicy` |
+| `workspaces.updateNotificationPolicy(payload:accountId:)` | `PUT` same path; `{events?: {code: boolean}, owners_receive_all?: boolean}` | Full `NotificationPolicy` |
+| `auth.getPushPreferences()` | `GET /users/self/push-preferences`; no body | `[String: Bool]`, all event keys |
+| `auth.updatePushPreferences(preferences:)` | `PUT` same path; `{code: boolean, ...}` | Full `[String: Bool]` |
+| `workspaces.listEmbedOrigins(accountId:)` | `GET /accounts/{accountId}/embed-origins`; no body | `[EmbedOrigin]`, oldest first |
+| `workspaces.addEmbedOrigin(origin:accountId:)` | `POST` same path; `{origin: string}` | `EmbedOrigin` |
+| `workspaces.updateEmbedOrigin(originId:origin:accountId:)` | `PUT /accounts/{accountId}/embed-origins/{originId}`; `{origin: string}` | `EmbedOrigin` |
+| `workspaces.deleteEmbedOrigin(originId:accountId:)` | `DELETE` same ID path; no body | Empty data; `Void` |
+| `assignments.createEmbedSession(documentId:assignmentId:signerId:)` | `POST /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/embed-sessions`; no body | `EmbedSession` |
+
+`UpdateNotificationPolicyPayload(events:ownersReceiveAll:)` defaults both values
+to nil; its optional `NSNumber` encodes a Boolean. An empty update is rejected
+locally. Changes merge; omitted events retain their values. The server rejects
+unknown codes, and only workspace owners may write policy. `editable` indicates
+this permission. A disabled workspace event overrides personal email and push
+preferences; identity-review email is always delivered. `ownersReceiveAll`
+controls owner push alerts for other members' documents. Push preferences affect
+all of the user's workspaces and do not change email settings. Preserve unknown
+response keys for future server event additions.
+
+Origins are exact `https://host[:port]` values, at most ten. The server also
+accepts HTTP for `localhost` and `127.0.0.1`; paths, queries, credentials,
+fragments and wildcards are invalid. Removing the last origin makes minting fail
+with `409/embed_origins_missing`. Embedded signers require Bypass, Email or
+Whatsapp verification; certificate and biometric capture use hosted signing.
+Set `CreateAssignmentPayload.embeddedSignerIds`,
+`CreateEnvelopePayload.embeddedSignerIds`, or `TemplateSigner.embedded`.
+Mint a URL per opening and load it within five minutes on a registered origin.
+The URL is single-use and sensitive; do not persist or log it. The exchange
+endpoint belongs to Assinafy's iframe, not to the SDK consumer.
+
+`EmbedOrigin` contains `id`, `origin`, optional `createdAt`. `EmbedSession`
+contains `url` and optional `expiresAt`. `NotificationPolicy` contains `editable`,
+`ownersReceiveAll`, `events`. `WorkspaceUsage` contains optional `plan`,
+`documentsRenewalDate`, and `balances: [String: WorkspaceBalance]`; each balance
+has optional exact `NSDecimalNumber` values `balance`, `limit`, `spent`.
+A null balance or limit means unlimited/unbounded, not zero.
+[Full JSON examples](PAYLOADS.md#workspace-settings-and-embedded-signing) show every field.
+
+Main-queue completion selectors:
+
+```text
+getWithWorkspaceId:expand:completion:
+usageWithAccountId:completion:
+notificationPolicyWithAccountId:completion:
+updateNotificationPolicyWithPayload:accountId:completion:
+getPushPreferencesWithCompletion:
+updatePushPreferencesWithPreferences:completion:
+listEmbedOriginsWithAccountId:completion:
+addEmbedOriginWithOrigin:accountId:completion:
+updateEmbedOriginWithOriginId:origin:accountId:completion:
+deleteEmbedOriginWithOriginId:accountId:completion:
+createEmbedSessionWithDocumentId:assignmentId:signerId:completion:
+```
+
+## Signer access and certified copies
+
+All methods here withhold workspace credentials. Nonempty signer codes are sent
+only as `signer-access-code`; download tokens occur only in their path.
+
+| Async method on `client.signers` | Request | Response |
+| --- | --- | --- |
+| `getSigningDocument(signerAccessCode:hasAcceptedTerms:expand:documentId:)` | `GET /sign`; optional `has_accepted_terms`, comma-joined `expand`, `document_id`; `hasAcceptedTerms` and `documentId` default nil | `DocumentDetails`; expansion includes `envelope`, and `documentId` selects a document of the same envelope |
+| `getCurrentDocument(signerId:signerAccessCode:expand:)` | `GET /signers/{signerId}/document`; comma-joined `expand` | `DocumentDetails`; supports `envelope` expansion |
+| `theme(signerAccessCode:)` | `GET /sign/theme`; no body | `AccountTheme` |
+| `downloadLogo(signerAccessCode:)` | `GET /sign/logo`; no body | Raw image `Data` |
+| `resendCertifiedCopy(signerAccessCode:documentId:)` | `POST /sign/certified-copy`; `{}` or `{document_id: string}`; `documentId` defaults nil | `CertifiedCopy` |
+| `resendCertifiedCopy(downloadToken:)` | `POST /signers/downloads/{token}/resend`; no body | `CertifiedCopy` |
+| `downloadCertifiedCopy(downloadToken:pades:)` | `GET /signers/downloads/{token}`; append `/pades` if `pades: Bool = false` is true | PDF `Data`; redirects disabled, expired or unknown links throw `APIError` with status 302 |
+
+A code remains open until its signer finishes every envelope document plus
+30 minutes. After closure, general signer routes return 410; signing-document
+reads, branding and copy recovery remain available. Closed reads contain a
+reduced document with `is_signer_access_closed: true` and `certified_copy`.
+`DocumentDetails.isSignerAccessClosed` defaults false, `certifiedCopy` is optional;
+missing dates in reduced responses have empty-string compatibility values.
+Do not present missing pages or assignment data as a decoder failure.
+
+`CertifiedCopy` has `available: Bool`, optional `notificationMethod: String`,
+`resendsLeft: NSNumber`, `sentTo: String` (masked). Recovery uses the original
+signature-request recipient and channel, even if the signer record changed.
+Email permits one request per two minutes and ten per 24 hours; WhatsApp permits
+one resend per signature request. Respect `available` and server errors.
+Completion links last seven days; resent links last 30 minutes. Copy-receiver
+links cannot request recovery (`409`). [Payload examples](PAYLOADS.md#certified-copy-recovery)
+include the closed document and full recovery result.
+
+`AssignmentSigningURL.signingURL` is optional; `url` remains a nonoptional
+compatibility string, empty for JSON null. `embedded` defaults false. Email
+invitation URLs request access and are not signer access codes. WhatsApp and
+embedded signers can have no URL. `documents.get(documentId:expand:)` supports
+`envelope` and `envelope_id`; `DocumentDetails.envelopeId` is optional. Filter workspace documents with
+`documents.list(params: ListParams(extra: ["envelope_id": envelopeId]))`.
+
+Main-queue completion selectors:
+
+```text
+getSigningDocumentWithSignerAccessCode:hasAcceptedTerms:expand:documentId:completion:
+getCurrentDocumentWithSignerId:signerAccessCode:expand:completion:
+themeWithSignerAccessCode:completion:
+downloadLogoWithSignerAccessCode:completion:
+resendCertifiedCopyWithSignerAccessCode:documentId:completion:
+resendCertifiedCopyWithDownloadToken:completion:
+downloadCertifiedCopyWithDownloadToken:pades:completion:
+getDocumentWithId:expand:completion:
+```
+
+## Spending ceilings and idempotency
+
+`CreateAssignmentPayload.maxTotalCredits: Decimal?`,
+`CreateEnvelopePayload.maxTotalCredits: Decimal?`,
+`EnvelopeDocumentPayload.maxTotalCredits: Decimal?` and
+`CreateDocumentFromTemplateOptions.maxTotalCredits: NSDecimalNumber?` encode
+`max_total_credits` as an exact JSON number. Nil omits the ceiling; zero forbids
+credit spending. A larger calculated charge rejects the operation before creation.
+Estimate immediately before sending; estimates do not reserve balances.
+
+`envelopes.create` accepts `idempotencyKey: String?` and template creation reads
+`CreateDocumentFromTemplateOptions.idempotencyKey`. Both emit `Idempotency-Key`.
+Persist the key and exact body before the first call, then reuse both to recover
+from an uncertain response. The transport does not retry. `APIRequest.withIdempotencyKey(_:)`
+returns a copy, rejects blank/control-character values, and retains credential
+scope; `idempotencyKey` is readable. Changing credential scope preserves this header.

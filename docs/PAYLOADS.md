@@ -2785,3 +2785,411 @@ out-of-workspace document also returns `404`, without this code.
   "code": "NoContractTerms"
 }
 ```
+
+## Envelopes
+
+Objects below are complete synthetic request bodies or decoded `data` values.
+For JSON responses, wrap the value as `{"status": 200, "message": "OK", "data": value}`.
+List responses put objects in `data: []` and use pagination headers.
+
+### CreateEnvelopePayload
+
+`POST /accounts/{accountId}/envelopes` and `/estimate-cost` share this body. Creation may send `Idempotency-Key: envelope_example_001`; estimate returns the documented `CostEstimate`. Omit `embedded` for hosted signing.
+
+```json
+{
+  "name": "Example envelope",
+  "message": "Please sign both documents.",
+  "signers": [
+    {
+      "id": "signer_example_001",
+      "verification_method": "Email",
+      "notification_methods": [
+        "Email"
+      ],
+      "embedded": true
+    }
+  ],
+  "documents": [
+    {
+      "id": "document_example_001",
+      "signer_ids": [
+        "signer_example_001"
+      ],
+      "method": "virtual",
+      "expires_at": "2099-12-31T23:59:00Z",
+      "copy_receiver_ids": []
+    },
+    {
+      "id": "document_example_002",
+      "signer_ids": [
+        "signer_example_001"
+      ],
+      "method": "collect",
+      "entries": [
+        {
+          "page_id": "page_example_001",
+          "fields": [
+            {
+              "signer_id": "signer_example_001",
+              "field_id": "field_example_001",
+              "display_settings": {
+                "left": 10,
+                "top": 20,
+                "width": 150,
+                "height": 40,
+                "fontSize": 12
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "max_total_credits": 1.25
+}
+```
+
+### DocumentEnvelope
+
+Creation, get, update, add and remove return this shape; list returns an array of it. List artifacts may contain only a thumbnail. Empty envelopes may have `counts: null`.
+
+```json
+{
+  "id": "envelope_example_001",
+  "name": "Example envelope",
+  "message": "Please sign both documents.",
+  "documents": [
+    {
+      "id": "document_example_001",
+      "position": 1,
+      "name": "Example document",
+      "status": "pending_signature",
+      "artifacts": {
+        "original": "https://files.example.invalid/original.pdf",
+        "thumbnail": "https://files.example.invalid/thumbnail.png"
+      },
+      "signers": [
+        {
+          "id": "signer_example_001",
+          "full_name": "Example Signer",
+          "email": "signer@example.invalid",
+          "whatsapp_phone_number": null,
+          "completed": false,
+          "signed_at": null
+        }
+      ]
+    },
+    {
+      "id": "document_example_002",
+      "position": 2,
+      "name": "Second document",
+      "status": "pending_signature",
+      "artifacts": {
+        "original": "https://files.example.invalid/original.pdf",
+        "thumbnail": "https://files.example.invalid/thumbnail.png"
+      },
+      "signers": [
+        {
+          "id": "signer_example_001",
+          "full_name": "Example Signer",
+          "email": "signer@example.invalid",
+          "whatsapp_phone_number": null,
+          "completed": false,
+          "signed_at": null
+        }
+      ]
+    }
+  ],
+  "counts": {
+    "pending_signature": 2
+  },
+  "signing_urls": [
+    {
+      "signer_id": "signer_example_001",
+      "url": null,
+      "embedded": true
+    }
+  ],
+  "created_at": "2099-01-01T12:00:00Z"
+}
+```
+
+### UpdateEnvelopePayload
+
+`PATCH /accounts/{accountId}/envelopes/{envelopeId}`. Swift `clearMessage = true` emits this null. Omitted fields stay unchanged.
+
+```json
+{
+  "name": "Renamed envelope",
+  "message": null,
+  "document_ids": [
+    "document_example_002",
+    "document_example_001"
+  ]
+}
+```
+
+### EnvelopeDocumentPayload
+
+`POST /accounts/{accountId}/envelopes/{envelopeId}/documents`. Only signers already in the envelope may be used.
+
+```json
+{
+  "id": "document_example_001",
+  "signer_ids": [
+    "signer_example_001"
+  ],
+  "method": "virtual",
+  "expires_at": "2099-12-31T23:59:00Z",
+  "copy_receiver_ids": [],
+  "max_total_credits": 0
+}
+```
+
+### EnvelopeCancellation
+
+`PUT /accounts/{accountId}/envelopes/{envelopeId}/cancel` has no body and returns an array of these objects. Already-closed documents have `cancelled: false`.
+
+```json
+{
+  "id": "document_example_001",
+  "status": "rejected_by_user",
+  "cancelled": true
+}
+```
+
+### EnvelopeReminder
+
+`PUT /accounts/{accountId}/envelopes/{envelopeId}/signers/{signerId}/resend` has no body.
+
+```json
+{
+  "is_sent": true,
+  "envelope_id": "envelope_example_001",
+  "signer_id": "signer_example_001"
+}
+```
+
+### EnvelopeActivity
+
+`GET /accounts/{accountId}/envelopes/{envelopeId}/activities` has no body, optional `page` and `per-page`, and returns a paginated array.
+
+```json
+{
+  "id": 1,
+  "event": "document_uploaded",
+  "message": "Document uploaded",
+  "origin": "api",
+  "payload": {},
+  "created_at": "2099-01-01T12:00:00Z",
+  "document_id": "document_example_001",
+  "document_name": "Example document"
+}
+```
+
+Envelope DELETE has no body and returns `{"status": 200, "message": "OK", "data": []}`.
+Document removal also has no body and returns `DocumentEnvelope`. ZIP downloads
+have no JSON request or response; the result is binary data.
+
+## Workspace settings and embedded signing
+
+### NotificationPolicy
+
+GET and PUT `/accounts/{accountId}/notification-policy` return the full policy. GET has no body.
+
+```json
+{
+  "editable": true,
+  "owners_receive_all": false,
+  "events": {
+    "DocumentCompleted": true,
+    "SignerDeclined": true,
+    "DocumentCancelled": true,
+    "DocumentAboutToExpire": true,
+    "DocumentExpired": true,
+    "DocumentExpirationReset": true,
+    "DocumentProcessingFailed": true,
+    "TemplateProcessingFailed": true,
+    "SignerWhatsappFailed": true,
+    "ContractRenewalNotice": true,
+    "ContractExpiring": true,
+    "ContractExpired": true,
+    "ContractRenewed": true,
+    "SignerViewed": true,
+    "SignerSigned": true,
+    "SignerIdentityReviewRequired": true
+  }
+}
+```
+
+### UpdateNotificationPolicyPayload
+
+PUT merges these keys; omitted settings remain unchanged.
+
+```json
+{
+  "events": {
+    "SignerSigned": false
+  },
+  "owners_receive_all": true
+}
+```
+
+### PushPreferences
+
+GET and PUT `/users/self/push-preferences` return the full map. GET has no body; PUT sends a nonempty subset such as `{"SignerSigned": false}`. Unknown response keys are preserved.
+
+```json
+{
+  "SignerViewed": true,
+  "SignerSigned": true,
+  "DocumentCompleted": true,
+  "SignerDeclined": true,
+  "DocumentAboutToExpire": true,
+  "DocumentExpired": true,
+  "SignerIdentityReviewRequired": true,
+  "SignerWhatsappFailed": true
+}
+```
+
+### WorkspaceUsage
+
+GET `/accounts/{accountId}/usage` has no body. Monetary and allowance values decode through Decimal; null is not zero.
+
+```json
+{
+  "plan": "Pro",
+  "documents_renewal_date": "2099-02-01",
+  "balances": {
+    "documents": {
+      "balance": 98,
+      "limit": 100,
+      "spent": 2
+    },
+    "credits": {
+      "balance": 18.75,
+      "limit": null,
+      "spent": 1.25
+    }
+  }
+}
+```
+
+### EmbedOriginRequest
+
+POST `/accounts/{accountId}/embed-origins` and PUT `/{originId}` share this body.
+
+```json
+{
+  "origin": "https://app.example.invalid"
+}
+```
+
+### EmbedOrigin
+
+Create/update return this object; list returns an array. DELETE `/{originId}` has no body and returns empty data.
+
+```json
+{
+  "id": "origin_example_001",
+  "origin": "https://app.example.invalid",
+  "created_at": "2099-01-01T12:00:00Z"
+}
+```
+
+### EmbedSession
+
+POST `/documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/embed-sessions` has no body. Treat the URL as a single-use secret.
+
+```json
+{
+  "url": "https://app.example.invalid/embed/session_example_001",
+  "expires_at": "2099-01-01T12:05:00Z"
+}
+```
+
+### EmbeddedAssignmentPayload
+
+`CreateAssignmentPayload.embeddedSignerIds` emits the flag on the selected signer; `maxTotalCredits` emits the spending ceiling. Response: the existing `Assignment` shape.
+
+```json
+{
+  "method": "virtual",
+  "signers": [
+    {
+      "id": "signer_example_001",
+      "verification_method": "Email",
+      "notification_methods": [
+        "Email"
+      ],
+      "embedded": true
+    }
+  ],
+  "max_total_credits": 0
+}
+```
+
+### EmbeddedTemplateRequest
+
+Template creation accepts `Idempotency-Key: template_example_001` from `CreateDocumentFromTemplateOptions.idempotencyKey`. The result is the existing `Document` shape.
+
+```json
+{
+  "name": "Example document",
+  "signers": [
+    {
+      "role_id": "role_example_001",
+      "id": "signer_example_001",
+      "verification_method": "Email",
+      "notification_methods": [
+        "Email"
+      ],
+      "embedded": true
+    }
+  ],
+  "max_total_credits": 0
+}
+```
+
+## Certified copy recovery
+
+### CertifiedCopy
+
+POST `/sign/certified-copy?signer-access-code={code}` sends `{}` for the current document or `{"document_id":"document_example_001"}` for another envelope document. POST `/signers/downloads/{token}/resend` sends no body. Both return this object; `sent_to` is present after delivery.
+
+```json
+{
+  "available": true,
+  "notification_method": "Email",
+  "resends_left": null,
+  "sent_to": "s***@example.invalid"
+}
+```
+
+### ClosedSigningDocument
+
+GET `/sign` or `/signers/{signerId}/document` after access closes. Request `expand=envelope` to include that field. Missing pages, dates and assignment are intentional.
+
+```json
+{
+  "id": "document_example_001",
+  "name": "Example document",
+  "status": "certificated",
+  "is_signer_access_closed": true,
+  "certified_copy": {
+    "available": true,
+    "notification_method": "Email",
+    "resends_left": null
+  },
+  "envelope": {
+    "id": "envelope_example_001",
+    "name": "Example envelope"
+  }
+}
+```
+
+GET `/sign/theme` returns `AccountTheme`; GET `/sign/logo` returns image bytes.
+Both use `signer-access-code` and no request body. GET `/signers/downloads/{token}`
+(or `/pades`) returns PDF bytes, with no workspace credential or request body;
+expired links return 302, which the SDK exposes instead of following to HTML.

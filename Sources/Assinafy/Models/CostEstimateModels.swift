@@ -238,3 +238,9 @@ public final class CostEstimate: NSObject, Decodable {
 }
 
 extension CostEstimate: @unchecked Sendable {}
+
+func validateCreditCeiling(_ value: Decimal?) throws {
+    if let value, value.isNaN || value < 0 {
+        throw ValidationError("Credit ceiling must be a non-negative finite number")
+    }
+}

@@ -181,11 +181,17 @@ extension AssignmentItem: Decodable {
 @objcMembers
 public final class AssignmentSigningURL: NSObject {
     public let signerId: String
+    /// Compatibility value; empty when the API withholds the link. Prefer signingURL.
     public let url: String
+    /// Nil for WhatsApp-only and embedded signers. Email links request a new invitation.
+    public var signingURL: String? { url.isEmpty ? nil : url }
+    /// Open a newly minted embed session when true.
+    public let embedded: Bool
 
-    init(signerId: String, url: String) {
+    init(signerId: String, url: String, embedded: Bool = false) {
         self.signerId = signerId
         self.url = url
+        self.embedded = embedded
     }
 }
 
@@ -194,14 +200,15 @@ extension AssignmentSigningURL: @unchecked Sendable {}
 extension AssignmentSigningURL: Decodable {
     enum CodingKeys: String, CodingKey {
         case signerId = "signer_id"
-        case url
+        case url, embedded
     }
 
     public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             signerId: try c.decode(String.self, forKey: .signerId),
-            url: try c.decode(String.self, forKey: .url)
+            url: try c.decodeIfPresent(String.self, forKey: .url) ?? "",
+            embedded: try c.decodeIfPresent(Bool.self, forKey: .embedded) ?? false
         )
     }
 }
@@ -431,6 +438,10 @@ public struct CreateAssignmentPayload: Sendable {
     public var message: String?
     public var expiresAt: String?
     public var copyReceivers: [String]?
+    /// Signer IDs that must use an embed session; requires the workspace Embed feature.
+    public var embeddedSignerIds: [String] = []
+    /// Optional spending ceiling in credits; nil leaves the server price uncapped.
+    public var maxTotalCredits: Decimal?
 
     /// Creates an assignment request payload.
     /// - Parameters:
@@ -486,6 +497,8 @@ public struct CreateAssignmentPayload: Sendable {
             },
             message: body.message, expiresAt: body.expiresAt, copyReceivers: body.copyReceivers
         )
+        embeddedSignerIds = body.signers.filter { $0.embedded == true }.compactMap(\.id)
+        maxTotalCredits = body.maxTotalCredits
     }
 
     /// Convenience initialiser for the common case of passing signer ID strings.
@@ -536,9 +549,10 @@ struct AssignmentSignerBody: Codable {
     let verificationMethod: String?
     let notificationMethods: [String]?
     let step: Int?
+    var embedded: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, step
+        case id, step, embedded
         case verificationMethod = "verification_method"
         case notificationMethods = "notification_methods"
     }
@@ -551,11 +565,13 @@ struct AssignmentPayloadBody: Codable {
     let message: String?
     let expiresAt: String?
     let copyReceivers: [String]?
+    var maxTotalCredits: Decimal?
 
     enum CodingKeys: String, CodingKey {
         case method, signers, entries, message
         case expiresAt      = "expires_at"
         case copyReceivers  = "copy_receivers"
+        case maxTotalCredits = "max_total_credits"
     }
 }
 
@@ -580,8 +596,14 @@ func buildAssignmentBody(_ payload: CreateAssignmentPayload) throws -> Assignmen
         throw ValidationError("At least one signer is required")
     }
     try validateDigitalCertificateAssignmentMethod(payload)
-    let signerBodies = try payload.signers.map { ref in
-        try buildSignerBody(ref)
+    try validateCreditCeiling(payload.maxTotalCredits)
+    var signerBodies = try payload.signers.map(buildSignerBody)
+    let embeddedIds = Set(payload.embeddedSignerIds)
+    guard embeddedIds.isSubset(of: Set(signerBodies.compactMap(\.id))) else {
+        throw ValidationError("Embedded signer IDs must belong to the assignment")
+    }
+    for index in signerBodies.indices where embeddedIds.contains(signerBodies[index].id ?? "") {
+        signerBodies[index].embedded = true
     }
     let entryBodies: [AssignmentEntryBody]? = try payload.entries?.map { try buildEntryBody($0) }
     if payload.method == .collect, entryBodies?.isEmpty != false {
@@ -593,7 +615,8 @@ func buildAssignmentBody(_ payload: CreateAssignmentPayload) throws -> Assignmen
         entries: entryBodies,
         message: payload.message,
         expiresAt: payload.expiresAt,
-        copyReceivers: payload.copyReceivers
+        copyReceivers: payload.copyReceivers,
+        maxTotalCredits: payload.maxTotalCredits
     )
 }
 
@@ -803,11 +826,14 @@ extension DeclineAssignmentPayload: @unchecked Sendable {}
 /// Response returned when a signing notification is resent.
 @objcMembers
 public final class ResendNotificationResponse: NSObject {
+    /// Present for an envelope reminder.
+    public let envelopeId: String?
     public let isSent: Bool
     public let documentId: String?
     public let signerId: String?
 
-    init(isSent: Bool, documentId: String? = nil, signerId: String? = nil) {
+    init(isSent: Bool, documentId: String? = nil, signerId: String? = nil, envelopeId: String? = nil) {
+        self.envelopeId = envelopeId
         self.isSent = isSent; self.documentId = documentId; self.signerId = signerId
     }
 }
@@ -816,6 +842,7 @@ extension ResendNotificationResponse: @unchecked Sendable {}
 
 extension ResendNotificationResponse: Decodable {
     enum CodingKeys: String, CodingKey {
+        case envelopeId = "envelope_id"
         case isSent    = "is_sent"
         case documentId = "document_id"
         case signerId   = "signer_id"
@@ -826,7 +853,8 @@ extension ResendNotificationResponse: Decodable {
         self.init(
             isSent:     try c.decodeIfPresent(Bool.self,   forKey: .isSent) ?? false,
             documentId: try c.decodeIfPresent(String.self, forKey: .documentId),
-            signerId:   try c.decodeIfPresent(String.self, forKey: .signerId)
+            signerId:   try c.decodeIfPresent(String.self, forKey: .signerId),
+            envelopeId: try c.decodeIfPresent(String.self, forKey: .envelopeId)
         )
     }
 }

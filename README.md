@@ -1,6 +1,6 @@
 # Assinafy SDK para iOS
 
-SDK Swift 6 sem dependências externas para a API Assinafy v1. Compatível com iOS 16+ e macOS 12+, com APIs `async/await` e adaptadores Objective-C que retornam na fila principal.
+SDK Swift 6.3+ (modo de linguagem 6) sem dependências externas para a API Assinafy v1. Compatível com iOS 16+ e macOS 12+, com APIs `async/await` e adaptadores Objective-C que retornam na fila principal.
 
 [English](README.en.md) · [Referência completa](docs/API_REFERENCE.md) · [Payloads JSON](docs/PAYLOADS.md) · [API Assinafy](https://api.assinafy.com.br/v1/docs)
 
@@ -9,7 +9,7 @@ SDK Swift 6 sem dependências externas para a API Assinafy v1. Compatível com i
 No Xcode, adicione este repositório como Swift Package, ou declare:
 
 ```swift
-.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.13.0")
+.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.14.0")
 ```
 
 O produto é `Assinafy`. Importe-o com `import Assinafy`.
@@ -45,7 +45,7 @@ let server = try await publicClient.oauth.authorizationServerMetadata(
 let request = OAuthAuthorizationRequest(
     clientId: clientId,
     redirectURI: "https://app.example.invalid/oauth/callback",
-    scopes: [.documentsRead, .documentsWrite, .offlineAccess],
+    scopes: [.documentsRead, .documentsWrite, .accountRead, .openID, .offlineAccess],
     resource: resource.resource
 )
 let authorizationURL = request.authorizationURL(endpoint: server.authorizationEndpoint)!
@@ -99,8 +99,8 @@ O helper cria uma atribuição virtual por email. Para controle completo, use `d
 
 | Verificação | Requisitos | Experiência |
 | --- | --- | --- |
-| `Email` | Notificação Email ou Whatsapp | OTP validado por `signers.verifyEmail` antes da assinatura nativa |
-| `Whatsapp` | Plano pago e telefone | OTP pelo canal Whatsapp |
+| `Email` | Exatamente uma notificação Email | OTP validado por `signers.verifyEmail` antes da assinatura nativa |
+| `Whatsapp` | Recurso habilitado, telefone e uma notificação Whatsapp | OTP pelo canal Whatsapp |
 | `IdDocumentFaceMatchBasic` | Recurso habilitado, CPF e Email ou Whatsapp | Consentimento explícito, documento e selfie; pode exigir revisão do workspace |
 | `DigitalCertificate` | Recurso habilitado, CPF/CNPJ, atribuição virtual e signatário sozinho na etapa | Certificado ICP-Brasil A1 ou A3 via página web e Web PKI |
 
@@ -109,6 +109,18 @@ Faça `assignments.estimateCost` antes de criar a atribuição. Whatsapp, biomet
 No fluxo biométrico, o signatário consulta `signers.identityVerification` e só chama `startIdentityVerification` após consentimento e `canStart`. Preserve o fragmento da URL e trate-a como segredo. `pending_identity_review` permite assinar, mas retém a certificação. O workspace consulta `assignments.identityReview`; imagem e decisão exigem credencial direta do workspace.
 
 O signatário confirma dados e termos, verifica o OTP quando aplicável, assina e baixa os artefatos pelas rotas com `signer-access-code`. Essas chamadas nunca recebem a credencial do workspace. As formas exatas estão na [referência](docs/API_REFERENCE.md#signers) e no [catálogo de payloads](docs/PAYLOADS.md).
+
+## Envelopes e assinatura incorporada
+
+Agrupe de 1 a 20 documentos processados com `envelopes.estimateCost` e `envelopes.create`. Cada documento mantém atribuição, status e certificação próprios; cada signatário recebe um convite para o grupo. Não use etapas ordenadas em envelopes. `envelopes.update` altera nome, mensagem ou ordem; `addDocument`, `removeDocument`, `cancel` e `delete` controlam o ciclo de vida. Remover cancela o documento; excluir o envelope exige todos fechados e preserva os documentos.
+
+Em envelopes e templates, salve o `Idempotency-Key` com o payload antes do envio e reutilize ambos após resultado incerto. `maxTotalCredits` limita gastos em atribuições, envelopes, inclusão de documentos e templates; ultrapassar o teto rejeita a operação.
+
+Para um signer incorporado, marque seu ID em `embeddedSignerIds` (ou `TemplateSigner.embedded`), cadastre a origem HTTPS com `workspaces.addEmbedOrigin` e obtenha `assignments.createEmbedSession`. Abra a URL única em iframe na origem cadastrada em até cinco minutos; mantenha credenciais no backend. Não interprete `signing_urls` como códigos: convites por email solicitam acesso, enquanto Whatsapp/incorporados podem ter `url: null`.
+
+Use `getSigningDocument(..., expand: ["envelope"], documentId: ...)` para navegar pelo grupo e `signMultipleDocuments` para assinatura em lote. Quando `isSignerAccessClosed` for verdadeiro, mostre somente status e `certifiedCopy`; `resendCertifiedCopy` envia ao contato original. `downloadCertifiedCopy` usa o token do novo link; links expirados retornam erro 302. O download por código de signatário fornece somente `original`; certificados usam o token de download.
+
+`workspaces.notificationPolicy` controla eventos da equipe; `auth.getPushPreferences` e preferências de email controlam o usuário. A política do workspace prevalece. `workspaces.get(..., expand: ["signing_features"])` informa recursos habilitados; `usage` exige credencial direta e não aceita OAuth.
 
 ## Templates, contratos e campos
 
@@ -122,11 +134,13 @@ O signatário confirma dados e termos, verifica o OTP quando aplicável, assina 
 Crie endpoints com `webhooks.createEndpoint`. Quando `signing_enabled` estiver ativo, salve o `secret` retornado uma única vez no servidor receptor. Verifique `webhook-id`, `webhook-timestamp` e `webhook-signature` sobre o corpo bruto:
 
 ```swift
-try WebhookSignature.verify(
-    payload: rawBody,
-    headers: headers,
+guard WebhookSignature.verify(
+    body: rawBody,
+    id: headers["webhook-id"] ?? "",
+    timestamp: headers["webhook-timestamp"] ?? "",
+    signatureHeader: headers["webhook-signature"] ?? "",
     secret: secret
-)
+) else { throw AssinafySDKError("Invalid webhook signature") }
 ```
 
 A verificação usa HMAC-SHA256 e janela de 300 segundos. Deduplicate entregas já verificadas por `webhook-id`. Rotacionar o segredo invalida o anterior imediatamente. Apps OAuth podem rotacionar com `webhooks:write`, mas não ler um segredo existente.

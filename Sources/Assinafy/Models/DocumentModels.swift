@@ -426,6 +426,10 @@ extension DocumentUploadResponse: Decodable {
 /// A single entry in a document's activity log.
 @objcMembers
 public final class DocumentActivity: NSObject {
+    /// Present in the envelope activity trail.
+    public let documentId: String?
+    /// Document title associated with this envelope activity.
+    public let documentName: String?
     public let id: Int
     public let event: String
     public let message: String
@@ -441,7 +445,8 @@ public final class DocumentActivity: NSObject {
 
     init(id: Int, event: String, message: String, originJSON: JSONValue? = nil,
          payloadJSON: JSONValue? = nil, origin: String, payload: String? = nil,
-         createdAt: String) {
+         createdAt: String, documentId: String? = nil, documentName: String? = nil) {
+        self.documentId = documentId; self.documentName = documentName
         self.id = id; self.event = event; self.message = message
         self.originJSON = originJSON; self.payloadJSON = payloadJSON
         self.origin = origin; self.payload = payload; self.createdAt = createdAt
@@ -452,6 +457,7 @@ extension DocumentActivity: @unchecked Sendable {}
 
 extension DocumentActivity: Decodable {
     enum CodingKeys: String, CodingKey {
+        case documentId = "document_id", documentName = "document_name"
         case id, event, message, origin, payload
         case createdAt = "created_at"
     }
@@ -468,7 +474,9 @@ extension DocumentActivity: Decodable {
             payloadJSON: payloadJSON,
             origin:    originJSON?.stringValue ?? "",
             payload:   payloadJSON?.stringValue,
-            createdAt: try decodeFlexibleString(from: c, forKey: .createdAt)
+            createdAt: try decodeFlexibleString(from: c, forKey: .createdAt),
+            documentId: try c.decodeIfPresent(String.self, forKey: .documentId),
+            documentName: try c.decodeIfPresent(String.self, forKey: .documentName)
         )
     }
 }
@@ -478,6 +486,14 @@ extension DocumentActivity: Decodable {
 /// Full details of a document, including assignment and activities.
 @objcMembers
 public final class DocumentDetails: NSObject {
+    /// Closed signer codes permit only status, branding and certified-copy recovery.
+    public let isSignerAccessClosed: Bool
+    /// Delivery availability when the document has a certified copy.
+    public let certifiedCopy: CertifiedCopy?
+    /// Present only with the corresponding envelope expansion.
+    public let envelopeId: String?
+    /// Group identity requested by expand=envelope, including for closed signer codes.
+    public let envelope: EnvelopeSummary?
     /// Resource discriminator returned by the API.
     public let resource: String?
     public let id: String
@@ -520,7 +536,11 @@ public final class DocumentDetails: NSObject {
          declineReason: String? = nil, declinedBySigner: Signer? = nil,
          declinedBy: DeclinedBySigner? = nil,
          activities: [DocumentActivity]? = nil, currentSigner: Signer? = nil,
-         verificationCode: String? = nil, verificationURL: String? = nil, hasContract: NSNumber? = nil) {
+         verificationCode: String? = nil, verificationURL: String? = nil, hasContract: NSNumber? = nil,
+         isSignerAccessClosed: Bool = false, certifiedCopy: CertifiedCopy? = nil,
+         envelopeId: String? = nil, envelope: EnvelopeSummary? = nil) {
+        self.isSignerAccessClosed = isSignerAccessClosed; self.certifiedCopy = certifiedCopy
+        self.envelopeId = envelopeId; self.envelope = envelope
         self.verificationCode = verificationCode
         self.verificationURL = verificationURL
         self.hasContract = hasContract
@@ -546,6 +566,8 @@ extension DocumentDetails: Decodable {
         case verificationCode = "verification_code"
         case verificationURL = "verification_url"
         case hasContract = "has_contract"
+        case isSignerAccessClosed = "is_signer_access_closed", certifiedCopy = "certified_copy"
+        case envelopeId = "envelope_id", envelope
         case resource, id, name, status, assignment, artifacts, pages, activities
         case currentSigner = "current_signer"
         case accountId       = "account_id"
@@ -580,8 +602,8 @@ extension DocumentDetails: Decodable {
             artifacts:        try c.decodeIfPresent(DocumentArtifacts.self, forKey: .artifacts),
             pages:            try c.decodeIfPresent([DocumentPage].self, forKey: .pages) ?? [],
             tags:             try c.decodeIfPresent([Tag].self, forKey: .tags) ?? [],
-            createdAt:        try decodeFlexibleString(from: c, forKey: .createdAt),
-            updatedAt:        try decodeFlexibleString(from: c, forKey: .updatedAt),
+            createdAt:        try decodeFlexibleOptionalString(from: c, forKey: .createdAt) ?? "",
+            updatedAt:        try decodeFlexibleOptionalString(from: c, forKey: .updatedAt) ?? "",
             isClosed:         try c.decodeIfPresent(Bool.self,           forKey: .isClosed) ?? false,
             declineReason:    try c.decodeIfPresent(String.self,         forKey: .declineReason),
             declinedBySigner: declinedBySigner,
@@ -592,7 +614,11 @@ extension DocumentDetails: Decodable {
             currentSigner:    try c.decodeIfPresent(Signer.self, forKey: .currentSigner),
             verificationCode: try c.decodeIfPresent(String.self, forKey: .verificationCode),
             verificationURL: try c.decodeIfPresent(String.self, forKey: .verificationURL),
-            hasContract: try c.decodeIfPresent(Bool.self, forKey: .hasContract).map { NSNumber(value: $0) }
+            hasContract: try c.decodeIfPresent(Bool.self, forKey: .hasContract).map { NSNumber(value: $0) },
+            isSignerAccessClosed: try c.decodeIfPresent(Bool.self, forKey: .isSignerAccessClosed) ?? false,
+            certifiedCopy: try c.decodeIfPresent(CertifiedCopy.self, forKey: .certifiedCopy),
+            envelopeId: try c.decodeIfPresent(String.self, forKey: .envelopeId),
+            envelope: try c.decodeIfPresent(EnvelopeSummary.self, forKey: .envelope)
         )
     }
 }

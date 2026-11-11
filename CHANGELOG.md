@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.14.0] - 2026-11-11
+
+### Added
+
+- Document envelopes with cost estimates, idempotent creation, ordering, reminders, cancellation, activities, and ZIP downloads.
+- Embedded signer sessions and workspace origin management.
+- Workspace notification policy, user push preferences, usage balances, and signing feature discovery.
+- Signer branding, certified-copy delivery and downloads, closed-access summaries, and envelope navigation.
+- Credit ceilings for assignments, templates, and envelopes, with template idempotency keys.
+
+### Fixed
+
+- Signer artifact downloads forward the access code without workspace credentials.
+- Nullable invitation URLs and reduced signing responses decode safely.
+- Expired certified-download redirects surface as errors instead of HTML file contents.
+- Webhook examples check signature verification before accepting a delivery.
+
 ## [1.13.0] - 2026-11-02
 
 ### Added

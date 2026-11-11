@@ -17,6 +17,69 @@ import Foundation
 @objcMembers
 public final class SignerResource: BaseResource, @unchecked Sendable {
 
+    /// Mirrors `GET /sign/theme`. Uses only the signer code; available before verification and after access closes.
+    public func theme(signerAccessCode: String) async throws -> AccountTheme {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        return try await call("Failed to fetch signer branding", request: APIRequest.get("/sign/theme", queryItems: [URLQueryItem(name: "signer-access-code", value: code)]).withoutWorkspaceCredential())
+    }
+
+    /// Delivers the result on the main queue.
+    public func theme(signerAccessCode: String, completion: @escaping (AccountTheme?, Error?) -> Void) {
+        withCompletion({ try await self.theme(signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Mirrors `GET /sign/logo`. Uses only the signer code; available before verification and after access closes.
+    public func downloadLogo(signerAccessCode: String) async throws -> Data {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        return try await callData("Failed to fetch signer branding", request: APIRequest.get("/sign/logo", queryItems: [URLQueryItem(name: "signer-access-code", value: code)]).withoutWorkspaceCredential())
+    }
+
+    /// Delivers the result on the main queue.
+    public func downloadLogo(signerAccessCode: String, completion: @escaping (Data?, Error?) -> Void) {
+        withCompletion({ try await self.downloadLogo(signerAccessCode: signerAccessCode) }, completion: completion)
+    }
+
+    /// Mirrors `POST /sign/certified-copy`. Sends only to the original contact. documentId selects another document of the code’s envelope.
+    public func resendCertifiedCopy(signerAccessCode: String, documentId: String? = nil) async throws -> CertifiedCopy {
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        var body: [String: String] = [:]
+        if let documentId { body["document_id"] = try requireId(documentId, name: "Document ID") }
+        let request = APIRequest(method: .post, path: "/sign/certified-copy",
+                                 queryItems: [URLQueryItem(name: "signer-access-code", value: code)],
+                                 body: try JSONEncoder.assinafy.encode(body), credential: .withheld)
+        return try await call("Failed to resend certified copy", request: request)
+    }
+
+    /// Delivers the result on the main queue.
+    public func resendCertifiedCopy(signerAccessCode: String, documentId: String?, completion: @escaping (CertifiedCopy?, Error?) -> Void) {
+        withCompletion({ try await self.resendCertifiedCopy(signerAccessCode: signerAccessCode, documentId: documentId) }, completion: completion)
+    }
+
+    /// Mirrors `POST /signers/downloads/{token}/resend`. Works with an expired token; enforces the original channel and resend limits.
+    public func resendCertifiedCopy(downloadToken: String) async throws -> CertifiedCopy {
+        let token = try requireId(downloadToken, name: "Download token")
+        return try await call("Failed to resend certified copy", request: APIRequest.post("/signers/downloads/\(token)/resend").withoutWorkspaceCredential())
+    }
+
+    /// Delivers the result on the main queue.
+    public func resendCertifiedCopy(downloadToken: String, completion: @escaping (CertifiedCopy?, Error?) -> Void) {
+        withCompletion({ try await self.resendCertifiedCopy(downloadToken: downloadToken) }, completion: completion)
+    }
+
+    /// Mirrors `GET /signers/downloads/{token}` with optional /pades. Expired links throw APIError 302; request a new copy.
+    public func downloadCertifiedCopy(downloadToken: String, pades: Bool = false) async throws -> Data {
+        let token = try requireId(downloadToken, name: "Download token")
+        var request = APIRequest.get("/signers/downloads/\(token)" + (pades ? "/pades" : "")).withoutWorkspaceCredential()
+        // Expired links redirect to HTML; surface the 302 instead of returning it as PDF bytes.
+        request.followsRedirects = false
+        return try await callData("Failed to download certified copy", request: request)
+    }
+
+    /// Delivers the result on the main queue.
+    public func downloadCertifiedCopy(downloadToken: String, pades: Bool, completion: @escaping (Data?, Error?) -> Void) {
+        withCompletion({ try await self.downloadCertifiedCopy(downloadToken: downloadToken, pades: pades) }, completion: completion)
+    }
+
     // MARK: - Swift async API
 
     /// Creates a signer in the workspace, or returns the existing signer if the email already exists.
@@ -312,12 +375,25 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         signerId: String,
         signerAccessCode: String
     ) async throws -> DocumentDetails {
+        try await getCurrentDocument(signerId: signerId, signerAccessCode: signerAccessCode, expand: [])
+    }
+
+    /// Mirrors `GET /signers/{signerId}/document` with optional envelope expansion.
+    public func getCurrentDocument(signerId: String, signerAccessCode: String, expand: [String]) async throws -> DocumentDetails {
         let sid = try requireId(signerId, name: "Signer ID")
         let code = try requireId(signerAccessCode, name: "Signer access code")
+        var items = [URLQueryItem(name: "signer-access-code", value: code)]
+        if !expand.isEmpty { items.append(.init(name: "expand", value: expand.joined(separator: ","))) }
         return try await call("Failed to fetch signer's current document",
                               request: APIRequest.get("/signers/\(sid)/document",
-                                                      queryItems: [URLQueryItem(name: "signer-access-code", value: code)])
+                                                      queryItems: items)
                                   .withoutWorkspaceCredential())
+    }
+
+    /// Delivers the result on the main queue.
+    @objc(getCurrentDocumentWithSignerId:signerAccessCode:expand:completion:)
+    public func getCurrentDocument(signerId: String, signerAccessCode: String, expand: [String], completion: @escaping (DocumentDetails?, Error?) -> Void) {
+        withCompletion({ try await self.getCurrentDocument(signerId: signerId, signerAccessCode: signerAccessCode, expand: expand) }, completion: completion)
     }
 
     /// Lists every document the signer has access to with the given access code.
@@ -460,37 +536,33 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         try await callVoid("Failed to decline multiple documents", request: request)
     }
 
-    /// Downloads a signer document artifact from the documented public endpoint.
-    ///
-    /// Mirrors `GET /signers/{signer_id}/documents/{document_id}/download/{artifact}`.
+    /// Mirrors `GET /signers/{signerId}/documents/{documentId}/download/{artifactName}`.
+    /// Legacy links without a code return APIError 302. Use a signer code for the
+    /// original, or downloadCertifiedCopy(downloadToken:pades:) for a completed copy.
     public func downloadSignerDocumentArtifact(
-        signerId: String,
-        documentId: String,
-        artifact: DocumentArtifactName
+        signerId: String, documentId: String, artifact: DocumentArtifactName
     ) async throws -> Data {
         let sid = try requireId(signerId, name: "Signer ID")
         let did = try requireId(documentId, name: "Document ID")
-        return try await callData(
-            "Failed to download signer document artifact",
-            request: APIRequest.get("/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)")
-                .withoutWorkspaceCredential()
-        )
+        var request = APIRequest.get("/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)")
+            .withoutWorkspaceCredential()
+        request.followsRedirects = false
+        return try await callData("Failed to download signer document artifact", request: request)
     }
 
-    /// Compatibility overload. The access code is no longer sent because this
-    /// endpoint is unauthenticated in the current API contract.
+    /// Downloads the original using only the signer access code. Certified copies
+    /// are delivered through the original notification channel; other artifacts return 403.
     public func downloadSignerDocumentArtifact(
-        signerId: String,
-        documentId: String,
-        artifact: DocumentArtifactName,
+        signerId: String, documentId: String, artifact: DocumentArtifactName,
         signerAccessCode: String
     ) async throws -> Data {
-        _ = try requireId(signerAccessCode, name: "Signer access code")
-        return try await downloadSignerDocumentArtifact(
-            signerId: signerId,
-            documentId: documentId,
-            artifact: artifact
-        )
+        let sid = try requireId(signerId, name: "Signer ID")
+        let did = try requireId(documentId, name: "Document ID")
+        let code = try requireId(signerAccessCode, name: "Signer access code")
+        return try await callData("Failed to download signer document artifact", request: APIRequest.get(
+            "/signers/\(sid)/documents/\(did)/download/\(artifact.pathValue)",
+            queryItems: [URLQueryItem(name: "signer-access-code", value: code)]
+        ).withoutWorkspaceCredential())
     }
 
     /// Retrieves document assignment details from the generic signer endpoint.
@@ -501,8 +573,17 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         signerAccessCode: String,
         hasAcceptedTerms: Bool? = nil
     ) async throws -> DocumentDetails {
+        try await getSigningDocument(signerAccessCode: signerAccessCode, hasAcceptedTerms: hasAcceptedTerms, expand: [])
+    }
+
+    /// Mirrors `GET /sign` with envelope expansion and document selection; closed codes return only summary and copy availability.
+    public func getSigningDocument(
+        signerAccessCode: String, hasAcceptedTerms: Bool? = nil, expand: [String], documentId: String? = nil
+    ) async throws -> DocumentDetails {
         let code = try requireId(signerAccessCode, name: "Signer access code")
         var items = [URLQueryItem(name: "signer-access-code", value: code)]
+        if !expand.isEmpty { items.append(.init(name: "expand", value: expand.joined(separator: ","))) }
+        if let documentId { items.append(.init(name: "document_id", value: try requireId(documentId, name: "Document ID"))) }
         if let hasAcceptedTerms {
             items.append(.init(name: "has_accepted_terms", value: hasAcceptedTerms ? "true" : "false"))
         }
@@ -510,6 +591,14 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
             "Failed to fetch signing document",
             request: APIRequest.get("/sign", queryItems: items).withoutWorkspaceCredential()
         )
+    }
+
+    /// Delivers an expanded signing document on the main queue.
+    @objc(getSigningDocumentWithSignerAccessCode:hasAcceptedTerms:expand:documentId:completion:)
+    public func getSigningDocument(signerAccessCode: String, hasAcceptedTerms: NSNumber?, expand: [String], documentId: String?,
+                                   completion: @escaping (DocumentDetails?, Error?) -> Void) {
+        withCompletion({ try await self.getSigningDocument(signerAccessCode: signerAccessCode,
+                                                              hasAcceptedTerms: hasAcceptedTerms?.boolValue, expand: expand, documentId: documentId) }, completion: completion)
     }
 
     // MARK: - Objective-C / completion-handler API

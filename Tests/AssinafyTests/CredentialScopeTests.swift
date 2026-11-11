@@ -463,3 +463,54 @@ final class CredentialScopeTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "secret-key")
     }
 }
+
+extension CredentialScopeTests {
+    func testSignerBrandingAndCertifiedCopiesWithholdWorkspaceCredentials() async throws {
+        let signers = SignerResource(http: mock)
+        mock.stubEnvelope(["account_name": "Example", "primary_color": "000000", "secondary_color": "ffffff"])
+        _ = try await signers.theme(signerAccessCode: "code")
+        assertNoCredential("/sign/theme")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [URLQueryItem(name: "signer-access-code", value: "code")])
+        let summary: [String: Any] = ["id": "d", "name": "Document", "status": "certificated", "is_signer_access_closed": true]
+        mock.stubEnvelope(summary)
+        _ = try await signers.getCurrentDocument(signerId: "s", signerAccessCode: "code", expand: ["envelope"])
+        assertNoCredential("/signers/s/document")
+        mock.stubEnvelope(summary)
+        _ = try await signers.getSigningDocument(signerAccessCode: "code", expand: ["envelope"], documentId: "d")
+        assertNoCredential("/sign")
+        mock.stub(response: APIResponse(data: Data("image".utf8), statusCode: 200))
+        _ = try await signers.downloadLogo(signerAccessCode: "code")
+        assertNoCredential("/sign/logo")
+        mock.stubEnvelope(["available": true, "notification_method": "Email", "resends_left": NSNull(), "sent_to": "s***@example.invalid"])
+        let copy = try await signers.resendCertifiedCopy(signerAccessCode: "code", documentId: "d")
+        assertNoCredential("/sign/certified-copy")
+        XCTAssertEqual(mock.lastRequest?.method, .post)
+        XCTAssertEqual(copy.notificationMethod, "Email")
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(mock.lastRequest?.body)) as? [String: String]
+        XCTAssertEqual(body, ["document_id": "d"])
+        mock.stubEnvelope(["available": false, "notification_method": "Whatsapp", "resends_left": 0])
+        _ = try await signers.resendCertifiedCopy(downloadToken: "token")
+        assertNoCredential("/signers/downloads/token/resend")
+        XCTAssertNil(mock.lastRequest?.queryItems)
+        mock.stub(response: APIResponse(data: Data("%PDF".utf8), statusCode: 200))
+        _ = try await signers.downloadCertifiedCopy(downloadToken: "token", pades: true)
+        assertNoCredential("/signers/downloads/token/pades")
+        XCTAssertEqual(mock.lastRequest?.followsRedirects, false)
+        mock.stub(response: APIResponse(data: Data("%PDF".utf8), statusCode: 200))
+        _ = try await signers.downloadSignerDocumentArtifact(signerId: "s", documentId: "d", artifact: .original, signerAccessCode: "code")
+        assertNoCredential("/signers/s/documents/d/download/original")
+        XCTAssertEqual(mock.lastRequest?.queryItems, [URLQueryItem(name: "signer-access-code", value: "code")])
+    }
+
+    func testNewSignerRoutesRejectBlankCredentialsBeforeIO() async {
+        let signers = SignerResource(http: mock)
+        do { _ = try await signers.theme(signerAccessCode: " "); XCTFail() } catch { XCTAssertTrue(error is ValidationError) }
+        do { _ = try await signers.downloadLogo(signerAccessCode: " "); XCTFail() } catch { XCTAssertTrue(error is ValidationError) }
+        do { _ = try await signers.resendCertifiedCopy(signerAccessCode: " "); XCTFail() } catch { XCTAssertTrue(error is ValidationError) }
+        do { _ = try await signers.resendCertifiedCopy(downloadToken: " "); XCTFail() } catch { XCTAssertTrue(error is ValidationError) }
+        do { _ = try await signers.downloadCertifiedCopy(downloadToken: " "); XCTFail() } catch { XCTAssertTrue(error is ValidationError) }
+        do { _ = try await signers.getCurrentDocument(signerId: "s", signerAccessCode: " ", expand: []); XCTFail() } catch { XCTAssertTrue(error is ValidationError) }
+        do { _ = try await signers.getSigningDocument(signerAccessCode: " ", expand: []); XCTFail() } catch { XCTAssertTrue(error is ValidationError) }
+        XCTAssertTrue(mock.allRequests.isEmpty)
+    }
+}

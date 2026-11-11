@@ -13,6 +13,89 @@ import Foundation
 @objcMembers
 public final class WorkspaceResource: BaseResource, @unchecked Sendable {
 
+    /// Mirrors `GET /accounts/{accountId}/notification-policy`. Workspace notification rules.
+    public func notificationPolicy(accountId: String? = nil) async throws -> NotificationPolicy {
+        try await call("Failed to fetch notification policy", request: .get("/accounts/\(self.accountId(accountId))/notification-policy"))
+    }
+
+    /// Delivers the result on the main queue.
+    public func notificationPolicy(accountId: String?, completion: @escaping (NotificationPolicy?, Error?) -> Void) {
+        withCompletion({ try await self.notificationPolicy(accountId: accountId) }, completion: completion)
+    }
+
+    /// Mirrors `PUT /accounts/{accountId}/notification-policy`. Owners only; merges supplied settings.
+    public func updateNotificationPolicy(payload: UpdateNotificationPolicyPayload, accountId: String? = nil) async throws -> NotificationPolicy {
+        try await call("Failed to update notification policy", request: .put("/accounts/\(self.accountId(accountId))/notification-policy", body: payload))
+    }
+
+    /// Delivers the result on the main queue.
+    public func updateNotificationPolicy(payload: UpdateNotificationPolicyPayload, accountId: String?, completion: @escaping (NotificationPolicy?, Error?) -> Void) {
+        withCompletion({ try await self.updateNotificationPolicy(payload: payload, accountId: accountId) }, completion: completion)
+    }
+
+    /// Mirrors `GET /accounts/{accountId}/embed-origins`. Requires the Embed feature and a direct workspace credential.
+    public func listEmbedOrigins(accountId: String? = nil) async throws -> [EmbedOrigin] {
+        try await call("Failed to list embed origins", request: .get("/accounts/\(self.accountId(accountId))/embed-origins"))
+    }
+
+    /// Delivers the result on the main queue.
+    public func listEmbedOrigins(accountId: String?, completion: @escaping ([EmbedOrigin]?, Error?) -> Void) {
+        withCompletion({ try await self.listEmbedOrigins(accountId: accountId) }, completion: completion)
+    }
+
+    /// Mirrors `POST /accounts/{accountId}/embed-origins`. Exact HTTPS origin; localhost also accepts HTTP. Maximum ten.
+    public func addEmbedOrigin(origin: String, accountId: String? = nil) async throws -> EmbedOrigin {
+        try await call("Failed to add embed origin", request: .post("/accounts/\(self.accountId(accountId))/embed-origins", body: ["origin": origin]))
+    }
+
+    /// Delivers the result on the main queue.
+    public func addEmbedOrigin(origin: String, accountId: String?, completion: @escaping (EmbedOrigin?, Error?) -> Void) {
+        withCompletion({ try await self.addEmbedOrigin(origin: origin, accountId: accountId) }, completion: completion)
+    }
+
+    /// Mirrors `PUT /accounts/{accountId}/embed-origins/{originId}`. Replaces an allowed origin.
+    public func updateEmbedOrigin(originId: String, origin: String, accountId: String? = nil) async throws -> EmbedOrigin {
+        let id = try requireId(originId, name: "Origin ID")
+        return try await call("Failed to update embed origin", request: .put("/accounts/\(self.accountId(accountId))/embed-origins/\(id)", body: ["origin": origin]))
+    }
+
+    /// Delivers the result on the main queue.
+    public func updateEmbedOrigin(originId: String, origin: String, accountId: String?, completion: @escaping (EmbedOrigin?, Error?) -> Void) {
+        withCompletion({ try await self.updateEmbedOrigin(originId: originId, origin: origin, accountId: accountId) }, completion: completion)
+    }
+
+    /// Mirrors `DELETE /accounts/{accountId}/embed-origins/{originId}`. Removing the last disables new sessions.
+    public func deleteEmbedOrigin(originId: String, accountId: String? = nil) async throws {
+        let id = try requireId(originId, name: "Origin ID")
+        try await callVoid("Failed to delete embed origin", request: .delete("/accounts/\(self.accountId(accountId))/embed-origins/\(id)"))
+    }
+
+    /// Delivers the result on the main queue.
+    public func deleteEmbedOrigin(originId: String, accountId: String?, completion: @escaping (Error?) -> Void) {
+        withVoidCompletion({ try await self.deleteEmbedOrigin(originId: originId, accountId: accountId) }, completion: completion)
+    }
+
+    /// Mirrors `GET /accounts/{accountId}` with expansion. Request signing_features to inspect allowed verification methods.
+    public func get(workspaceId: String, expand: [String]) async throws -> WorkspaceResponse {
+        let id = try requireId(workspaceId, name: "Workspace ID")
+        return try await call("Failed to fetch workspace", request: .get("/accounts/\(id)", queryItems: [URLQueryItem(name: "expand", value: expand.joined(separator: ","))]))
+    }
+
+    /// Delivers the result on the main queue.
+    public func get(workspaceId: String, expand: [String], completion: @escaping (WorkspaceResponse?, Error?) -> Void) {
+        withCompletion({ try await self.get(workspaceId: workspaceId, expand: expand) }, completion: completion)
+    }
+
+    /// Mirrors `GET /accounts/{accountId}/usage`. Plan and remaining allowances; unavailable to third-party OAuth apps.
+    public func usage(accountId: String? = nil) async throws -> WorkspaceUsage {
+        try await call("Failed to fetch workspace usage", request: .get("/accounts/\(self.accountId(accountId))/usage"))
+    }
+
+    /// Delivers workspace usage on the main queue.
+    public func usage(accountId: String?, completion: @escaping (WorkspaceUsage?, Error?) -> Void) {
+        withCompletion({ try await self.usage(accountId: accountId) }, completion: completion)
+    }
+
     // MARK: - Swift async API
 
     /// Creates a new workspace.

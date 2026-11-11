@@ -111,6 +111,8 @@ extension WorkspaceLimits: @unchecked Sendable {}
 @objcMembers
 public final class WorkspaceResponse: NSObject {
     /// Resource discriminator returned by the API (normally `account`).
+    /// Present only when signing_features is requested; nil means unknown.
+    public let signingFeatures: [String: Bool]?
     public let resource: String?
     public let id: String
     public let name: String
@@ -129,7 +131,8 @@ public final class WorkspaceResponse: NSObject {
     init(resource: String? = nil, id: String, name: String, primaryColor: String? = nil,
          secondaryColor: String? = nil, notificationSenderType: String? = nil,
          roles: [String] = [], isDeleteAllowed: Bool = false, createdAt: String,
-         limits: WorkspaceLimits? = nil) {
+         limits: WorkspaceLimits? = nil, signingFeatures: [String: Bool]? = nil) {
+        self.signingFeatures = signingFeatures
         self.resource = resource
         self.id = id; self.name = name
         self.primaryColor = primaryColor; self.secondaryColor = secondaryColor
@@ -145,6 +148,7 @@ extension WorkspaceResponse: @unchecked Sendable {}
 
 extension WorkspaceResponse: Decodable {
     enum CodingKeys: String, CodingKey {
+        case signingFeatures = "signing_features"
         case resource, id, name, roles, limits
         case primaryColor   = "primary_color"
         case secondaryColor = "secondary_color"
@@ -165,7 +169,8 @@ extension WorkspaceResponse: Decodable {
             roles:           try c.decodeIfPresent([String].self, forKey: .roles) ?? [],
             isDeleteAllowed: try c.decodeIfPresent(Bool.self, forKey: .isDeleteAllowed) ?? false,
             createdAt:       try decodeFlexibleString(from: c, forKey: .createdAt),
-            limits:          try c.decodeIfPresent(WorkspaceLimits.self, forKey: .limits)
+            limits:          try c.decodeIfPresent(WorkspaceLimits.self, forKey: .limits),
+            signingFeatures: try c.decodeIfPresent([String: Bool].self, forKey: .signingFeatures)
         )
     }
 }
@@ -420,3 +425,41 @@ public final class AccountStatsParams: NSObject {
 }
 
 extension AccountStatsParams: @unchecked Sendable {}
+
+/// Document or credit balance. Nil balance or limit means unlimited or unbounded.
+@objcMembers
+public final class WorkspaceBalance: NSObject, Decodable {
+    public let balance: NSDecimalNumber?
+    public let limit: NSDecimalNumber?
+    public let spent: NSDecimalNumber?
+
+    enum CodingKeys: String, CodingKey { case balance, limit, spent }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        balance = try c.decodeIfPresent(Decimal.self, forKey: .balance).map(NSDecimalNumber.init(decimal:))
+        limit = try c.decodeIfPresent(Decimal.self, forKey: .limit).map(NSDecimalNumber.init(decimal:))
+        spent = try c.decodeIfPresent(Decimal.self, forKey: .spent).map(NSDecimalNumber.init(decimal:))
+    }
+}
+
+extension WorkspaceBalance: @unchecked Sendable {}
+
+/// Plan and remaining allowances. Third-party OAuth applications cannot read usage.
+@objcMembers
+public final class WorkspaceUsage: NSObject, Decodable {
+    public let plan: String?
+    public let documentsRenewalDate: String?
+    public let balances: [String: WorkspaceBalance]
+
+    enum CodingKeys: String, CodingKey { case plan, balances, documentsRenewalDate = "documents_renewal_date" }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        documentsRenewalDate = try c.decodeIfPresent(String.self, forKey: .documentsRenewalDate)
+        balances = try c.decodeIfPresent([String: WorkspaceBalance].self, forKey: .balances) ?? [:]
+    }
+}
+
+extension WorkspaceUsage: @unchecked Sendable {}

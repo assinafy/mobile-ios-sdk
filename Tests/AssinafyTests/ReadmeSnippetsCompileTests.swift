@@ -330,6 +330,17 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
         _ = dispatch.payloadJSON
     }
 
+    @available(*, unavailable)
+    private func verifyWebhook(rawBody: Data, headers: [String: String], secret: String) throws {
+        guard WebhookSignature.verify(
+            body: rawBody,
+            id: headers["webhook-id"] ?? "",
+            timestamp: headers["webhook-timestamp"] ?? "",
+            signatureHeader: headers["webhook-signature"] ?? "",
+            secret: secret
+        ) else { throw AssinafySDKError("Invalid webhook signature") }
+    }
+
     // MARK: - OAuth 2.1
 
     @available(*, unavailable)
@@ -349,7 +360,7 @@ final class ReadmeSnippetsCompileTests: XCTestCase {
         let request = OAuthAuthorizationRequest(
             clientId: clientId,
             redirectURI: "https://myapp.example.invalid/oauth/callback",
-            scopes: [.documentsRead, .documentsWrite, .offlineAccess],
+            scopes: [.documentsRead, .documentsWrite, .accountRead, .openID, .offlineAccess],
             resource: resource.resource
         )
         _ = request.nonce

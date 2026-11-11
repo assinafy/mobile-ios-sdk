@@ -150,9 +150,20 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
     ///   - documentId: The unique document identifier.
     /// - Returns: ``DocumentDetails`` containing the current state and metadata.
     public func get(documentId: String) async throws -> DocumentDetails {
+        try await get(documentId: documentId, expand: [])
+    }
+
+    /// Mirrors `GET /documents/{documentId}` with envelope_id or envelope expansion.
+    public func get(documentId: String, expand: [String]) async throws -> DocumentDetails {
         let did = try requireId(documentId, name: "Document ID")
-        return try await call("Failed to fetch document",
-                              request: .get("/documents/\(did)"))
+        let items = expand.isEmpty ? nil : [URLQueryItem(name: "expand", value: expand.joined(separator: ","))]
+        return try await call("Failed to fetch document", request: .get("/documents/\(did)", queryItems: items))
+    }
+
+    /// Delivers expanded document details on the main queue.
+    @objc(getDocumentWithId:expand:completion:)
+    public func get(documentId: String, expand: [String], completion: @escaping (DocumentDetails?, Error?) -> Void) {
+        withCompletion({ try await self.get(documentId: documentId, expand: expand) }, completion: completion)
     }
 
     /// Renames a document.
@@ -333,7 +344,10 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
         let id = try self.accountId(accountId)
         let tid = try requireId(templateId, name: "Template ID")
         try signers.forEach { try $0.validateForDocumentCreation() }
+        let ceiling = options?.maxTotalCredits?.decimalValue
+        try validateCreditCeiling(ceiling)
         struct Body: Encodable {
+            let maxTotalCredits: Decimal?
             let signers: [TemplateSigner]
             let name: String?
             let message: String?
@@ -341,19 +355,20 @@ public final class DocumentResource: BaseResource, @unchecked Sendable {
             let editorFields: [TemplateEditorField]?
             let tags: [String]?
             enum CodingKeys: String, CodingKey {
+                case maxTotalCredits = "max_total_credits"
                 case signers, name, message
                 case expiresAt = "expires_at"
                 case editorFields = "editor_fields"
                 case tags
             }
         }
-        let body = Body(signers: signers, name: options?.name,
+        let body = Body(maxTotalCredits: ceiling, signers: signers, name: options?.name,
                         message: options?.message, expiresAt: options?.expiresAt,
                         editorFields: options?.editorFields.isEmpty == false ? options?.editorFields : nil,
                         tags: options?.tags.isEmpty == false ? options?.tags : nil)
         let request = try APIRequest.post(
             "/accounts/\(id)/templates/\(tid)/documents", body: body
-        )
+        ).withIdempotencyKey(options?.idempotencyKey)
         return try await call("Failed to create document from template", request: request)
     }
 

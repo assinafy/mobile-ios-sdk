@@ -288,6 +288,8 @@ extension TemplateDetails: Decodable {
 /// Maps a signer to a template role when creating a document from a template.
 @objcMembers
 public final class TemplateSigner: NSObject, Encodable {
+    /// Requires the Embed feature; mint a session instead of using a signing link.
+    public var embedded: Bool = false
     public let roleId: String
     public let id: String?
     /// Reuses or creates a signer by email when no ID is supplied.
@@ -373,7 +375,7 @@ public final class TemplateSigner: NSObject, Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, email, name
+        case id, email, name, embedded
         case whatsappPhoneNumber = "whatsapp_phone_number"
         case roleId              = "role_id"
         case verificationMethod  = "verification_method"
@@ -384,6 +386,7 @@ public final class TemplateSigner: NSObject, Encodable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(roleId, forKey: .roleId)
+        if embedded { try c.encode(true, forKey: .embedded) }
         try c.encodeIfPresent(id, forKey: .id)
         try c.encodeIfPresent(email, forKey: .email)
         try c.encodeIfPresent(name, forKey: .name)
@@ -486,6 +489,10 @@ extension UpdateTemplatePayload: @unchecked Sendable {}
 /// Options when creating a document from a template.
 @objcMembers
 public final class CreateDocumentFromTemplateOptions: NSObject {
+    /// Reuse this key after an uncertain creation result; never reuse it for another document.
+    public var idempotencyKey: String?
+    /// Optional non-negative credit ceiling.
+    public var maxTotalCredits: NSDecimalNumber?
     public var name: String?
     public var message: String?
     public var expiresAt: String?

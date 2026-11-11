@@ -14,6 +14,19 @@ import Foundation
 @objcMembers
 public final class AssignmentResource: BaseResource, @unchecked Sendable {
 
+    /// Mirrors `POST /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/embed-sessions`. Backend-only: OAuth apps cannot mint sessions. Open the returned URL once within five minutes.
+    public func createEmbedSession(documentId: String, assignmentId: String, signerId: String) async throws -> EmbedSession {
+        let did = try requireId(documentId, name: "Document ID")
+        let aid = try requireId(assignmentId, name: "Assignment ID")
+        let sid = try requireId(signerId, name: "Signer ID")
+        return try await call("Failed to create embed session", request: .post("/documents/\(did)/assignments/\(aid)/signers/\(sid)/embed-sessions"))
+    }
+
+    /// Delivers the result on the main queue.
+    public func createEmbedSession(documentId: String, assignmentId: String, signerId: String, completion: @escaping (EmbedSession?, Error?) -> Void) {
+        withCompletion({ try await self.createEmbedSession(documentId: documentId, assignmentId: assignmentId, signerId: signerId) }, completion: completion)
+    }
+
     // MARK: - Swift async API
 
     /// Mirrors `GET /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/identity-verification`.

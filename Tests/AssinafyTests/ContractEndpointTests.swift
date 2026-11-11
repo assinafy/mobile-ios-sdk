@@ -376,6 +376,7 @@ final class ContractEndpointTests: XCTestCase {
                 .signer(id: "s1", verification: .email, notifications: [.email], step: 1),
                 .signer(id: "s2", verification: .whatsapp, notifications: [.whatsapp], step: 2),
                 .signer(id: "s3", verification: .digitalCertificate, notifications: [.whatsapp], step: 3),
+                .descriptor(id: "s4", verificationMethod: "IdDocumentFaceMatchBasic", notificationMethods: ["Email"], step: 4),
             ]
         )
         let body = try buildAssignmentBody(payload)
@@ -385,9 +386,9 @@ final class ContractEndpointTests: XCTestCase {
         let signers = try XCTUnwrap(json?["signers"] as? [[String: Any]])
 
         XCTAssertEqual(signers.map { $0["verification_method"] as? String },
-                       ["Email", "Whatsapp", "DigitalCertificate"])
+                       ["Email", "Whatsapp", "DigitalCertificate", "IdDocumentFaceMatchBasic"])
         XCTAssertEqual(signers[2]["notification_methods"] as? [String], ["Whatsapp"])
-        XCTAssertEqual(signers.map { $0["step"] as? Int }, [1, 2, 3])
+        XCTAssertEqual(signers.map { $0["step"] as? Int }, [1, 2, 3, 4])
     }
 
     func testTypedTemplateSignerEncodesAPIVerificationMethods() throws {

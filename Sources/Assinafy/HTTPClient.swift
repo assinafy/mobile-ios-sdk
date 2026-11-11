@@ -44,13 +44,15 @@ public struct APIRequest: Sendable {
     public let body: Data?
     public let contentType: String
     /// The credential class of this request. Defaults to ``Credential/workspace``.
-    public let credential: Credential
+    public private(set) var credential: Credential
     /// `false` for a request that must reach the server at most once, such as
     /// the OAuth token and revocation requests: a `307` or `308` repeats the
     /// body, and with it a refresh token the first attempt may have retired.
     /// `URLSessionHTTPClient` then refuses every redirect and throws the `3xx`
     /// as an ``APIError``.
     var followsRedirects = true
+    /// Optional key for supported creation endpoints; the SDK still never retries.
+    public private(set) var idempotencyKey: String?
 
     /// Creates an HTTP request.
     /// - Parameters:
@@ -106,15 +108,18 @@ public struct APIRequest: Sendable {
     /// `security: [signerAccessCode]`, so a client configured with an API key
     /// or bearer token never transmits it to a route that cannot use it.
     public func withoutWorkspaceCredential() -> APIRequest {
-        var copy = APIRequest(
-            method: method,
-            path: path,
-            queryItems: queryItems,
-            body: body,
-            contentType: contentType,
-            credential: .withheld
-        )
-        copy.followsRedirects = followsRedirects
+        var copy = self
+        copy.credential = .withheld
+        return copy
+    }
+
+    /// Adds an Idempotency-Key for envelope or template creation. Reuse after an uncertain result.
+    public func withIdempotencyKey(_ key: String?) throws -> APIRequest {
+        if let key, key.isBlank || key.rangeOfCharacter(from: .controlCharacters) != nil {
+            throw ValidationError("Idempotency key must be nonblank and contain no control characters")
+        }
+        var copy = self
+        copy.idempotencyKey = key
         return copy
     }
 
@@ -374,6 +379,9 @@ public final class URLSessionHTTPClient: NSObject, HTTPClientProtocol, URLSessio
         for (key, value) in defaultHeaders
         where mayCarryCredential || !Self.isCredentialHeader(key) {
             urlRequest.setValue(value, forHTTPHeaderField: key)
+        }
+        if let key = request.idempotencyKey {
+            urlRequest.setValue(key, forHTTPHeaderField: "Idempotency-Key")
         }
         if request.body != nil || request.method != .get {
             urlRequest.setValue(request.contentType, forHTTPHeaderField: "Content-Type")

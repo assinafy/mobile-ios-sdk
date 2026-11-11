@@ -532,7 +532,7 @@ final class SignerResourceTests: XCTestCase {
         XCTAssertNil(mock.lastRequest?.queryItems)
     }
 
-    func testLegacySignerArtifactAccessCodeIsNotSent() async throws {
+    func testSignerArtifactAccessCodeIsSent() async throws {
         mock.stub(response: APIResponse(data: Data([0xFF]), headers: [:], statusCode: 200))
 
         _ = try await resource.downloadSignerDocumentArtifact(
@@ -542,7 +542,7 @@ final class SignerResourceTests: XCTestCase {
             signerAccessCode: "legacy-code"
         )
 
-        XCTAssertNil(mock.lastRequest?.queryItems)
+        XCTAssertEqual(mock.lastRequest?.queryItems, [URLQueryItem(name: "signer-access-code", value: "legacy-code")])
     }
 
     func testGetSigningDocumentUsesGenericSignEndpoint() async throws {

@@ -304,7 +304,7 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
     /// - Parameters:
     ///   - signerAccessCode: The signer access code from the signing URL.
     ///   - type: The type of image to upload (signature or initial).
-    ///   - imageData: PNG or JPEG image data.
+    ///   - imageData: PNG image data. JPEG uploads are rejected before network I/O.
     ///   - reuse: When `true`, marks the uploaded image to be reused for future
     ///     documents (sends `reuse=true`). Defaults to `false`.
     public func uploadSignature(
@@ -327,13 +327,8 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
         reusePreference: Bool?
     ) async throws {
         let code = try requireId(signerAccessCode, name: "Signer access code")
-        let contentType: String
-        if imageData.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
-            contentType = "image/png"
-        } else if imageData.starts(with: [0xFF, 0xD8, 0xFF]) {
-            contentType = "image/jpeg"
-        } else {
-            throw ValidationError("Signature image must be PNG or JPEG data")
+        guard imageData.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else {
+            throw ValidationError("Signature image must be PNG data")
         }
         var items = [
             URLQueryItem(name: "signer-access-code", value: code),
@@ -345,7 +340,7 @@ public final class SignerResource: BaseResource, @unchecked Sendable {
             path: "/signature",
             queryItems: items,
             body: imageData,
-            contentType: contentType,
+            contentType: "image/png",
             credential: .withheld
         )
         try await callVoid("Failed to upload signature", request: request)

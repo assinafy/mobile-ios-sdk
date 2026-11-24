@@ -436,7 +436,7 @@ signer code exactly where shown.
 | `acceptTerms(signerAccessCode:)` | Signer | `PUT /signers/accept-terms?signer-access-code={code}`; no JSON body | Bare envelope. The source-compatible `AcceptTermsResponse` is synthesized as `fullName: ""`, `email: ""`, `hasAcceptedTerms: true`; a legacy response body is still decoded. |
 | `acceptTermsWithoutResponse(signerAccessCode:)` | Signer | Same request as `acceptTerms(signerAccessCode:)` | Canonical bare-envelope handling; returns `Void` |
 | `verifyEmail(payload:)` | Signer | `POST /verify?signer-access-code={code}`; JSON contains only `verification-code` | Bare envelope; returns `Void`. `signerAccessCode` is never emitted in the body. |
-| `uploadSignature(signerAccessCode:type:imageData:reuse:)` | Signer | `POST /signature?signer-access-code={code}&type=signature\|initial[&reuse=true]`; body is PNG or JPEG bytes (`image/png` or `image/jpeg`) | Bare envelope; returns `Void` |
+| `uploadSignature(signerAccessCode:type:imageData:reuse:)` | Signer | `POST /signature?signer-access-code={code}&type=signature\|initial[&reuse=true]`; body is PNG bytes (`image/png`) | Bare envelope; returns `Void` |
 | `uploadSignature(signerAccessCode:type:imageData:reusePreference:)` | Signer | Same request; `true` sends `reuse=true`, `false` sends `reuse=false`, and `nil` omits the preference | Bare envelope; returns `Void`. The older `reuse: false` overload omits the preference and preserves the server's existing choice |
 | `downloadSignature(signerAccessCode:type:)` | Signer | `GET /signature/{signatureType}?signer-access-code={code}` where the path value is `signature` or `initial` | Raw image `Data`; there is no redundant `type` query |
 | `getCurrentDocument(signerId:signerAccessCode:)` | Signer | `GET /signers/{signerId}/document?signer-access-code={code}` | `Document` -> `DocumentDetails`; the API omits pages and limits assignment items to this signer |
@@ -2218,9 +2218,8 @@ minutes are allowed; the receiver has ten seconds to answer. OAuth requires
 Full results: [reminder estimate](PAYLOADS.md#resendcostestimate) and
 [test delivery](PAYLOADS.md#webhooktestdelivery).
 
-JPEG uploads use the documented `image/jpeg` media type. Staging currently returns
-500 `Unsupported image format: jpe` for JPEG; use PNG until that server path is available.
-The SDK preserves the API error and never retries the upload.
+Signature and initial uploads require PNG. JPEG/JPG data throws `ValidationError`
+before network I/O through every upload overload and completion adapter.
 
 ### Completion selectors for scheduled sends and delivery controls
 

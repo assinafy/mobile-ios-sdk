@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.15.1] - 2026-11-24
+
+### Fixed
+
+- Signature and initial uploads require PNG data; JPEG is rejected before network I/O.
+
 ## [1.15.0] - 2026-11-24
 
 ### Added

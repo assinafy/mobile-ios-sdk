@@ -78,14 +78,22 @@ final class DocumentDeliveryTests: XCTestCase {
         XCTAssertEqual(mock.lastRequest?.credential, .workspace)
     }
 
-    func testJPEGSignatureUsesItsMediaTypeAndWithholdsCredential() async throws {
+    func testJPEGSignaturesAndInitialsAreRejectedBeforeIO() async throws {
         let mock = MockHTTPClient()
-        mock.stubJSON(["status": 200, "data": NSNull()])
+        let resource = SignerResource(http: mock)
         let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00])
-        try await SignerResource(http: mock).uploadSignature(signerAccessCode: "code", type: .initial, imageData: jpeg, reusePreference: false)
-        XCTAssertEqual(mock.lastRequest?.contentType, "image/jpeg")
-        XCTAssertEqual(mock.lastRequest?.body, jpeg)
-        XCTAssertEqual(mock.lastRequest?.credential, .withheld)
-        XCTAssertEqual(mock.lastRequest?.queryItems?.last?.value, "false")
+        for type in [SignatureType.signature, .initial] {
+            do {
+                try await resource.uploadSignature(signerAccessCode: "code", type: type, imageData: jpeg)
+                XCTFail("Expected JPEG rejection")
+            } catch let error as ValidationError {
+                XCTAssertEqual(error.message, "Signature image must be PNG data")
+            }
+            do {
+                try await resource.uploadSignature(signerAccessCode: "code", type: type, imageData: jpeg, reusePreference: false)
+                XCTFail("Expected JPEG rejection")
+            } catch is ValidationError {}
+        }
+        XCTAssertTrue(mock.allRequests.isEmpty)
     }
 }

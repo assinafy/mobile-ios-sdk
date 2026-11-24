@@ -9,7 +9,7 @@ SDK Swift 6.3+ (modo de linguagem 6) sem dependências externas para a API Assin
 No Xcode, adicione este repositório como Swift Package, ou declare:
 
 ```swift
-.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.15.0")
+.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.15.1")
 ```
 
 O produto é `Assinafy`. Importe-o com `import Assinafy`.

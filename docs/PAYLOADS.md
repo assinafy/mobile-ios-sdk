@@ -86,7 +86,7 @@ methods validate status and discard any returned data.
 | `POST /v1/verify` | [JSON](#request-28) | Envelope without data |
 | `PUT /v1/documents/{documentId}/signers/confirm-data` | [JSON](#request-29) | [Signer](#signer) |
 | `PUT /v1/signers/accept-terms` | No body | Envelope without data |
-| `POST /v1/signature` | image/png or image/jpeg bytes | Envelope without data |
+| `POST /v1/signature` | image/png bytes; JPEG is rejected locally | Envelope without data |
 | `GET /v1/signature/{signatureType}` | No body | image/* bytes |
 | `GET /v1/signers/{signerId}/documents` | No body | Array of [Document](#document) |
 | `GET /v1/signers/{signerId}/documents/search` | No body | Array of [Document](#document) |

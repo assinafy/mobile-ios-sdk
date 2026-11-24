@@ -9,7 +9,7 @@ A dependency-free Swift 6.3+ SDK (language mode 6) for the Assinafy v1 API. It s
 Add this repository as a Swift Package in Xcode, or declare:
 
 ```swift
-.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.15.0")
+.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.15.1")
 ```
 
 The product is `Assinafy`. Import it with `import Assinafy`.

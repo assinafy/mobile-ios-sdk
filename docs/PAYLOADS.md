@@ -86,7 +86,7 @@ methods validate status and discard any returned data.
 | `POST /v1/verify` | [JSON](#request-28) | Envelope without data |
 | `PUT /v1/documents/{documentId}/signers/confirm-data` | [JSON](#request-29) | [Signer](#signer) |
 | `PUT /v1/signers/accept-terms` | No body | Envelope without data |
-| `POST /v1/signature` | image/png bytes | Envelope without data |
+| `POST /v1/signature` | image/png or image/jpeg bytes | Envelope without data |
 | `GET /v1/signature/{signatureType}` | No body | image/* bytes |
 | `GET /v1/signers/{signerId}/documents` | No body | Array of [Document](#document) |
 | `GET /v1/signers/{signerId}/documents/search` | No body | Array of [Document](#document) |
@@ -3193,3 +3193,209 @@ GET `/sign/theme` returns `AccountTheme`; GET `/sign/logo` returns image bytes.
 Both use `signer-access-code` and no request body. GET `/signers/downloads/{token}`
 (or `/pades`) returns PDF bytes, with no workspace credential or request body;
 expired links return 302, which the SDK exposes instead of following to HTML.
+
+## Scheduled sends
+
+These routes are available on staging. All results use the normal response envelope. List returns an array of ScheduledSend with pagination headers; cancel and send-now have no body and return the same complete model.
+
+### ScheduledAssignmentRequest
+
+`POST /documents/{documentId}/scheduled-sends`. Choose a real send time one hour to 90 days ahead. Remove `send_at` for immediate creation or estimation.
+
+```json
+{
+  "method": "virtual",
+  "signers": [
+    {
+      "id": "signer_example_001",
+      "verification_method": "Bypass",
+      "notification_methods": [],
+      "step": 1,
+      "embedded": true,
+      "sign_as": "Witness"
+    }
+  ],
+  "expires_at": "2099-02-01T12:00:00Z",
+  "message": "Please sign when ready.",
+  "copy_receivers": [],
+  "max_total_credits": 2,
+  "send_at": "2099-01-02T12:00:00Z"
+}
+```
+
+### ScheduledEnvelopeRequest
+
+`POST /accounts/{accountId}/scheduled-sends`. Collect documents use the same per-page entries as CreateEnvelopePayload. Scheduling has no Idempotency-Key.
+
+```json
+{
+  "name": "Scheduled envelope",
+  "message": "Please sign both documents.",
+  "signers": [
+    {
+      "id": "signer_example_001",
+      "verification_method": "Bypass",
+      "notification_methods": [],
+      "embedded": true
+    }
+  ],
+  "documents": [
+    {
+      "id": "document_example_001",
+      "signer_ids": [
+        "signer_example_001"
+      ],
+      "method": "virtual",
+      "expires_at": "2099-02-01T12:00:00Z",
+      "copy_receiver_ids": []
+    },
+    {
+      "id": "document_example_002",
+      "signer_ids": [
+        "signer_example_001"
+      ],
+      "method": "virtual",
+      "expires_at": "2099-02-01T12:00:00Z",
+      "copy_receiver_ids": []
+    }
+  ],
+  "max_total_credits": 4,
+  "send_at": "2099-01-02T12:00:00Z"
+}
+```
+
+### ScheduledSend
+
+Complete `data` for creation and listing. Cancel returns `status: cancelled`. Successful execution returns `status: sent`, `processed_at`, and the corresponding assignment or envelope ID. A background failure returns `status: failed`, a reason, and processing time.
+
+```json
+{
+  "resource": "scheduled_send",
+  "id": "schedule_example_001",
+  "type": "assignment",
+  "document_ids": [
+    "document_example_001"
+  ],
+  "status": "pending",
+  "send_at": "2099-01-02T12:00:00Z",
+  "assignment_id": null,
+  "envelope_id": null,
+  "failure_reason": null,
+  "created_at": "2099-01-01T12:00:00Z",
+  "processed_at": null
+}
+```
+
+## Document delivery details
+
+Available on staging. `GET /documents/{documentId}/watchers` takes no body and returns an array of the complete [Signer](#signer) model. The PUT result has the same shape; an empty `watcher_ids` array clears the list.
+
+### DocumentWatchersRequest
+
+`PUT /documents/{documentId}/watchers`; up to ten workspace contacts with email.
+
+```json
+{
+  "watcher_ids": [
+    "signer_example_001"
+  ]
+}
+```
+
+### SignerCapacity
+
+Each element of `GET /documents/{documentId}/signer-capacities` data.
+
+```json
+{
+  "signer_id": "signer_example_001",
+  "sign_as": "Witness"
+}
+```
+
+### DocumentNotificationHistory
+
+Each element of `GET /documents/{documentId}/notification-history` data. Delivery/open timestamps may be absent or null. The same history entries appear on Signer.
+
+```json
+{
+  "signer_id": "signer_example_001",
+  "notification_history": [
+    {
+      "event": "signature_request",
+      "status": "opened",
+      "sent_at": "2099-01-01T12:00:00Z",
+      "failed_at": null,
+      "delivered_at": "2099-01-01T12:00:05Z",
+      "opened_at": "2099-01-01T12:01:00Z",
+      "error_code": null,
+      "error_message": null
+    }
+  ]
+}
+```
+
+## Webhook test delivery
+
+### WebhookTestDelivery
+
+`POST /accounts/{accountId}/webhooks/endpoints/{endpointId}/test` has no body. The response is one complete WebhookDispatch. A connection failure returns null HTTP status and timing with an error; a receiver response supplies its status and body.
+
+```json
+{
+  "resource": "activity_dispatching_history",
+  "id": "dispatch_example_001",
+  "event": "webhook_test",
+  "activity_id": null,
+  "endpoint_id": "endpoint_example_001",
+  "endpoint": "https://hooks.example.invalid/assinafy",
+  "payload": {
+    "id": 1,
+    "event": "webhook_test",
+    "message": null,
+    "payload": null,
+    "origin": null,
+    "created_at": "2099-01-01T12:00:00Z",
+    "subject": {
+      "id": "endpoint_example_001",
+      "name": "Example endpoint",
+      "url": "https://hooks.example.invalid/assinafy",
+      "email": "owner@example.invalid",
+      "events": [],
+      "is_active": true,
+      "is_held": false,
+      "held_since": null,
+      "signing_enabled": true,
+      "created_at": "2099-01-01T12:00:00Z",
+      "updated_at": "2099-01-01T12:00:00Z",
+      "type": "ActivityEventSubscription"
+    },
+    "object": {
+      "id": "endpoint_example_001",
+      "name": "Example endpoint",
+      "url": "https://hooks.example.invalid/assinafy",
+      "email": "owner@example.invalid",
+      "events": [],
+      "is_active": true,
+      "is_held": false,
+      "held_since": null,
+      "signing_enabled": true,
+      "created_at": "2099-01-01T12:00:00Z",
+      "updated_at": "2099-01-01T12:00:00Z",
+      "type": "ActivityEventSubscription"
+    },
+    "account_id": "account_example_001"
+  },
+  "delivered": true,
+  "webhook_id": "delivery_example_001",
+  "attempt": 1,
+  "kind": "manual",
+  "will_retry": false,
+  "duration_ms": 120,
+  "http_status": 200,
+  "response_body": "OK",
+  "error": null,
+  "created_at": "2099-01-01T12:00:00Z",
+  "updated_at": "2099-01-01T12:00:00Z"
+}
+```

@@ -4,6 +4,30 @@ import Foundation
 /// Creation requires the Envelopes feature; OAuth uses documents:read or documents:write.
 @objcMembers
 public final class EnvelopeResource: BaseResource, @unchecked Sendable {
+    /// Staging: mirrors `POST /accounts/{accountId}/scheduled-sends`. Saves an envelope for 1 hour–90 days ahead.
+    /// No idempotency key is supported here. Manage the schedule through client.assignments.
+    public func schedule(payload: CreateEnvelopePayload, sendAt: Date, accountId: String? = nil) async throws -> ScheduledSend {
+        let body = ScheduledSendBody(payload: payload, sendAt: sendAt)
+        return try await call("Failed to schedule envelope", request: .post("/accounts/\(self.accountId(accountId))/scheduled-sends", body: body))
+    }
+
+    /// Accepts the envelope JSON payload and delivers the saved schedule on the main queue.
+    public func schedule(payloadJSON: Data, sendAt: Date, accountId: String?, completion: @escaping (ScheduledSend?, Error?) -> Void) {
+        withCompletion({ try await self.schedule(payload: CreateEnvelopePayload(jsonData: payloadJSON), sendAt: sendAt, accountId: accountId) }, completion: completion)
+    }
+
+    /// Staging: mirrors `POST /accounts/{accountId}/envelopes/{envelopeId}/signers/{signerId}/estimate-resend-cost`.
+    /// Prices one reminder for the whole envelope without sending or checking the resend cooldown.
+    public func estimateResendCost(envelopeId: String, signerId: String, accountId: String? = nil) async throws -> CostEstimate {
+        let id = try requireId(signerId, name: "Signer ID")
+        return try await call("Failed to estimate envelope reminder", request: .post(path(accountId, envelopeId) + "/signers/\(id)/estimate-resend-cost"))
+    }
+
+    /// Delivers the reminder estimate on the main queue.
+    public func estimateResendCost(envelopeId: String, signerId: String, accountId: String?, completion: @escaping (CostEstimate?, Error?) -> Void) {
+        withCompletion({ try await self.estimateResendCost(envelopeId: envelopeId, signerId: signerId, accountId: accountId) }, completion: completion)
+    }
+
     private func path(_ accountId: String?, _ envelopeId: String? = nil) throws -> String {
         let base = "/accounts/\(try self.accountId(accountId))/envelopes"
         guard let envelopeId else { return base }

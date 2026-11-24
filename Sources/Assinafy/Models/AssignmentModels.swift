@@ -440,6 +440,9 @@ public struct CreateAssignmentPayload: Sendable {
     public var copyReceivers: [String]?
     /// Signer IDs that must use an embed session; requires the workspace Embed feature.
     public var embeddedSignerIds: [String] = []
+    /// Staging: signer ID to exact sign_as code. Omitted signers use Sign; capacities print only on the certificate.
+    /// Read them back with DocumentResource.signerCapacities(documentId:).
+    public var signerCapacities: [String: String] = [:]
     /// Optional spending ceiling in credits; nil leaves the server price uncapped.
     public var maxTotalCredits: Decimal?
 
@@ -498,6 +501,15 @@ public struct CreateAssignmentPayload: Sendable {
             message: body.message, expiresAt: body.expiresAt, copyReceivers: body.copyReceivers
         )
         embeddedSignerIds = body.signers.filter { $0.embedded == true }.compactMap(\.id)
+        for signer in body.signers {
+            if let capacity = signer.signAs {
+                guard let id = signer.id, !id.isBlank else { throw ValidationError("A signer capacity requires a signer ID") }
+                if let previous = signerCapacities[id], previous != capacity {
+                    throw ValidationError("A signer cannot have two signing capacities")
+                }
+                signerCapacities[id] = capacity
+            }
+        }
         maxTotalCredits = body.maxTotalCredits
     }
 
@@ -550,11 +562,13 @@ struct AssignmentSignerBody: Codable {
     let notificationMethods: [String]?
     let step: Int?
     var embedded: Bool?
+    var signAs: String?
 
     enum CodingKeys: String, CodingKey {
         case id, step, embedded
         case verificationMethod = "verification_method"
         case notificationMethods = "notification_methods"
+        case signAs = "sign_as"
     }
 }
 
@@ -578,10 +592,12 @@ struct AssignmentPayloadBody: Codable {
 struct AssignmentEstimateSignerBody: Encodable {
     let verificationMethod: String?
     let notificationMethods: [String]?
+    var signAs: String?
 
     enum CodingKeys: String, CodingKey {
         case verificationMethod = "verification_method"
         case notificationMethods = "notification_methods"
+        case signAs = "sign_as"
     }
 }
 
@@ -597,7 +613,11 @@ func buildAssignmentBody(_ payload: CreateAssignmentPayload) throws -> Assignmen
     }
     try validateDigitalCertificateAssignmentMethod(payload)
     try validateCreditCeiling(payload.maxTotalCredits)
+    try validateSignerCapacities(payload)
     var signerBodies = try payload.signers.map(buildSignerBody)
+    for index in signerBodies.indices {
+        signerBodies[index].signAs = signerBodies[index].id.flatMap { payload.signerCapacities[$0] }
+    }
     let embeddedIds = Set(payload.embeddedSignerIds)
     guard embeddedIds.isSubset(of: Set(signerBodies.compactMap(\.id))) else {
         throw ValidationError("Embedded signer IDs must belong to the assignment")
@@ -628,14 +648,16 @@ func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> A
         throw ValidationError("Assignment estimates require at least one signer")
     }
     try validateDigitalCertificateAssignmentMethod(payload)
+    try validateSignerCapacities(payload)
     let signers = payload.signers.map { reference -> AssignmentEstimateSignerBody in
         switch reference {
-        case .id:
-            return AssignmentEstimateSignerBody(verificationMethod: nil, notificationMethods: nil)
-        case .descriptor(_, let verificationMethod, let notificationMethods, _):
+        case .id(let id):
+            return AssignmentEstimateSignerBody(verificationMethod: nil, notificationMethods: nil, signAs: payload.signerCapacities[id])
+        case .descriptor(let id, let verificationMethod, let notificationMethods, _):
             return AssignmentEstimateSignerBody(
                 verificationMethod: verificationMethod,
-                notificationMethods: notificationMethods
+                notificationMethods: notificationMethods,
+                signAs: id.flatMap { payload.signerCapacities[$0] }
             )
         }
     }
@@ -648,6 +670,19 @@ func buildAssignmentEstimateBody(_ payload: CreateAssignmentPayload) throws -> A
         signers: signers,
         entries: entries
     )
+}
+
+private func validateSignerCapacities(_ payload: CreateAssignmentPayload) throws {
+    let ids = Set(payload.signers.compactMap { reference -> String? in
+        switch reference {
+        case .id(let id): return id
+        case .descriptor(let id, _, _, _): return id
+        }
+    })
+    guard Set(payload.signerCapacities.keys).isSubset(of: ids),
+          payload.signerCapacities.values.allSatisfy({ !$0.isBlank }) else {
+        throw ValidationError("Signing capacities must be nonblank and belong to assignment signers")
+    }
 }
 
 private func validateDigitalCertificateAssignmentMethod(_ payload: CreateAssignmentPayload) throws {

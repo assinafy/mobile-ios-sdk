@@ -14,6 +14,25 @@ final class PayloadDocumentationTests: XCTestCase {
             let data = try XCTUnwrap(examples[name], "Missing \(name) payload")
             XCTAssertNoThrow(try JSONDecoder.assinafy.decode(type, from: data), "\(name) payload")
         }
+        try decode("ScheduledSend", as: ScheduledSend.self)
+        try decode("SignerCapacity", as: SignerCapacity.self)
+        try decode("DocumentNotificationHistory", as: DocumentNotificationHistory.self)
+        let testDelivery = try JSONDecoder.assinafy.decode(WebhookDispatch.self, from: XCTUnwrap(examples["WebhookTestDelivery"]))
+        XCTAssertEqual(testDelivery.durationMilliseconds?.intValue, 120)
+        XCTAssertEqual(testDelivery.kind, "manual")
+        let scheduledAssignment = try CreateAssignmentPayload(jsonData: XCTUnwrap(examples["ScheduledAssignmentRequest"]))
+        XCTAssertEqual(scheduledAssignment.signerCapacities["signer_example_001"], "Witness")
+        let scheduledEnvelope = try CreateEnvelopePayload(jsonData: XCTUnwrap(examples["ScheduledEnvelopeRequest"]))
+        let sendAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2099-01-02T12:00:00Z"))
+        let scheduledBodies = [
+            ("ScheduledAssignmentRequest", try JSONEncoder.assinafy.encode(ScheduledSendBody(payload: buildAssignmentBody(scheduledAssignment), sendAt: sendAt))),
+            ("ScheduledEnvelopeRequest", try JSONEncoder.assinafy.encode(ScheduledSendBody(payload: scheduledEnvelope, sendAt: sendAt))),
+        ]
+        for (name, body) in scheduledBodies {
+            let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? NSDictionary)
+            let documented = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(examples[name])) as? NSDictionary)
+            XCTAssertEqual(encoded, documented, "\(name) must match the complete request body")
+        }
         try decode("DocumentEnvelope", as: DocumentEnvelope.self)
         try decode("EnvelopeCancellation", as: EnvelopeCancellation.self)
         try decode("EnvelopeReminder", as: ResendNotificationResponse.self)

@@ -121,15 +121,22 @@ public final class SignerNotificationHistory: NSObject {
     public let errorMessage: String?
     public let sentAt: String?
     public let failedAt: String?
+    /// First delivery time, reported by the document notification-history route.
+    public let deliveredAt: String?
+    /// First open/read time; a hint, not proof that a person read the notification.
+    public let openedAt: String?
 
     init(event: String, status: String, errorCode: String? = nil, errorMessage: String? = nil,
-         sentAt: String? = nil, failedAt: String? = nil) {
+         sentAt: String? = nil, failedAt: String? = nil,
+         deliveredAt: String? = nil, openedAt: String? = nil) {
         self.event = event
         self.status = status
         self.errorCode = errorCode
         self.errorMessage = errorMessage
         self.sentAt = sentAt
         self.failedAt = failedAt
+        self.deliveredAt = deliveredAt
+        self.openedAt = openedAt
     }
 }
 
@@ -142,6 +149,7 @@ extension SignerNotificationHistory: Decodable {
         case errorMessage = "error_message"
         case sentAt = "sent_at"
         case failedAt = "failed_at"
+        case deliveredAt = "delivered_at", openedAt = "opened_at"
     }
 
     public convenience init(from decoder: Decoder) throws {
@@ -152,10 +160,40 @@ extension SignerNotificationHistory: Decodable {
             errorCode: try decodeFlexibleOptionalString(from: c, forKey: .errorCode),
             errorMessage: try c.decodeIfPresent(String.self, forKey: .errorMessage),
             sentAt: try decodeFlexibleOptionalString(from: c, forKey: .sentAt),
-            failedAt: try decodeFlexibleOptionalString(from: c, forKey: .failedAt)
+            failedAt: try decodeFlexibleOptionalString(from: c, forKey: .failedAt),
+            deliveredAt: try c.decodeIfPresent(String.self, forKey: .deliveredAt),
+            openedAt: try c.decodeIfPresent(String.self, forKey: .openedAt)
         )
     }
 }
+
+/// A document signer's delivery history, including delivery and open times when available.
+@objcMembers
+public final class DocumentNotificationHistory: NSObject, Decodable {
+    /// Contact ID of the recipient.
+    public let signerId: String
+    /// Notifications in the order returned by the API.
+    public let notificationHistory: [SignerNotificationHistory]
+
+    enum CodingKeys: String, CodingKey {
+        case signerId = "signer_id", notificationHistory = "notification_history"
+    }
+}
+
+extension DocumentNotificationHistory: @unchecked Sendable {}
+
+/// The sender's statement of the capacity in which a signer signs a document.
+@objcMembers
+public final class SignerCapacity: NSObject, Decodable {
+    /// Contact ID of the signer.
+    public let signerId: String
+    /// Exact capacity code, such as Sign, Witness or LegalRepresentative.
+    public let signAs: String
+
+    enum CodingKeys: String, CodingKey { case signerId = "signer_id", signAs = "sign_as" }
+}
+
+extension SignerCapacity: @unchecked Sendable {}
 
 // MARK: - CreateSignerPayload
 
@@ -417,14 +455,14 @@ extension VerifyEmailPayload: @unchecked Sendable {}
 
 /// Payload for `PUT /documents/{id}/signers/confirm-data`.
 ///
-/// The documented fields are `full_name`, `email`, and `government_id`; the SDK
-/// also forwards `whatsapp_phone_number` and `has_accepted_terms`, which the
-/// live signing flow accepts. Provide only the fields you need to confirm.
+/// The API reads email, whatsapp_phone_number and has_accepted_terms. Legacy
+/// full_name and government_id are forwarded for compatibility but ignored;
+/// update the workspace contact before creating the assignment to change them.
 @objcMembers
 public final class ConfirmSignerDataPayload: NSObject, Encodable {
     public let fullName: String?
     public let email: String?
-    /// The signer's government-issued identifier (e.g. CPF), per the API docs.
+    /// Legacy field ignored by confirmation; set the government ID on the workspace contact.
     public let governmentId: String?
     public let whatsappPhoneNumber: String?
     public let hasAcceptedTerms: Bool

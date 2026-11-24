@@ -9,7 +9,7 @@ SDK Swift 6.3+ (modo de linguagem 6) sem dependências externas para a API Assin
 No Xcode, adicione este repositório como Swift Package, ou declare:
 
 ```swift
-.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.14.0")
+.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.15.0")
 ```
 
 O produto é `Assinafy`. Importe-o com `import Assinafy`.
@@ -99,6 +99,7 @@ O helper cria uma atribuição virtual por email. Para controle completo, use `d
 
 | Verificação | Requisitos | Experiência |
 | --- | --- | --- |
+| `Bypass` | Recurso VerificationBypass habilitado | Sem OTP; opcionalmente incorporado sem notificação |
 | `Email` | Exatamente uma notificação Email | OTP validado por `signers.verifyEmail` antes da assinatura nativa |
 | `Whatsapp` | Recurso habilitado, telefone e uma notificação Whatsapp | OTP pelo canal Whatsapp |
 | `IdDocumentFaceMatchBasic` | Recurso habilitado, CPF e Email ou Whatsapp | Consentimento explícito, documento e selfie; pode exigir revisão do workspace |
@@ -122,6 +123,12 @@ Use `getSigningDocument(..., expand: ["envelope"], documentId: ...)` para navega
 
 `workspaces.notificationPolicy` controla eventos da equipe; `auth.getPushPreferences` e preferências de email controlam o usuário. A política do workspace prevalece. `workspaces.get(..., expand: ["signing_features"])` informa recursos habilitados; `usage` exige credencial direta e não aceita OAuth.
 
+## Agendamento e acompanhamento
+
+Em staging (`https://api.angry-pisco.stage.assinafy.com.br/v1`), use `assignments.schedule` ou `envelopes.schedule` com `sendAt` entre uma hora e 90 dias no futuro. Liste, cancele ou envie agora pelas operações de `assignments`; o envio usa os preços atuais e respeita `maxTotalCredits`. Após resposta incerta, consulte a lista antes de criar outro agendamento.
+
+`signerCapacities` no payload de atribuição define o papel de cada signatário, como `Witness`. `documents.setWatchers` registra até dez contatos para receber o resultado sem assinar. Consulte `documents.signerCapacities` e `documents.notificationHistory`; abertura de email não comprova leitura humana. `envelopes.estimateResendCost` estima um lembrete antes do envio. Estas operações também estão disponíveis em staging.
+
 ## Templates, contratos e campos
 
 - `templates` cria documentos por papéis e posiciona campos de coleta por página.
@@ -142,6 +149,8 @@ guard WebhookSignature.verify(
     secret: secret
 ) else { throw AssinafySDKError("Invalid webhook signature") }
 ```
+
+`webhooks.testEndpoint` envia um evento de teste sem alterar o estado do endpoint e retorna a tentativa de entrega.
 
 A verificação usa HMAC-SHA256 e janela de 300 segundos. Deduplicate entregas já verificadas por `webhook-id`. Rotacionar o segredo invalida o anterior imediatamente. Apps OAuth podem rotacionar com `webhooks:write`, mas não ler um segredo existente.
 

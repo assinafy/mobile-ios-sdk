@@ -191,6 +191,8 @@ public final class WebhookDispatch: NSObject {
     public let kind: String?
     /// Whether the server will make another attempt after this one.
     public let willRetry: Bool
+    /// Delivery duration in milliseconds, or nil when the attempt has no timing.
+    public let durationMilliseconds: NSNumber?
     /// HTTP status returned by the endpoint, or `nil` when the connection failed.
     public let httpStatusCode: NSNumber?
     /// Compatibility view of ``httpStatusCode``; connection failures map to `0`.
@@ -209,7 +211,8 @@ public final class WebhookDispatch: NSObject {
          delivered: Bool, httpStatusCode: NSNumber? = nil, responseBody: String? = nil,
          deliveryError: String? = nil, createdAt: String? = nil, updatedAt: String? = nil,
          webhookId: String? = nil, attempt: NSNumber? = nil, kind: String? = nil,
-         willRetry: Bool = false) {
+         willRetry: Bool = false, durationMilliseconds: NSNumber? = nil) {
+        self.durationMilliseconds = durationMilliseconds
         self.resource = resource
         self.id = id; self.event = event; self.activityId = activityId
         self.endpoint = endpoint; self.endpointId = endpointId; self.payloadJSON = payloadJSON
@@ -228,6 +231,7 @@ extension WebhookDispatch: Decodable {
         case resource, id, event, endpoint, payload, delivered, attempt, kind
         case webhookId = "webhook_id"
         case willRetry = "will_retry"
+        case durationMilliseconds = "duration_ms"
         case activityId  = "activity_id"
         case endpointId  = "endpoint_id"
         case httpStatus  = "http_status"
@@ -261,7 +265,8 @@ extension WebhookDispatch: Decodable {
             webhookId:    try c.decodeIfPresent(String.self, forKey: .webhookId),
             attempt:      try c.decodeIfPresent(Int.self, forKey: .attempt).map(NSNumber.init(value:)),
             kind:         try c.decodeIfPresent(String.self, forKey: .kind),
-            willRetry:    try c.decodeIfPresent(Bool.self, forKey: .willRetry) ?? false
+            willRetry:    try c.decodeIfPresent(Bool.self, forKey: .willRetry) ?? false,
+            durationMilliseconds: try c.decodeIfPresent(Int.self, forKey: .durationMilliseconds).map(NSNumber.init(value:))
         )
     }
 

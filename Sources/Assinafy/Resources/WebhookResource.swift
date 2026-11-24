@@ -19,6 +19,19 @@ import Foundation
 @objcMembers
 public final class WebhookResource: BaseResource, @unchecked Sendable {
 
+    /// Mirrors `POST /accounts/{accountId}/webhooks/endpoints/{endpointId}/test`.
+    /// Sends one webhook_test delivery even if paused, without changing endpoint status.
+    /// Requires webhooks:write for OAuth; limited to ten tests per user per ten minutes.
+    public func testEndpoint(endpointId: String, accountId: String? = nil) async throws -> WebhookDispatch {
+        let path = try endpointPath(endpointId, accountId: accountId)
+        return try await call("Failed to test webhook endpoint", request: .post(path + "/test"))
+    }
+
+    /// Delivers the test delivery record on the main queue.
+    public func testEndpoint(endpointId: String, accountId: String?, completion: @escaping (WebhookDispatch?, Error?) -> Void) {
+        withCompletion({ try await self.testEndpoint(endpointId: endpointId, accountId: accountId) }, completion: completion)
+    }
+
     // MARK: - Swift async API
 
     /// Registers or updates the workspace's oldest webhook endpoint.

@@ -14,6 +14,54 @@ import Foundation
 @objcMembers
 public final class AssignmentResource: BaseResource, @unchecked Sendable {
 
+    /// Staging: mirrors `POST /documents/{documentId}/scheduled-sends`. Saves an assignment for 1 hour–90 days ahead.
+    /// Expiration must be at least two hours after sendAt. The server checks its clock and permissions.
+    /// Nothing is sent or charged until execution; an uncertain creation must not be retried blindly.
+    public func schedule(documentId: String, payload: CreateAssignmentPayload, sendAt: Date) async throws -> ScheduledSend {
+        let id = try requireId(documentId, name: "Document ID")
+        let body = try ScheduledSendBody(payload: buildAssignmentBody(payload), sendAt: sendAt)
+        return try await call("Failed to schedule assignment", request: .post("/documents/\(id)/scheduled-sends", body: body))
+    }
+
+    /// Accepts the assignment JSON payload and delivers the saved schedule on the main queue.
+    public func schedule(documentId: String, payloadJSON: Data, sendAt: Date, completion: @escaping (ScheduledSend?, Error?) -> Void) {
+        withCompletion({ try await self.schedule(documentId: documentId, payload: CreateAssignmentPayload(jsonData: payloadJSON), sendAt: sendAt) }, completion: completion)
+    }
+
+    /// Staging: mirrors `GET /accounts/{accountId}/scheduled-sends`. Includes assignments and envelopes in every status.
+    /// OAuth requires documents:write. Filter one document with params.extra["document_id"].
+    public func listScheduledSends(params: ListParams = ListParams(), accountId: String? = nil) async throws -> PaginatedResult<ScheduledSend> {
+        try await callList("Failed to list scheduled sends", request: .get("/accounts/\(self.accountId(accountId))/scheduled-sends", queryItems: params.toQueryItems()))
+    }
+
+    /// Delivers scheduled sends on the main queue; accepts page, per-page and document_id query names.
+    public func listScheduledSends(query: [String: String], accountId: String?, completion: @escaping ([ScheduledSend]?, Error?) -> Void) {
+        withListCompletion({ try await self.listScheduledSends(params: ListParams(extra: query), accountId: accountId) }, completion: completion)
+    }
+
+    /// Staging: mirrors `PUT /accounts/{accountId}/scheduled-sends/{scheduledSendId}/cancel`. Only pending sends can be cancelled.
+    public func cancelScheduledSend(scheduledSendId: String, accountId: String? = nil) async throws -> ScheduledSend {
+        let id = try requireId(scheduledSendId, name: "Scheduled send ID")
+        return try await call("Failed to cancel scheduled send", request: .put("/accounts/\(self.accountId(accountId))/scheduled-sends/\(id)/cancel"))
+    }
+
+    /// Delivers the cancelled schedule on the main queue.
+    public func cancelScheduledSend(scheduledSendId: String, accountId: String?, completion: @escaping (ScheduledSend?, Error?) -> Void) {
+        withCompletion({ try await self.cancelScheduledSend(scheduledSendId: scheduledSendId, accountId: accountId) }, completion: completion)
+    }
+
+    /// Staging: mirrors `PUT /accounts/{accountId}/scheduled-sends/{scheduledSendId}/send`. Executes a pending send as its author.
+    /// Uses current prices and the saved credit ceiling. A refusal leaves the schedule pending.
+    public func sendScheduledSend(scheduledSendId: String, accountId: String? = nil) async throws -> ScheduledSend {
+        let id = try requireId(scheduledSendId, name: "Scheduled send ID")
+        return try await call("Failed to send scheduled request", request: .put("/accounts/\(self.accountId(accountId))/scheduled-sends/\(id)/send"))
+    }
+
+    /// Delivers the executed schedule on the main queue.
+    public func sendScheduledSend(scheduledSendId: String, accountId: String?, completion: @escaping (ScheduledSend?, Error?) -> Void) {
+        withCompletion({ try await self.sendScheduledSend(scheduledSendId: scheduledSendId, accountId: accountId) }, completion: completion)
+    }
+
     /// Mirrors `POST /documents/{documentId}/assignments/{assignmentId}/signers/{signerId}/embed-sessions`. Backend-only: OAuth apps cannot mint sessions. Open the returned URL once within five minutes.
     public func createEmbedSession(documentId: String, assignmentId: String, signerId: String) async throws -> EmbedSession {
         let did = try requireId(documentId, name: "Document ID")

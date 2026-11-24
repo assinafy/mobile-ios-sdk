@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.15.0] - 2026-11-24
+
+### Added
+
+- Scheduled assignment and envelope sends with listing, cancellation, and immediate execution on staging.
+- Document watchers, signer capacities, delivery timestamps, and envelope reminder estimates on staging.
+- Webhook endpoint test deliveries and delivery duration.
+
+### Fixed
+
+- Signature uploads accept JPEG media types as well as PNG.
+- Assignment creation and estimates preserve signer capacity choices through Swift and Objective-C JSON forms.
+
 ## [1.14.0] - 2026-11-11
 
 ### Added

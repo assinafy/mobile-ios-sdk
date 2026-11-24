@@ -17,6 +17,53 @@ import Foundation
 @objcMembers
 public final class DocumentResource: BaseResource, @unchecked Sendable {
 
+    /// Staging: mirrors `GET /documents/{documentId}/watchers`. Requires a direct workspace credential; OAuth is refused.
+    public func watchers(documentId: String) async throws -> [Signer] {
+        let id = try requireId(documentId, name: "Document ID")
+        return try await call("Failed to fetch document watchers", request: .get("/documents/\(id)/watchers"))
+    }
+
+    /// Delivers the watchers on the main queue.
+    public func watchers(documentId: String, completion: @escaping ([Signer]?, Error?) -> Void) {
+        withCompletion({ try await self.watchers(documentId: documentId) }, completion: completion)
+    }
+
+    /// Staging: mirrors `PUT /documents/{documentId}/watchers`. Replaces up to ten workspace contacts; [] clears them.
+    /// Watchers need email and receive an outcome notice without a document link or file. OAuth is refused.
+    public func setWatchers(documentId: String, watcherIds: [String]) async throws -> [Signer] {
+        let id = try requireId(documentId, name: "Document ID")
+        guard watcherIds.count <= 10 else { throw ValidationError("A document takes at most 10 watchers") }
+        for watcherId in watcherIds { _ = try requireId(watcherId, name: "Watcher ID") }
+        return try await call("Failed to set document watchers", request: .put("/documents/\(id)/watchers", body: ["watcher_ids": watcherIds]))
+    }
+
+    /// Delivers the updated watchers on the main queue.
+    public func setWatchers(documentId: String, watcherIds: [String], completion: @escaping ([Signer]?, Error?) -> Void) {
+        withCompletion({ try await self.setWatchers(documentId: documentId, watcherIds: watcherIds) }, completion: completion)
+    }
+
+    /// Staging: mirrors `GET /documents/{documentId}/signer-capacities`. Empty before assignment; OAuth needs documents:read.
+    public func signerCapacities(documentId: String) async throws -> [SignerCapacity] {
+        let id = try requireId(documentId, name: "Document ID")
+        return try await call("Failed to fetch signer capacities", request: .get("/documents/\(id)/signer-capacities"))
+    }
+
+    /// Delivers the signer capacities on the main queue.
+    public func signerCapacities(documentId: String, completion: @escaping ([SignerCapacity]?, Error?) -> Void) {
+        withCompletion({ try await self.signerCapacities(documentId: documentId) }, completion: completion)
+    }
+
+    /// Staging: mirrors `GET /documents/{documentId}/notification-history`. Includes delivery/open times; OAuth needs documents:read.
+    public func notificationHistory(documentId: String) async throws -> [DocumentNotificationHistory] {
+        let id = try requireId(documentId, name: "Document ID")
+        return try await call("Failed to fetch notification history", request: .get("/documents/\(id)/notification-history"))
+    }
+
+    /// Delivers the delivery history on the main queue.
+    public func notificationHistory(documentId: String, completion: @escaping ([DocumentNotificationHistory]?, Error?) -> Void) {
+        withCompletion({ try await self.notificationHistory(documentId: documentId) }, completion: completion)
+    }
+
     // MARK: - Swift async API
 
     /// Uploads a PDF document for signature processing.

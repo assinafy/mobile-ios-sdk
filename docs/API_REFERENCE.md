@@ -436,7 +436,7 @@ signer code exactly where shown.
 | `acceptTerms(signerAccessCode:)` | Signer | `PUT /signers/accept-terms?signer-access-code={code}`; no JSON body | Bare envelope. The source-compatible `AcceptTermsResponse` is synthesized as `fullName: ""`, `email: ""`, `hasAcceptedTerms: true`; a legacy response body is still decoded. |
 | `acceptTermsWithoutResponse(signerAccessCode:)` | Signer | Same request as `acceptTerms(signerAccessCode:)` | Canonical bare-envelope handling; returns `Void` |
 | `verifyEmail(payload:)` | Signer | `POST /verify?signer-access-code={code}`; JSON contains only `verification-code` | Bare envelope; returns `Void`. `signerAccessCode` is never emitted in the body. |
-| `uploadSignature(signerAccessCode:type:imageData:reuse:)` | Signer | `POST /signature?signer-access-code={code}&type=signature\|initial[&reuse=true]`; body is PNG bytes (`image/png`) | Bare envelope; returns `Void` |
+| `uploadSignature(signerAccessCode:type:imageData:reuse:)` | Signer | `POST /signature?signer-access-code={code}&type=signature\|initial[&reuse=true]`; body is PNG or JPEG bytes (`image/png` or `image/jpeg`) | Bare envelope; returns `Void` |
 | `uploadSignature(signerAccessCode:type:imageData:reusePreference:)` | Signer | Same request; `true` sends `reuse=true`, `false` sends `reuse=false`, and `nil` omits the preference | Bare envelope; returns `Void`. The older `reuse: false` overload omits the preference and preserves the server's existing choice |
 | `downloadSignature(signerAccessCode:type:)` | Signer | `GET /signature/{signatureType}?signer-access-code={code}` where the path value is `signature` or `initial` | Raw image `Data`; there is no redundant `type` query |
 | `getCurrentDocument(signerId:signerAccessCode:)` | Signer | `GET /signers/{signerId}/document?signer-access-code={code}` | `Document` -> `DocumentDetails`; the API omits pages and limits assignment items to this signer |
@@ -489,7 +489,7 @@ Unless marked public, document operations require account auth.
 | `getPublicInfo(documentId:)` | Public | `GET /public/documents/{documentId}` | Full `Document` -> `PublicDocumentInfo`, not a four-field summary |
 | `sendPublicSignToken(documentId:email:)` | Public | `PUT /public/documents/{documentId}/send-token`; required body `{ "channel": "email", "recipient": string }` | Returns `Void` after one request |
 | `sendPublicSignToken(documentId:payload:)` | Public | Same `PUT` and body; `SendTokenPayload.channel` must be `.email` (other channels throw `ValidationError` before I/O) | `data: { "document": { "resource", "id", "name", "page_count", "created_by" }, "channel": "email", "recipient": string }` -> `SendTokenResponse` |
-| `confirmSignerDataAndReturnSigner(documentId:signerAccessCode:payload:)` | Signer | `PUT /documents/{documentId}/signers/confirm-data?signer-access-code={code}`; body may contain `full_name`, `email`, `government_id`; compatibility keys are described below | Canonical `data: Signer` result |
+| `confirmSignerDataAndReturnSigner(documentId:signerAccessCode:payload:)` | Signer | `PUT /documents/{documentId}/signers/confirm-data?signer-access-code={code}`; body reads `email`, `whatsapp_phone_number`, `has_accepted_terms` | Canonical `data: Signer` result |
 | `confirmSignerData(documentId:signerAccessCode:payload:)` | Signer | Same request | Source-compatible overload that validates success and discards `data`; returns `Void` |
 
 For document creation from a template, every signer requires `role_id` and either
@@ -530,8 +530,8 @@ editor values, document metadata, expiry, and tags are not part of the estimate 
 For new email-token integrations, use the one-request `email:` overload. The
 payload overload returns the typed email `SendTokenResponse` in the same request;
 it rejects the WhatsApp channel before I/O. `ConfirmSignerDataPayload` omits every `nil` optional field and
-emits `has_accepted_terms` only when `true`; `whatsapp_phone_number` and
-`has_accepted_terms` are compatibility fields accepted by signing flows.
+emits `has_accepted_terms` only when `true`. The API ignores `full_name` and
+`government_id`; update the workspace contact before assignment to change them.
 
 ## Assignments
 
@@ -591,7 +591,8 @@ The full creation body is:
 ```
 
 `method` and a nonempty `signers` array are required. Every creation signer must
-have `id`; the three descriptor fields are optional. `entries` is required and
+have `id`; descriptor fields are optional. Staging also accepts `sign_as`, supplied
+through `signerCapacities`. `entries` is required and
 nonempty for `collect`. `display_settings` is a JSON object, never a JSON-encoded
 string. Its required fields are `left`, `top`, `width`, `height`, and `fontSize`;
 `fontFamily` and `backgroundColor` are optional. Coordinates are pixels in the
@@ -607,8 +608,8 @@ field code `errors["method"] = "digital_certificate_requires_virtual_assignment"
 
 Assignment estimation deliberately removes signer descriptor IDs and steps,
 message, expiry, and copy receivers. A virtual estimate requires a nonempty
-`signers` array whose entries contain only optional `verification_method` and
-`notification_methods`; `{}` means the Email defaults. A collect estimate
+`signers` array whose entries contain optional `verification_method`,
+`notification_methods`, and staging `sign_as`; `{}` means the Email defaults. A collect estimate
 requires the same page/field-placement `entries` objects used for creation:
 
 ```json
@@ -796,9 +797,9 @@ complete encoded shape for public request models and query containers.
 - `VerifyEmailPayload`: the initializer accepts `verificationCode` and
   `signerAccessCode`; JSON contains only `{ "verification-code": string }` and
   the access code is emitted only as a query parameter.
-- `ConfirmSignerDataPayload`: optional `full_name`, `email`, `government_id`,
-  and compatibility `whatsapp_phone_number`; `has_accepted_terms: true` is
-  encoded only when requested.
+- `ConfirmSignerDataPayload`: optional `email` and `whatsapp_phone_number`;
+  `has_accepted_terms: true` is encoded only when requested. Legacy `full_name`
+  and `government_id` remain encodable but the API ignores them.
 - `SignMultipleDocumentsPayload`: `{ "document_ids": [string] }`.
 - `DeclineMultipleDocumentsPayload`: `{ "document_ids": [string],
   "decline_reason": string }`.
@@ -823,7 +824,9 @@ complete encoded shape for public request models and query containers.
   `copy_receivers`. `SignerReference.id` encodes only `id`;
   `SignerReference.signer(...)` and descriptor values
   may also encode `verification_method`, `notification_methods`, and positive
-  `step`. Creation requires an ID for every signer.
+  `step`. Creation requires an ID for every signer. `embeddedSignerIds` adds
+  `embedded: true`; `signerCapacities` adds staging `sign_as` by ID;
+  `maxTotalCredits: Decimal?` adds `max_total_credits`.
 - `AssignmentEntry`: `page_id` and nonempty `fields`. Every field encodes
   `signer_id`, `field_id`, and optional `display_settings`.
 - `DisplaySettings`: required finite numeric `left`, `top`, `width`, `height`,
@@ -1003,9 +1006,9 @@ channel was used. The four verification counters add to `signature_requests`.
   `verification_method?: string`, `notification_methods?: [string]`,
   `identity_verification_status?: string`, `step?: integer`, `notified?: boolean`, `completed?: boolean`, and
   `notification_history?: [NotificationHistoryEntry]`.
-- `NotificationHistoryEntry`: `event: string`, `status: sent|failed`,
+- `NotificationHistoryEntry`: `event: string`, `status: sent|delivered|opened|failed`,
   `error_code?: string`, `error_message?: string`, `sent_at?: date-time`,
-  `failed_at?: date-time`.
+  `failed_at?: date-time`, `delivered_at?: date-time`, `opened_at?: date-time`.
 
 ### Document schemas
 
@@ -1153,9 +1156,9 @@ responses can include them. The SDK also tolerates optional `account_id` fields.
   `heldSince: NSNumber?` (nil if missing or null).
 - `WebhookEventType`: `id: string`, `description: string`.
 - `WebhookDispatch`: `resource: string`, `id: string`, `event: string`,
-  `activity_id: integer`, `endpoint?: URL string`, `endpoint_id?: string`,
+  `activity_id?: integer` (null maps to the legacy `activityId: 0`), `endpoint?: URL string`, `endpoint_id?: string`,
   `webhook_id?: string`, `attempt?: integer`, `kind?: string`, `will_retry: boolean`,
-  `payload?: object`,
+  `payload?: object`, `duration_ms?: integer`,
   `delivered: boolean`, `http_status?: integer`, `response_body?: string`,
   `error?: string`, `created_at: date-time`, `updated_at: date-time`.
   `payloadJSON` is the lossless Swift value; `payload` is a Foundation
@@ -1192,7 +1195,8 @@ The contract event constants on `WebhookEventType` are:
   virtual.
 - `SignerVerificationMethod` encodes `.email`, `.whatsapp`, and
   `.digitalCertificate` as `Email`, `Whatsapp`, and `DigitalCertificate`.
-  Biometric assignments use the raw-string `IdDocumentFaceMatchBasic` forms.
+  Bypass and biometric assignments use the raw-string `Bypass` and
+  `IdDocumentFaceMatchBasic` forms to preserve exhaustive switches over this enum.
   `SignerNotificationMethod` encodes `.email` and `.whatsapp` the same way.
   `SignerReference.signer(id:verification:notifications:step:)` and
   `TemplateSigner(roleId:id:verification:notifications:step:)` take these
@@ -1428,7 +1432,7 @@ surfaced as `APIError`.
 | Swift error | When thrown | Important properties | `NSError` bridge |
 | --- | --- | --- | --- |
 | `APIError` | Non-2xx HTTP, or a response envelope whose `status` is outside 200...299 | `statusCode`, `message`, raw `responseData`, `context`, `workspaceDeletionRestrictions`, `oauthError`, `insufficientScope`, `rateLimitLimit`, `rateLimitRemaining`, `rateLimitReset`, `retryAfter` (from `X-Rate-Limit-Limit`, `X-Rate-Limit-Remaining`, `X-Rate-Limit-Reset`, and `Retry-After` on `429`) | Domain `ASFErrorDomain.api`; code is HTTP status; `userInfo["responseData"]`, the raw `WWW-Authenticate` challenge as `userInfo["wwwAuthenticate"]`, the scope a `403` `insufficient_scope` challenge names as `userInfo["insufficientScope"]`, and integer `rateLimitLimit`, `rateLimitRemaining`, `rateLimitReset`, `retryAfter`, each when present. |
-| `ValidationError` | Invalid local configuration, identifier, account resolution, payload, PDF/PNG bytes, or helper option | `message`, field-level `errors`, `context` | Domain `ASFErrorDomain.validation`; code `422`; `userInfo["errors"]`. |
+| `ValidationError` | Invalid local configuration, identifier, account resolution, payload, PDF/signature-image bytes, or helper option | `message`, field-level `errors`, `context` | Domain `ASFErrorDomain.validation`; code `422`; `userInfo["errors"]`. |
 | `NetworkError` | URL loading failed before a valid HTTP response, or response was not HTTP | `message`, `underlyingError` | Domain `ASFErrorDomain.network`; code is the underlying `URLError.Code`, otherwise `notConnectedToInternet`; includes `NSUnderlyingErrorKey`. |
 | `AssinafySDKError` | Missing/undecodable success data, polling timeout/terminal state, failed post-delivery lookup, or another SDK contract failure | `message`, structured `context`, `underlyingError` | Domain `ASFErrorDomain.sdk`; code `-1`; context is merged into `userInfo`; includes `NSUnderlyingErrorKey` when present. |
 | `CancellationError` | Swift task or URL loading cancellation | Standard Swift cancellation | Preserved without wrapping. |
@@ -2020,8 +2024,8 @@ Whatsapp verification; certificate and biometric capture use hosted signing.
 Set `CreateAssignmentPayload.embeddedSignerIds`,
 `CreateEnvelopePayload.embeddedSignerIds`, or `TemplateSigner.embedded`.
 Mint a URL per opening and load it within five minutes on a registered origin.
-The URL is single-use and sensitive; do not persist or log it. The exchange
-endpoint belongs to Assinafy's iframe, not to the SDK consumer.
+The URL is single-use and sensitive; do not persist or log it. `POST /embed/sessions/{token}/exchange` belongs to Assinafy's iframe;
+SDK consumers load the session URL instead of exchanging it themselves.
 
 `EmbedOrigin` contains `id`, `origin`, optional `createdAt`. `EmbedSession`
 contains `url` and optional `expiresAt`. `NotificationPolicy` contains `editable`,
@@ -2115,3 +2119,125 @@ Persist the key and exact body before the first call, then reuse both to recover
 from an uncertain response. The transport does not retry. `APIRequest.withIdempotencyKey(_:)`
 returns a copy, rejects blank/control-character values, and retains credential
 scope; `idempotencyKey` is readable. Changing credential scope preserves this header.
+
+## Scheduled sends
+
+Available on staging. Use its configured base URL; these routes are not yet listed
+in the production API. Scheduling saves the same assignment or envelope payload
+used for immediate creation, plus `send_at`. No document is reserved, notification
+sent, or credit charged at scheduling time. The server validates the request now
+and executes it as the original member at current prices when due.
+
+| SDK method | Request | Response data |
+| --- | --- | --- |
+| `assignments.schedule(documentId:payload:sendAt:)` | `POST /documents/{documentId}/scheduled-sends`; assignment body plus ISO-8601 `send_at` | `ScheduledSend` |
+| `envelopes.schedule(payload:sendAt:accountId:)` | `POST /accounts/{accountId}/scheduled-sends`; envelope body plus ISO-8601 `send_at` | `ScheduledSend` |
+| `assignments.listScheduledSends(params:accountId:)` | `GET /accounts/{accountId}/scheduled-sends`; `page`, `per-page`, optional `document_id` | `[ScheduledSend]` with pagination headers |
+| `assignments.cancelScheduledSend(scheduledSendId:accountId:)` | `PUT /accounts/{accountId}/scheduled-sends/{scheduledSendId}/cancel`; no body | Cancelled `ScheduledSend` |
+| `assignments.sendScheduledSend(scheduledSendId:accountId:)` | `PUT /accounts/{accountId}/scheduled-sends/{scheduledSendId}/send`; no body | Sent `ScheduledSend`, with `assignment_id` or `envelope_id` |
+
+All calls carry the workspace credential. OAuth requires `documents:write`,
+including listing. Swift takes `Date` for `sendAt` and encodes it in UTC. Objective-C
+uses `NSDate`, `payloadJSON` for creation, and `query: [String: String]` for listing.
+Every method has an explicit completion form delivered on the main queue.
+
+The send time must be one hour to 90 days ahead. Assignment/document expiry must be
+at least two hours later. A document can have only one pending or processing send.
+The worker checks due sends every five minutes. Only `pending` sends can be cancelled
+or sent immediately; other states return 409. A refused immediate send stays pending,
+including a 409 `CreditCeilingExceeded`; cancel it if it must not run later. Background
+failure records `failure_reason` and notifies the author (or active owners if the
+author has left). Idempotency keys are not supported for scheduling. Reconcile an
+uncertain creation by listing before creating another; the SDK never retries.
+
+`ScheduledSend` properties map to `id`, `type`, `document_ids`, `status`, `send_at`,
+`assignment_id`, `envelope_id`, `failure_reason`, `created_at`, and `processed_at`.
+Type is `assignment` or `envelope`; status is `pending`, `processing`, `sent`,
+`cancelled`, or `failed`. The two result IDs, reason and processing time are nullable.
+Times are ISO-8601 strings; future type/status strings remain readable.
+
+Complete requests and results: [scheduled-send payloads](PAYLOADS.md#scheduled-sends).
+
+## Document watchers, signer capacities, and delivery history
+
+These routes and `sign_as` are available on staging. Each response uses the normal
+`{status, message, data}` envelope. Every operation has a main-queue completion form.
+
+| SDK method | Request | Response data / authorization |
+| --- | --- | --- |
+| `documents.watchers(documentId:)` | `GET /documents/{documentId}/watchers`; no body | `[Signer]`; direct workspace credential, OAuth refused |
+| `documents.setWatchers(documentId:watcherIds:)` | `PUT /documents/{documentId}/watchers`; `{"watcher_ids":["signer_example_001"]}` | Updated `[Signer]`; direct workspace credential, OAuth refused |
+| `documents.signerCapacities(documentId:)` | `GET /documents/{documentId}/signer-capacities`; no body | `[SignerCapacity]`; OAuth `documents:read` |
+| `documents.notificationHistory(documentId:)` | `GET /documents/{documentId}/notification-history`; no body | `[DocumentNotificationHistory]`; OAuth `documents:read` |
+
+Watchers are up to ten workspace contacts with email addresses. An empty list clears
+them; duplicate IDs count once on the server. They follow the outcome without signing.
+The queued outcome email includes the document name and sender, never a link or file.
+The workspace notification policy does not suppress it. Watchers may change until the
+document ends; a closed document refuses updates. Deleted contacts are omitted on reads.
+
+Set `CreateAssignmentPayload.signerCapacities` to a dictionary of signer ID to exact
+capacity code. Assignment creation, estimation, scheduling and the JSON completion
+adapter forward these as `signers[].sign_as`. Omission or JSON null uses `Sign`.
+A conflicting capacity for the same signer is rejected. Read capacities through the
+separate route; they are not included in ordinary assignment responses or webhooks.
+They are the sender's statement, printed on the certificate, not the invitation or
+signing page. Supported codes are:
+
+`Sign`, `Approve`, `Acknowledge`, `Party`, `Witness`, `Intervening`, `Receipt`,
+`IssuerEndorserGuarantor`, `IssuerEndorserGuarantorSurety`, `Surety`, `PartySurety`,
+`JointDebtor`, `PartyJointDebtor`, `ContractingParty`, `ContractedParty`, `Landlord`,
+`Tenant`, `Buyer`, `Seller`, `AttorneyInFact`, `LegalRepresentative`, `Employer`, `Employee`.
+
+`SignerCapacity` exposes `signerId` and `signAs`. `DocumentNotificationHistory` exposes
+`signerId` and `notificationHistory: [SignerNotificationHistory]`. Each history item
+keeps its existing event, status, error and send/failure times and adds nullable
+`deliveredAt` and `openedAt` ISO-8601 strings. Opens include automated mail-client or
+link-scanner activity and are not proof of a person reading. Both routes return []
+before assignment. See [complete examples](PAYLOADS.md#document-delivery-details).
+
+## Envelope reminder estimates and webhook tests
+
+`envelopes.estimateResendCost(envelopeId:signerId:accountId:)` mirrors
+`POST /accounts/{accountId}/envelopes/{envelopeId}/signers/{signerId}/estimate-resend-cost`
+on staging. It sends no body and returns `CostEstimate` using `total`, `breakdown`,
+`credit_balance` and `has_sufficient_credits`. It prices one message per notification
+method for the whole envelope without sending, charging, or checking cooldowns.
+The real reminder may still refuse closed envelopes (409) or ineligible signers (400).
+OAuth requires `documents:write`. Its completion form adds `completion` to the same labels.
+
+`webhooks.testEndpoint(endpointId:accountId:)` mirrors
+`POST /accounts/{accountId}/webhooks/endpoints/{endpointId}/test`, with no body. It sends
+one signed `webhook_test` event, even to an inactive or held endpoint, without changing
+that state. It returns `WebhookDispatch`, with `kind: manual`, `will_retry: false` and
+nullable `durationMilliseconds` (`duration_ms`). The nested event payload has no document
+or member data. The event cannot be subscribed to. Up to ten tests per user per ten
+minutes are allowed; the receiver has ten seconds to answer. OAuth requires
+`webhooks:write`; the completion form delivers the result on the main queue.
+
+Full results: [reminder estimate](PAYLOADS.md#resendcostestimate) and
+[test delivery](PAYLOADS.md#webhooktestdelivery).
+
+JPEG uploads use the documented `image/jpeg` media type. Staging currently returns
+500 `Unsupported image format: jpe` for JPEG; use PNG until that server path is available.
+The SDK preserves the API error and never retries the upload.
+
+### Completion selectors for scheduled sends and delivery controls
+
+Use the explicit `completion:` selectors below for main-queue delivery. The compiler's
+async `completionHandler:` bridges do not provide that guarantee. `payloadJSON` is
+`NSData`, `sendAt` is `NSDate`, and `query` is `NSDictionary<NSString *, NSString *>`.
+
+| Resource | Objective-C selector |
+| --- | --- |
+| assignments | `scheduleWithDocumentId:payloadJSON:sendAt:completion:` |
+| assignments | `listScheduledSendsWithQuery:accountId:completion:` |
+| assignments | `cancelScheduledSendWithScheduledSendId:accountId:completion:` |
+| assignments | `sendScheduledSendWithScheduledSendId:accountId:completion:` |
+| envelopes | `scheduleWithPayloadJSON:sendAt:accountId:completion:` |
+| envelopes | `estimateResendCostWithEnvelopeId:signerId:accountId:completion:` |
+| documents | `watchersWithDocumentId:completion:` |
+| documents | `setWatchersWithDocumentId:watcherIds:completion:` |
+| documents | `signerCapacitiesWithDocumentId:completion:` |
+| documents | `notificationHistoryWithDocumentId:completion:` |
+| webhooks | `testEndpointWithEndpointId:accountId:completion:` |

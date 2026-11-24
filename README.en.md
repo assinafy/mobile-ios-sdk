@@ -9,7 +9,7 @@ A dependency-free Swift 6.3+ SDK (language mode 6) for the Assinafy v1 API. It s
 Add this repository as a Swift Package in Xcode, or declare:
 
 ```swift
-.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.14.0")
+.package(url: "https://github.com/assinafy/mobile-ios-sdk.git", from: "1.15.0")
 ```
 
 The product is `Assinafy`. Import it with `import Assinafy`.
@@ -99,6 +99,7 @@ The helper creates a virtual email assignment. For full control, call `documents
 
 | Verification | Requirements | Experience |
 | --- | --- | --- |
+| `Bypass` | VerificationBypass feature enabled | No OTP; optionally embedded without notification |
 | `Email` | Exactly one Email notification | OTP checked by `signers.verifyEmail` before native signing |
 | `Whatsapp` | Enabled feature, phone, and one Whatsapp notification | OTP through Whatsapp |
 | `IdDocumentFaceMatchBasic` | Enabled feature, CPF, and Email or Whatsapp | Explicit consent, ID capture, and selfie; workspace review may be required |
@@ -122,6 +123,12 @@ Use `getSigningDocument(..., expand: ["envelope"], documentId: ...)` to navigate
 
 `workspaces.notificationPolicy` controls team events; `auth.getPushPreferences` and email preferences control the user. Workspace policy takes precedence. `workspaces.get(..., expand: ["signing_features"])` reports enabled features; `usage` requires a direct credential and refuses OAuth.
 
+## Scheduling and delivery tracking
+
+On staging (`https://api.angry-pisco.stage.assinafy.com.br/v1`), use `assignments.schedule` or `envelopes.schedule` with `sendAt` between one hour and 90 days ahead. List, cancel, or send immediately through `assignments`; execution uses current prices and respects `maxTotalCredits`. After an uncertain response, list scheduled sends before creating another.
+
+Assignment payload `signerCapacities` sets each signer’s capacity, such as `Witness`. `documents.setWatchers` registers up to ten contacts to receive the outcome without signing. Read `documents.signerCapacities` and `documents.notificationHistory`; email opens do not prove human reading. `envelopes.estimateResendCost` prices a reminder before sending. These operations are also available on staging.
+
 ## Templates, contracts, and fields
 
 - `templates` creates documents from roles and positions collect fields by page.
@@ -142,6 +149,8 @@ guard WebhookSignature.verify(
     secret: secret
 ) else { throw AssinafySDKError("Invalid webhook signature") }
 ```
+
+`webhooks.testEndpoint` sends a test event without changing endpoint state and returns the delivery attempt.
 
 Verification uses HMAC-SHA256 and a 300-second window. Deduplicate verified deliveries by `webhook-id`. Rotation invalidates the old secret immediately. OAuth apps can rotate with `webhooks:write`, but cannot read an existing secret.
 
